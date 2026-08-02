@@ -1,0 +1,122 @@
+# RxGuard v1.0.0
+
+`rx.dr-manoj.in` · service `rxguard` · port 8031 · `/root/rxguard`
+
+Personal medication interaction and safety review. Single user, self-hosted.
+Flask + SQLite + gunicorn + systemd — the same pattern as GutLog.
+
+## What it is for
+
+Multiple specialists, several of them consulted by phone, plus self-treated
+MSK and radicular episodes. No single person is holding the whole list.
+This is the place the complete picture exists, and the thing that carries it
+into each consultation.
+
+## What it deliberately is not
+
+It does not diagnose, prescribe, or approve treatment. It does not replace a
+prescriber. It is not a general-purpose interaction checker and must not be
+used for clinic patients — there is no patient identity field in the schema,
+and that is intentional.
+
+## Design decisions worth knowing before you trust it
+
+**There is no GREEN.** Flags are RED, AMBER and UNKNOWN. Absence of a flag
+means nothing was found in this knowledge base, not that a combination is
+safe. A green badge becomes a green light regardless of the disclaimer under
+it, so there isn't one.
+
+**Coverage is the ceiling.** 60 molecules, curated narrowly and deeply for
+your actual and plausible drug set rather than broadly and shallowly for
+everyone. Anything not in `knowledge/drugs.json` gets no check at all and is
+reported as UNKNOWN rather than passed over in silence. Check
+`/knowledge` for what is covered.
+
+**Findings report the change, not the baseline.** Cumulative burden already
+present in the list is shown on the dashboard. The analysis screen only
+raises a burden finding when the proposed drug actually contributes to it,
+and shows the delta. Otherwise every analysis restates the same background
+and the screen trains you to dismiss it.
+
+**Curated rules beat derived ones.** Where a named pairwise rule exists it
+suppresses the generic CYP-property derivation for that pair, so the same
+interaction is not reported twice in different words.
+
+## Layout
+
+```
+app.py                    application, engine, templates — single file
+knowledge/drugs.json      60 molecules: CYP, burdens, QT, renal, withdrawal
+knowledge/rules.json      24 named pairwise rules, condition rules,
+                          burden thresholds, withdrawal rules, symptom map
+smoke_test.py             42 checks incl. the mandatory index case
+validate.py               validation harness
+validation_cases.json     50 cases with pre-declared acceptance thresholds
+rxguard.service           systemd unit (port 8031)
+backup.sh                 nightly backup, GutLog cron pattern
+```
+
+The knowledge base is versioned separately from the code. Editing a rule
+does not mean touching `app.py`, and every finding carries its source and
+review date. Rules older than 365 days render as STALE.
+
+## Deploy
+
+```bash
+# on the VPS, as root
+mkdir -p /root/rxguard && cd /root/rxguard
+# upload app.py, knowledge/, *.py, *.json, rxguard.service, backup.sh via WinSCP
+
+pip install flask gunicorn
+
+python3 -c "import secrets;print('RXGUARD_SECRET='+secrets.token_hex(32))" > rxguard.env
+chmod 600 rxguard.env
+
+python3 smoke_test.py      # expect 42/42
+python3 validate.py        # expect 50/50
+
+cp rxguard.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now rxguard
+systemctl status rxguard
+curl -s localhost:8031/healthz
+```
+
+Then add a proxy in CyberPanel for `meds.dr-manoj.in` to `127.0.0.1:8031`,
+issue the certificate, and add the backup cron:
+
+```
+30 2 * * * /root/rxguard/backup.sh >> /root/rxguard/backup.log 2>&1
+```
+
+First visit to `/login` sets the password. There is no registration route
+and no second user.
+
+## Before relying on it
+
+`validation_cases.json` currently carries provisional expected flags and an
+unnamed reference standard. Name the reference standard — Stockley's, or
+Lexicomp/Micromedex if you have institutional access — and check the 50
+expected flags against it before treating a clean run as meaningful. The
+thresholds (zero missed RED, at most two false RED) are declared in the file
+and are meant to stay fixed. If a run fails them, the knowledge base changes,
+not the thresholds.
+
+## First data to enter
+
+1. The three chronic drugs, with prescriber and specialty on each.
+2. Conditions and the constraints card in `/profile`.
+3. The index case in `/adverse`, with the temporal fields filled properly —
+   dose at onset, latency from escalation, what happened on reduction,
+   confounders. Entered loosely it becomes an anecdote that outranks the
+   literature in this tool's own hierarchy. Entered properly it is evidence
+   you can hand to the next prescriber.
+
+## Routine use
+
+- **Quick check** — episodic course, under thirty seconds, before self-treating.
+- **New symptom** — enter the symptom before interpreting it. Ranks the last
+  six weeks of medication changes against it. This is the screen that exists
+  because attribution, not knowledge, was the failure in the index case.
+- **One-page list** — print at the start of any consultation.
+- **Review queue** — anything you override comes back at two and six weeks
+  with your own stated reason shown back to you.

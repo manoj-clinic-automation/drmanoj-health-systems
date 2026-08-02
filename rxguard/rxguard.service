@@ -1,0 +1,19 @@
+[Unit]
+Description=RxGuard — personal medication interaction and safety review
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/rxguard
+Environment="RXGUARD_DB=/root/rxguard/rxguard.db"
+EnvironmentFile=/root/rxguard/rxguard.env
+ExecStart=/usr/bin/gunicorn --workers 2 --bind 127.0.0.1:8031 \
+          --access-logfile /root/rxguard/access.log \
+          --error-logfile /root/rxguard/error.log \
+          "app:create_app()"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

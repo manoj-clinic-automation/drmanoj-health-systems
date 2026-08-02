@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "note": "Personal PRN stack seed. Brand names as supplied by owner; 'generic' editable in-app. FitLog logs use only — interaction checking remains RxGuard's job.",
+  "meds": [
+    {"id": "M01", "name": "Tylenol", "generic": "Paracetamol", "strength": "500 mg", "category": "analgesic", "dose_options": ["500 mg (1 tab)", "1000 mg (2 tab)"], "route": "oral", "active": 1},
+    {"id": "M02", "name": "Etoricoxib 60 + PCM", "generic": "Etoricoxib + Paracetamol", "strength": "60 mg + PCM", "category": "analgesic", "dose_options": ["1 tab"], "route": "oral", "active": 1},
+    {"id": "M03", "name": "Tapease Nasal Spray", "generic": "", "strength": "per spray", "category": "analgesic", "dose_options": ["1 spray", "2 sprays"], "route": "nasal", "active": 1},
+    {"id": "M04", "name": "Ketorol DT", "generic": "Ketorolac", "strength": "10 mg", "category": "analgesic", "dose_options": ["1 tab", "2 tab"], "route": "oral", "active": 1},
+    {"id": "M05", "name": "Zuprinor patch", "generic": "Buprenorphine TD", "strength": "5 mcg/hr", "category": "analgesic", "dose_options": ["patch applied", "patch removed"], "route": "transdermal", "active": 1},
+    {"id": "M06", "name": "Volitra APS spray", "generic": "Topical diclofenac combo", "strength": "topical", "category": "analgesic", "dose_options": ["applied"], "route": "topical", "active": 1},
+    {"id": "M07", "name": "Clonazepam", "generic": "Clonazepam", "strength": "0.25 / 0.5 mg", "category": "sleep", "dose_options": ["0.25 mg", "0.5 mg"], "route": "oral", "active": 1},
+    {"id": "M08", "name": "Etizolam", "generic": "Etizolam", "strength": "0.25 / 0.5 mg", "category": "sleep", "dose_options": ["0.25 mg", "0.5 mg"], "route": "oral", "active": 1},
+    {"id": "M09", "name": "Zolpidem", "generic": "Zolpidem", "strength": "10 mg", "category": "sleep", "dose_options": ["5 mg (half tab)", "10 mg (1 tab)"], "route": "oral", "active": 1},
+    {"id": "M10", "name": "Melatonin", "generic": "Melatonin", "strength": "3 mg", "category": "sleep", "dose_options": ["3 mg"], "route": "oral", "active": 1}
+  ]
+}

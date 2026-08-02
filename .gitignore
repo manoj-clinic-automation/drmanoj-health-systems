@@ -1,0 +1,15 @@
+# Live data & secrets — never commit (see CLAUDE.md)
+*.db
+*.db.*
+*.secret
+*.env
+*.log
+*.bak
+*.bak-*
+*.deployed-*
+# Runtime junk
+__pycache__/
+*.pyc
+venv/
+uploads/
+nohup.out
