@@ -1,0 +1,771 @@
+{
+  "_meta": {
+    "schema": "medsafe-drugs/1",
+    "version": "1.0.0",
+    "reviewed": "2026-07-25",
+    "scales": {
+      "anticholinergic": "0-3, ACB/ADS-style. 3 = strongly anticholinergic.",
+      "serotonergic": "0-3. 3 = strong direct serotonergic agonist/reuptake block or MAO inhibition.",
+      "sedation": "0-3 CNS depressant contribution.",
+      "constipating": "0-3. Included as a named burden because it is a personal constraint.",
+      "bleeding": "0-3 contribution to bleeding risk.",
+      "nephrotoxic": "0-3.",
+      "seizure": "0-3 seizure-threshold lowering.",
+      "qt": "none | conditional | possible | known  (CredibleMeds-style categories)",
+      "hr": "increase | decrease | none",
+      "bp": "increase | decrease | both | none"
+    },
+    "note": "Curated narrowly and deeply for one user's actual and plausible drug set. Not a general-purpose pharmacology database. Every entry carries a reviewed date; the app surfaces entries older than the staleness threshold."
+  },
+
+  "drugs": {
+
+    "nortriptyline": {
+      "class": "Tricyclic antidepressant (secondary amine)",
+      "atc": "N06AA10", "rxcui": "7531",
+      "cyp": {"substrate": {"CYP2D6": "major", "CYP2C19": "minor"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 2, "serotonergic": 1, "sedation": 2, "constipating": 2, "bleeding": 0, "nephrotoxic": 0, "seizure": 2},
+      "qt": "conditional", "hr": "increase", "bp": "both",
+      "narrow_ti": true,
+      "tdm": "Steady-state trough 50-150 ng/mL; levels above ~150 ng/mL associated with reduced response and increased toxicity.",
+      "renal": "No routine adjustment; caution in significant impairment.",
+      "hepatic": "Reduce dose / slow titration in hepatic impairment.",
+      "notes": "Secondary amine, less anticholinergic than amitriptyline but not neutral. Noradrenaline reuptake inhibition can raise heart rate and blood pressure; alpha-1 blockade can cause orthostatic hypotension. Both may occur in the same person. Dose-dependent conduction effects (QRS/QT) via sodium-channel blockade.",
+      "source": "US SPL; standard TCA pharmacology; CredibleMeds conditional-risk listing.",
+      "reviewed": "2026-07-25"
+    },
+
+    "amitriptyline": {
+      "class": "Tricyclic antidepressant (tertiary amine)",
+      "atc": "N06AA09", "rxcui": "704",
+      "cyp": {"substrate": {"CYP2D6": "major", "CYP2C19": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 3, "serotonergic": 2, "sedation": 3, "constipating": 3, "bleeding": 0, "nephrotoxic": 0, "seizure": 2},
+      "qt": "conditional", "hr": "increase", "bp": "both",
+      "narrow_ti": true,
+      "notes": "Demethylated to nortriptyline. Markedly more anticholinergic and sedating than nortriptyline.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "paroxetine": {
+      "class": "SSRI",
+      "atc": "N06AB05", "rxcui": "32937",
+      "cyp": {"substrate": {"CYP2D6": "major"}, "inhibitor": {"CYP2D6": "strong"}, "inducer": {}},
+      "burden": {"anticholinergic": 1, "serotonergic": 3, "sedation": 1, "constipating": 1, "bleeding": 2, "nephrotoxic": 0, "seizure": 1},
+      "qt": "conditional", "hr": "none", "bp": "none",
+      "withdrawal": "high",
+      "withdrawal_note": "Short half-life, no active metabolite. Highest discontinuation-syndrome risk of the SSRIs: dizziness, electric-shock sensations, irritability, nausea, insomnia. Taper slowly; do not stop abruptly.",
+      "renal": "Reduce starting dose in severe impairment.",
+      "hepatic": "Reduce starting dose.",
+      "notes": "Strong CYP2D6 inhibitor and itself a 2D6 substrate (non-linear kinetics). Most anticholinergic of the SSRIs. Causes hyponatraemia (SIADH), particularly in older patients. Antiplatelet effect via platelet serotonin depletion.",
+      "source": "US SPL; well-established 2D6 inhibition data.",
+      "reviewed": "2026-07-25"
+    },
+
+    "sertraline": {
+      "class": "SSRI", "atc": "N06AB06", "rxcui": "36437",
+      "cyp": {"substrate": {"CYP2B6": "major", "CYP2C19": "minor"}, "inhibitor": {"CYP2D6": "weak"}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 3, "sedation": 1, "constipating": 0, "bleeding": 2, "nephrotoxic": 0, "seizure": 1},
+      "qt": "conditional", "hr": "none", "bp": "none", "withdrawal": "moderate",
+      "notes": "Substantially weaker CYP2D6 inhibition than paroxetine; commonly the preferred SSRI when a 2D6 substrate must be co-prescribed.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "escitalopram": {
+      "class": "SSRI", "atc": "N06AB10", "rxcui": "321988",
+      "cyp": {"substrate": {"CYP2C19": "major", "CYP3A4": "minor"}, "inhibitor": {"CYP2D6": "weak"}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 3, "sedation": 1, "constipating": 0, "bleeding": 2, "nephrotoxic": 0, "seizure": 1},
+      "qt": "known", "hr": "none", "bp": "none", "withdrawal": "moderate",
+      "notes": "Dose-dependent QT prolongation; maximum dose limits apply in older patients, hepatic impairment and CYP2C19 poor metabolisers. CYP2C19 inhibitors (omeprazole, esomeprazole) raise exposure.",
+      "source": "US SPL; CredibleMeds known-risk listing.", "reviewed": "2026-07-25"
+    },
+
+    "fluoxetine": {
+      "class": "SSRI", "atc": "N06AB03", "rxcui": "4493",
+      "cyp": {"substrate": {"CYP2D6": "major"}, "inhibitor": {"CYP2D6": "strong", "CYP2C19": "moderate"}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 3, "sedation": 0, "constipating": 0, "bleeding": 2, "nephrotoxic": 0, "seizure": 1},
+      "qt": "possible", "hr": "none", "bp": "none", "withdrawal": "low",
+      "notes": "Long half-life with active metabolite norfluoxetine; 2D6 inhibition persists for weeks after stopping. Low withdrawal risk but a long interaction tail.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "duloxetine": {
+      "class": "SNRI", "atc": "N06AX21", "rxcui": "72625",
+      "cyp": {"substrate": {"CYP1A2": "major", "CYP2D6": "major"}, "inhibitor": {"CYP2D6": "moderate"}, "inducer": {}},
+      "burden": {"anticholinergic": 1, "serotonergic": 3, "sedation": 1, "constipating": 2, "bleeding": 2, "nephrotoxic": 0, "seizure": 1},
+      "qt": "none", "hr": "increase", "bp": "increase", "withdrawal": "high",
+      "renal": "Not recommended if CrCl < 30 mL/min.",
+      "hepatic": "Avoid in hepatic impairment / substantial alcohol use.",
+      "notes": "Noradrenergic effect can raise BP and HR. Constipation is a common adverse effect. Moderate 2D6 inhibitor in its own right.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "venlafaxine": {
+      "class": "SNRI", "atc": "N06AX16", "rxcui": "39786",
+      "cyp": {"substrate": {"CYP2D6": "major", "CYP3A4": "minor"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 3, "sedation": 1, "constipating": 1, "bleeding": 2, "nephrotoxic": 0, "seizure": 2},
+      "qt": "possible", "hr": "increase", "bp": "increase", "withdrawal": "high",
+      "renal": "Reduce dose if CrCl < 30 mL/min.",
+      "notes": "Dose-dependent diastolic BP elevation. Severe discontinuation syndrome. 2D6 inhibitors raise parent drug and shift the parent/metabolite ratio.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "mirtazapine": {
+      "class": "Noradrenergic and specific serotonergic antidepressant", "atc": "N06AX11", "rxcui": "15996",
+      "cyp": {"substrate": {"CYP3A4": "major", "CYP2D6": "minor", "CYP1A2": "minor"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 1, "serotonergic": 1, "sedation": 3, "constipating": 2, "bleeding": 1, "nephrotoxic": 0, "seizure": 1},
+      "qt": "conditional", "hr": "none", "bp": "decrease", "withdrawal": "moderate",
+      "notes": "Strongly sedating at low dose. Weight gain. Blocks 5HT2/5HT3 so serotonin-syndrome contribution is lower than SSRI/SNRI but not zero.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "gabapentin": {
+      "class": "Gabapentinoid", "atc": "N03AX12", "rxcui": "25480",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 2, "constipating": 1, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "renal": "Renally cleared; dose must be reduced by creatinine clearance. CrCl 30-59: 400-1400 mg/day. CrCl 15-29: 200-700 mg/day. CrCl <15: 100-300 mg/day. Accumulation causes sedation, ataxia, myoclonus and confusion.",
+      "renal_critical": true,
+      "notes": "No CYP involvement, so few pharmacokinetic interactions — but additive CNS depression with opioids is clinically significant and has been associated with respiratory depression. Peripheral oedema and weight gain.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "pregabalin": {
+      "class": "Gabapentinoid", "atc": "N03AX16", "rxcui": "187832",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 2, "constipating": 1, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "renal": "Renally cleared; dose reduction required. CrCl 30-60: halve the daily dose. CrCl 15-30: quarter. CrCl <15: further reduction.",
+      "renal_critical": true,
+      "notes": "As gabapentin: additive sedation with opioids and other CNS depressants is the main practical risk. Peripheral oedema, weight gain.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "clonazepam": {
+      "class": "Benzodiazepine", "atc": "N03AE01", "rxcui": "2598",
+      "cyp": {"substrate": {"CYP3A4": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 3, "constipating": 1, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none", "withdrawal": "high",
+      "notes": "Long-acting. CYP3A4 inhibitors raise exposure. Additive respiratory depression with opioids.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "alprazolam": {
+      "class": "Benzodiazepine", "atc": "N05BA12", "rxcui": "596",
+      "cyp": {"substrate": {"CYP3A4": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 3, "constipating": 1, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none", "withdrawal": "high",
+      "notes": "Short half-life, marked rebound anxiety and dependence. Strongly affected by CYP3A4 inhibitors (clarithromycin, fluconazole, verapamil, diltiazem).",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "verapamil": {
+      "class": "Non-dihydropyridine calcium channel blocker",
+      "atc": "C08DA01", "rxcui": "11170",
+      "cyp": {"substrate": {"CYP3A4": "major"}, "inhibitor": {"CYP3A4": "moderate", "P-gp": "strong"}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 3, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "decrease", "bp": "decrease",
+      "hepatic": "Substantially reduce dose in hepatic impairment.",
+      "notes": "Negative chronotrope, dromotrope and inotrope. Constipation is its most common adverse effect and is dose-related. Potent P-glycoprotein inhibitor — raises digoxin and dabigatran levels. Moderate CYP3A4 inhibitor — raises simvastatin, atorvastatin, alprazolam, domperidone, ivabradine. Additive AV nodal depression with beta-blockers, ivabradine, digoxin.",
+      "source": "US SPL; established P-gp and 3A4 inhibition data.",
+      "reviewed": "2026-07-25"
+    },
+
+    "diltiazem": {
+      "class": "Non-dihydropyridine calcium channel blocker", "atc": "C08DB01", "rxcui": "3443",
+      "cyp": {"substrate": {"CYP3A4": "major"}, "inhibitor": {"CYP3A4": "moderate", "P-gp": "moderate"}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 1, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "decrease", "bp": "decrease",
+      "notes": "As verapamil but less constipating and somewhat less negatively inotropic.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "metoprolol": {
+      "class": "Beta-1 selective blocker", "atc": "C07AB02", "rxcui": "6918",
+      "cyp": {"substrate": {"CYP2D6": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 1, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "decrease", "bp": "decrease",
+      "notes": "Substantial CYP2D6 metabolism. Strong 2D6 inhibitors (paroxetine, fluoxetine, bupropion) can multiply exposure several-fold, producing bradycardia, fatigue and loss of beta-1 selectivity. Bisoprolol or atenolol avoid this.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "carvedilol": {
+      "class": "Non-selective beta-blocker with alpha-1 blockade", "atc": "C07AG02", "rxcui": "20352",
+      "cyp": {"substrate": {"CYP2D6": "major", "CYP2C9": "moderate"}, "inhibitor": {"P-gp": "moderate"}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 1, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "decrease", "bp": "decrease",
+      "notes": "CYP2D6 substrate; also raises digoxin levels via P-gp.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "bisoprolol": {
+      "class": "Beta-1 selective blocker", "atc": "C07AB07", "rxcui": "19484",
+      "cyp": {"substrate": {"CYP3A4": "minor"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 1, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "decrease", "bp": "decrease",
+      "renal": "Reduce dose if CrCl < 20 mL/min.",
+      "notes": "Balanced renal/hepatic clearance and minimal CYP2D6 dependence — preferred beta-blocker when a strong 2D6 inhibitor is on board.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "atenolol": {
+      "class": "Beta-1 selective blocker", "atc": "C07AB03", "rxcui": "1202",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 1, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "decrease", "bp": "decrease",
+      "renal": "Renally cleared; reduce dose if CrCl < 35 mL/min.", "renal_critical": true,
+      "notes": "No CYP metabolism, so free of 2D6 interactions — but accumulates in renal impairment.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "ivabradine": {
+      "class": "If channel inhibitor", "atc": "C01EB17", "rxcui": "1163443",
+      "cyp": {"substrate": {"CYP3A4": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "possible", "hr": "decrease", "bp": "none",
+      "notes": "Contraindicated with strong CYP3A4 inhibitors. Verapamil and diltiazem are both moderate 3A4 inhibitors and additionally bradycardic — the combination is specifically cautioned against.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "amlodipine": {
+      "class": "Dihydropyridine calcium channel blocker", "atc": "C08CA01", "rxcui": "17767",
+      "cyp": {"substrate": {"CYP3A4": "major"}, "inhibitor": {"CYP3A4": "weak"}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 1, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "increase", "bp": "decrease",
+      "notes": "Reflex tachycardia possible. Peripheral oedema is dose-related. Weakly raises simvastatin exposure (dose cap applies).",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "telmisartan": {
+      "class": "Angiotensin receptor blocker", "atc": "C09CA07", "rxcui": "73494",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "decrease", "hyperkalaemia": 2,
+      "notes": "Raises potassium. NSAIDs blunt the antihypertensive effect and, with a diuretic, form the 'triple whammy' acute kidney injury combination.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "losartan": {
+      "class": "Angiotensin receptor blocker", "atc": "C09CA01", "rxcui": "52175",
+      "cyp": {"substrate": {"CYP2C9": "major", "CYP3A4": "minor"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "decrease", "hyperkalaemia": 2,
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "ramipril": {
+      "class": "ACE inhibitor", "atc": "C09AA05", "rxcui": "35296",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "decrease", "hyperkalaemia": 2,
+      "renal": "Reduce dose in renal impairment; monitor creatinine and potassium after initiation or dose increase.",
+      "notes": "Cough. Hyperkalaemia, additive with spironolactone and NSAIDs.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "spironolactone": {
+      "class": "Mineralocorticoid receptor antagonist", "atc": "C03DA01", "rxcui": "9997",
+      "cyp": {"substrate": {"CYP3A4": "moderate"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "decrease", "hyperkalaemia": 3,
+      "renal": "Avoid if eGFR < 30; monitor potassium closely.", "renal_critical": true,
+      "notes": "Strongest hyperkalaemia contributor in this set. Additive with ACE inhibitors, ARBs, NSAIDs and trimethoprim.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "hydrochlorothiazide": {
+      "class": "Thiazide diuretic", "atc": "C03AA03", "rxcui": "5487",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "decrease",
+      "electrolytes": {"potassium": "lowers", "sodium": "lowers", "magnesium": "lowers"},
+      "notes": "Hypokalaemia and hypomagnesaemia are indirect QT risk factors — relevant whenever a QT-prolonging drug is co-prescribed. Hyponatraemia risk is additive with SSRIs.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "furosemide": {
+      "class": "Loop diuretic", "atc": "C03CA01", "rxcui": "4603",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "decrease",
+      "electrolytes": {"potassium": "lowers", "magnesium": "lowers", "sodium": "lowers"},
+      "notes": "Part of the NSAID + diuretic + ACEi/ARB 'triple whammy'. Electrolyte loss is an indirect QT risk factor.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "digoxin": {
+      "class": "Cardiac glycoside", "atc": "C01AA05", "rxcui": "3407",
+      "cyp": {"substrate": {"P-gp": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "decrease", "bp": "none",
+      "narrow_ti": true,
+      "renal": "Renally cleared; dose by renal function. Accumulation causes toxicity.", "renal_critical": true,
+      "notes": "P-glycoprotein substrate: verapamil, diltiazem, carvedilol, clarithromycin and itraconazole raise levels substantially. Hypokalaemia potentiates toxicity — so a diuretic plus a P-gp inhibitor is a compound risk.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "atorvastatin": {
+      "class": "Statin", "atc": "C10AA05", "rxcui": "83367",
+      "cyp": {"substrate": {"CYP3A4": "major", "OATP1B1": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "notes": "CYP3A4 substrate — exposure raised by verapamil, diltiazem, clarithromycin and azole antifungals, increasing myopathy and rhabdomyolysis risk. Dose caps apply with several of these.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "simvastatin": {
+      "class": "Statin", "atc": "C10AA01", "rxcui": "36567",
+      "cyp": {"substrate": {"CYP3A4": "major", "OATP1B1": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "notes": "Most CYP3A4-sensitive statin. Labelled dose restrictions with verapamil, diltiazem and amlodipine; contraindicated with strong 3A4 inhibitors such as clarithromycin and itraconazole. Rosuvastatin or pravastatin avoid this entirely.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "rosuvastatin": {
+      "class": "Statin", "atc": "C10AA07", "rxcui": "301542",
+      "cyp": {"substrate": {"OATP1B1": "major", "CYP2C9": "minor"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "renal": "Dose cap in severe renal impairment.",
+      "notes": "Minimal CYP3A4 involvement — the statin of choice alongside verapamil, diltiazem or a macrolide.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "aspirin": {
+      "class": "Antiplatelet / NSAID", "atc": "B01AC06", "rxcui": "1191",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 3, "nephrotoxic": 1, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "notes": "Irreversible platelet inhibition. Bleeding risk is additive with SSRIs, SNRIs, other NSAIDs and anticoagulants. Ibuprofen taken before aspirin can block its antiplatelet effect.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "clopidogrel": {
+      "class": "P2Y12 antiplatelet", "atc": "B01AC04", "rxcui": "32968",
+      "cyp": {"substrate": {"CYP2C19": "major", "CYP3A4": "moderate"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 3, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "notes": "Prodrug requiring CYP2C19 activation. Omeprazole and esomeprazole reduce its activation and are specifically cautioned against; pantoprazole or rabeprazole are the preferred acid suppressants.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "pantoprazole": {
+      "class": "Proton pump inhibitor", "atc": "A02BC02", "rxcui": "40790",
+      "cyp": {"substrate": {"CYP2C19": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "electrolytes": {"magnesium": "lowers"},
+      "notes": "Lowest interaction burden of the PPIs — negligible CYP2C19 inhibition, so it is the preferred PPI alongside clopidogrel or escitalopram. Long-term use causes hypomagnesaemia, which matters when QT-prolonging drugs are present.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "omeprazole": {
+      "class": "Proton pump inhibitor", "atc": "A02BC01", "rxcui": "7646",
+      "cyp": {"substrate": {"CYP2C19": "major"}, "inhibitor": {"CYP2C19": "moderate"}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "electrolytes": {"magnesium": "lowers"},
+      "notes": "Moderate CYP2C19 inhibitor — reduces clopidogrel activation, raises escitalopram and diazepam exposure. Switch to pantoprazole where those matter.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "esomeprazole": {
+      "class": "Proton pump inhibitor", "atc": "A02BC05", "rxcui": "283742",
+      "cyp": {"substrate": {"CYP2C19": "major"}, "inhibitor": {"CYP2C19": "moderate"}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "electrolytes": {"magnesium": "lowers"},
+      "notes": "As omeprazole (S-isomer). Same clopidogrel caution.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "rabeprazole": {
+      "class": "Proton pump inhibitor", "atc": "A02BC04", "rxcui": "114979",
+      "cyp": {"substrate": {"CYP2C19": "minor"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "electrolytes": {"magnesium": "lowers"},
+      "notes": "Largely non-enzymatic metabolism; low interaction burden.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "domperidone": {
+      "class": "Dopamine D2 antagonist prokinetic", "atc": "A03FA03", "rxcui": "48884",
+      "cyp": {"substrate": {"CYP3A4": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "known", "hr": "none", "bp": "none",
+      "notes": "Dose- and exposure-dependent QT prolongation, with regulatory restrictions in several countries on dose and duration. CYP3A4 inhibitors — verapamil, diltiazem, clarithromycin, fluconazole, itraconazole — raise exposure and are contraindicated or specifically cautioned. Widely available in India, so this is a realistic and easily overlooked combination.",
+      "source": "EU/UK regulatory restrictions; CredibleMeds known-risk listing.",
+      "reviewed": "2026-07-25"
+    },
+
+    "metoclopramide": {
+      "class": "Dopamine D2 antagonist prokinetic", "atc": "A03FA01", "rxcui": "6915",
+      "cyp": {"substrate": {"CYP2D6": "moderate"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 1, "sedation": 1, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 1},
+      "qt": "conditional", "hr": "none", "bp": "none",
+      "renal": "Reduce dose in renal impairment.",
+      "notes": "Extrapyramidal reactions and tardive dyskinesia limit duration; guidance restricts use to short courses. CYP2D6 substrate — inhibitors raise exposure and extrapyramidal risk. Weak serotonergic contribution.",
+      "source": "US SPL; EU duration restrictions.", "reviewed": "2026-07-25"
+    },
+
+    "ondansetron": {
+      "class": "5HT3 antagonist antiemetic", "atc": "A04AA01", "rxcui": "26225",
+      "cyp": {"substrate": {"CYP3A4": "major", "CYP2D6": "moderate", "CYP1A2": "moderate"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 1, "sedation": 0, "constipating": 2, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "known", "hr": "none", "bp": "none",
+      "notes": "Dose-dependent QT prolongation; single intravenous doses above 16 mg are no longer recommended. Constipating. Included in serotonin-syndrome case reports with other serotonergic agents, though its contribution is debated.",
+      "source": "US SPL; CredibleMeds known-risk listing.", "reviewed": "2026-07-25"
+    },
+
+    "dicyclomine": {
+      "class": "Antimuscarinic antispasmodic", "atc": "A03AA07", "rxcui": "3355",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 3, "serotonergic": 0, "sedation": 1, "constipating": 3, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "increase", "bp": "none",
+      "notes": "Strongly anticholinergic. Very commonly used for abdominal pain in India, including over the counter, and a frequent unrecognised addition to anticholinergic burden. Directly worsens constipation and can raise heart rate.",
+      "source": "US SPL; ACB scale.", "reviewed": "2026-07-25"
+    },
+
+    "hyoscine_butylbromide": {
+      "class": "Antimuscarinic antispasmodic (quaternary)", "atc": "A03BB01", "rxcui": "5573",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 2, "serotonergic": 0, "sedation": 0, "constipating": 2, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "increase", "bp": "none",
+      "notes": "Quaternary amine with poor CNS penetration, so central anticholinergic effects are limited — but peripheral effects on gut motility and heart rate remain. Transient tachycardia after parenteral dosing.",
+      "source": "Product information.", "reviewed": "2026-07-25"
+    },
+
+    "mebeverine": {
+      "class": "Musculotropic antispasmodic", "atc": "A03AA04", "rxcui": "31677",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 1, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "notes": "Direct smooth-muscle action without antimuscarinic effect — a useful alternative to dicyclomine when anticholinergic burden is already high.",
+      "source": "Product information.", "reviewed": "2026-07-25"
+    },
+
+    "drotaverine": {
+      "class": "PDE4 inhibitor antispasmodic", "atc": "A03AD02", "rxcui": null,
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "decrease",
+      "notes": "Widely used in India, not US-labelled — DailyMed will return nothing. Non-anticholinergic. Mild hypotension possible. Evidence base is thinner than for the alternatives.",
+      "no_us_label": true,
+      "source": "Indian product information; manual entry required.", "reviewed": "2026-07-25"
+    },
+
+    "rifaximin": {
+      "class": "Non-absorbed antibiotic", "atc": "A07AA11", "rxcui": "73178",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "notes": "Minimal systemic absorption; interaction potential is low.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "diclofenac": {
+      "class": "NSAID", "atc": "M01AB05", "rxcui": "3355",
+      "cyp": {"substrate": {"CYP2C9": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 2, "nephrotoxic": 3, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "increase", "hyperkalaemia": 1,
+      "renal": "Avoid in significant renal impairment; can precipitate acute kidney injury, particularly with an ACE inhibitor/ARB and a diuretic.", "renal_critical": true,
+      "notes": "Highest cardiovascular risk among the traditional NSAIDs. Raises blood pressure and blunts antihypertensives. GI bleeding risk is additive with SSRIs, aspirin and corticosteroids.",
+      "source": "US SPL; regulatory CV warnings.", "reviewed": "2026-07-25"
+    },
+
+    "aceclofenac": {
+      "class": "NSAID", "atc": "M01AB16", "rxcui": null,
+      "cyp": {"substrate": {"CYP2C9": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 2, "nephrotoxic": 3, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "increase", "hyperkalaemia": 1,
+      "renal_critical": true, "no_us_label": true,
+      "notes": "Very widely prescribed in India, frequently as a fixed-dose combination with paracetamol or a muscle relaxant. Not US-labelled — DailyMed will return nothing; treat as diclofenac-like. Check fixed-dose combinations for duplicate paracetamol.",
+      "source": "Indian product information; manual entry required.", "reviewed": "2026-07-25"
+    },
+
+    "ibuprofen": {
+      "class": "NSAID", "atc": "M01AE01", "rxcui": "5640",
+      "cyp": {"substrate": {"CYP2C9": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 2, "nephrotoxic": 2, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "increase", "hyperkalaemia": 1,
+      "renal_critical": true,
+      "notes": "Can block the antiplatelet effect of aspirin if taken before it. Lower CV risk than diclofenac at low dose.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "naproxen": {
+      "class": "NSAID", "atc": "M01AE02", "rxcui": "7258",
+      "cyp": {"substrate": {"CYP2C9": "major", "CYP1A2": "minor"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 2, "nephrotoxic": 2, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "increase", "hyperkalaemia": 1,
+      "renal_critical": true,
+      "notes": "Generally regarded as having the most favourable cardiovascular profile among the non-selective NSAIDs, at the cost of a longer half-life and appreciable GI risk.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "etoricoxib": {
+      "class": "COX-2 selective NSAID", "atc": "M01AH05", "rxcui": null,
+      "cyp": {"substrate": {"CYP3A4": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 1, "nephrotoxic": 2, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "increase", "hyperkalaemia": 1,
+      "renal_critical": true, "no_us_label": true,
+      "notes": "Not approved in the US — DailyMed will return nothing. Lower GI bleeding risk than non-selective NSAIDs, but the most pronounced blood-pressure elevation of the class; contraindicated in uncontrolled hypertension. Widely used in India for MSK pain.",
+      "source": "EU/Indian product information; manual entry required.", "reviewed": "2026-07-25"
+    },
+
+    "paracetamol": {
+      "class": "Analgesic / antipyretic", "atc": "N02BE01", "rxcui": "161",
+      "cyp": {"substrate": {"CYP2E1": "minor"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "hepatic": "Maximum 4 g/day in healthy adults; lower ceiling with hepatic impairment, chronic alcohol use or low body weight.",
+      "notes": "The practical hazard is cumulative dose from fixed-dose combinations — most Indian analgesic and cold combinations contain paracetamol. Always total the daily dose across all products.",
+      "duplication_watch": true,
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "tramadol": {
+      "class": "Opioid / SNRI (prodrug)", "atc": "N02AX02", "rxcui": "10689",
+      "cyp": {"substrate": {"CYP2D6": "major", "CYP3A4": "moderate"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 3, "sedation": 2, "constipating": 3, "bleeding": 0, "nephrotoxic": 0, "seizure": 3},
+      "qt": "conditional", "hr": "none", "bp": "none",
+      "renal": "Extend dosing interval if CrCl < 30 mL/min.",
+      "prodrug_2d6": true,
+      "notes": "Requires CYP2D6 to form the active metabolite O-desmethyltramadol. A strong 2D6 inhibitor therefore reduces analgesia while raising the serotonergic parent drug — worse pain relief and higher serotonin-syndrome and seizure risk at once. The predictable response, escalating the dose because it is not working, amplifies both. Also lowers seizure threshold independently, additively with TCAs.",
+      "source": "US SPL; established 2D6 prodrug pharmacology.", "reviewed": "2026-07-25"
+    },
+
+    "codeine": {
+      "class": "Opioid (prodrug)", "atc": "R05DA04", "rxcui": "2670",
+      "cyp": {"substrate": {"CYP2D6": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 2, "constipating": 3, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "prodrug_2d6": true,
+      "notes": "Requires CYP2D6 conversion to morphine. With a strong 2D6 inhibitor, analgesia largely fails while constipation and sedation persist.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "tapentadol": {
+      "class": "Opioid / noradrenaline reuptake inhibitor", "atc": "N02AX06", "rxcui": "836349",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 1, "sedation": 2, "constipating": 2, "bleeding": 0, "nephrotoxic": 0, "seizure": 2},
+      "qt": "none", "hr": "none", "bp": "none",
+      "renal": "Not recommended in severe renal impairment.",
+      "notes": "Not a CYP2D6 prodrug, so it escapes the tramadol/codeine problem with strong 2D6 inhibitors — a relevant alternative. Noradrenergic, so still adds to seizure risk; serotonergic contribution is lower than tramadol's.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "thiocolchicoside": {
+      "class": "Muscle relaxant (GABA/glycine)", "atc": "M03BX05", "rxcui": null,
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 2, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 1},
+      "qt": "none", "hr": "none", "bp": "none",
+      "no_us_label": true,
+      "notes": "Not US-approved — DailyMed will return nothing. European regulators restricted systemic use to short courses at limited dose following genotoxicity concerns with a metabolite. Very commonly sold in India in fixed-dose combination with an NSAID. Sedating.",
+      "source": "EU regulatory review; Indian product information; manual entry required.",
+      "reviewed": "2026-07-25"
+    },
+
+    "tizanidine": {
+      "class": "Alpha-2 agonist muscle relaxant", "atc": "M03BX02", "rxcui": "10814",
+      "cyp": {"substrate": {"CYP1A2": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 3, "constipating": 1, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "decrease", "bp": "decrease",
+      "renal": "Reduce dose if CrCl < 25 mL/min.",
+      "notes": "Contraindicated with ciprofloxacin and fluvoxamine — potent CYP1A2 inhibition causes severe hypotension and sedation. Alpha-2 agonism lowers blood pressure and heart rate, additive with beta-blockers and non-dihydropyridine calcium channel blockers. Abrupt withdrawal after prolonged use causes rebound hypertension and tachycardia.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "cyclobenzaprine": {
+      "class": "Muscle relaxant (tricyclic structure)", "atc": "M03BX08", "rxcui": "21949",
+      "cyp": {"substrate": {"CYP3A4": "major", "CYP1A2": "major", "CYP2D6": "minor"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 2, "serotonergic": 2, "sedation": 3, "constipating": 2, "bleeding": 0, "nephrotoxic": 0, "seizure": 1},
+      "qt": "conditional", "hr": "increase", "bp": "none",
+      "hepatic": "Avoid in moderate to severe hepatic impairment.",
+      "notes": "Structurally a tricyclic. Adds anticholinergic, serotonergic, sedative and tachycardic burden on top of a TCA — an easily missed duplication when it is prescribed as a 'muscle relaxant' rather than recognised as a tricyclic.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "baclofen": {
+      "class": "GABA-B agonist muscle relaxant", "atc": "M03BX01", "rxcui": "1292",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 2, "constipating": 1, "bleeding": 0, "nephrotoxic": 0, "seizure": 1},
+      "qt": "none", "hr": "none", "bp": "decrease",
+      "renal": "Renally cleared; accumulation in renal impairment causes encephalopathy, and dose reduction is essential.", "renal_critical": true,
+      "notes": "Abrupt withdrawal after prolonged use can cause seizures and a hyperthermic syndrome — taper rather than stop.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "prednisolone": {
+      "class": "Corticosteroid", "atc": "H02AB06", "rxcui": "8638",
+      "cyp": {"substrate": {"CYP3A4": "moderate"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 1, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "increase",
+      "electrolytes": {"potassium": "lowers"},
+      "notes": "Raises blood pressure and blood glucose. GI ulceration risk is markedly increased when combined with an NSAID. Adrenal suppression after courses beyond about three weeks means tapering rather than stopping. Insomnia and mood change are common and easily misattributed.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "methylprednisolone": {
+      "class": "Corticosteroid", "atc": "H02AB04", "rxcui": "6902",
+      "cyp": {"substrate": {"CYP3A4": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 1, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "increase",
+      "electrolytes": {"potassium": "lowers"},
+      "notes": "More CYP3A4-dependent than prednisolone; exposure is raised by clarithromycin, itraconazole, verapamil and diltiazem.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "colchicine": {
+      "class": "Antimitotic anti-inflammatory", "atc": "M04AC01", "rxcui": "2683",
+      "cyp": {"substrate": {"CYP3A4": "major", "P-gp": "major"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "narrow_ti": true,
+      "renal": "Dose reduction required in renal impairment; toxicity risk rises sharply.", "renal_critical": true,
+      "notes": "Narrow therapeutic index and dual CYP3A4 plus P-glycoprotein substrate. Verapamil, diltiazem, clarithromycin and azole antifungals can cause severe and occasionally fatal toxicity. One of the most dangerous interactions in this entire set.",
+      "source": "US SPL; documented fatal interaction reports.", "reviewed": "2026-07-25"
+    },
+
+    "clarithromycin": {
+      "class": "Macrolide antibiotic", "atc": "J01FA09", "rxcui": "21212",
+      "cyp": {"substrate": {"CYP3A4": "major"}, "inhibitor": {"CYP3A4": "strong", "P-gp": "strong"}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "known", "hr": "none", "bp": "none",
+      "notes": "Strong CYP3A4 and P-glycoprotein inhibitor plus independent QT prolongation. A short course can transiently and substantially raise levels of statins, colchicine, digoxin, verapamil, domperidone and alprazolam. A frequent source of harm precisely because it is prescribed briefly and casually. Azithromycin avoids the enzyme inhibition though not the QT effect.",
+      "source": "US SPL; CredibleMeds known-risk listing.", "reviewed": "2026-07-25"
+    },
+
+    "azithromycin": {
+      "class": "Macrolide antibiotic", "atc": "J01FA10", "rxcui": "18631",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "known", "hr": "none", "bp": "none",
+      "notes": "Negligible CYP3A4 inhibition — much safer than clarithromycin for interactions — but retains a documented QT and arrhythmia signal.",
+      "source": "US SPL; CredibleMeds known-risk listing.", "reviewed": "2026-07-25"
+    },
+
+    "ciprofloxacin": {
+      "class": "Fluoroquinolone antibiotic", "atc": "J01MA02", "rxcui": "2551",
+      "cyp": {"substrate": {}, "inhibitor": {"CYP1A2": "strong"}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 2},
+      "qt": "possible", "hr": "none", "bp": "none",
+      "renal": "Reduce dose in renal impairment.",
+      "notes": "Contraindicated with tizanidine (strong CYP1A2 inhibition causes severe hypotension and sedation). Lowers seizure threshold, additively with tramadol and TCAs. Tendinopathy risk, increased by concurrent corticosteroids.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "levofloxacin": {
+      "class": "Fluoroquinolone antibiotic", "atc": "J01MA12", "rxcui": "82122",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 1, "seizure": 2},
+      "qt": "known", "hr": "none", "bp": "none",
+      "renal": "Reduce dose in renal impairment.", "renal_critical": true,
+      "notes": "Greater QT signal than ciprofloxacin; no significant CYP1A2 inhibition so no tizanidine contraindication. Tendinopathy risk increased by corticosteroids.",
+      "source": "US SPL; CredibleMeds known-risk listing.", "reviewed": "2026-07-25"
+    },
+
+    "fluconazole": {
+      "class": "Azole antifungal", "atc": "J02AC01", "rxcui": "4450",
+      "cyp": {"substrate": {}, "inhibitor": {"CYP3A4": "moderate", "CYP2C19": "strong", "CYP2C9": "moderate"}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "known", "hr": "none", "bp": "none",
+      "notes": "Even a single high dose meaningfully inhibits CYP3A4 and CYP2C19. Independent QT prolongation. Raises statin, colchicine and domperidone exposure.",
+      "source": "US SPL; CredibleMeds known-risk listing.", "reviewed": "2026-07-25"
+    },
+
+    "linezolid": {
+      "class": "Oxazolidinone antibiotic / reversible MAO inhibitor", "atc": "J01XX08", "rxcui": "190376",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 3, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "increase",
+      "mao_inhibitor": true,
+      "notes": "A reversible non-selective monoamine oxidase inhibitor that is rarely recognised as one because it is prescribed as an antibiotic. Combination with an SSRI, SNRI, TCA or tramadol carries a serious serotonin-syndrome risk. Also produces hypertensive responses with sympathomimetics and tyramine.",
+      "source": "US SPL; documented serotonin-syndrome reports.", "reviewed": "2026-07-25"
+    },
+
+    "sumatriptan": {
+      "class": "5HT1B/1D agonist triptan", "atc": "N02CC01", "rxcui": "37418",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 2, "sedation": 0, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "increase",
+      "notes": "Vasoconstrictor; contraindicated in ischaemic heart disease and uncontrolled hypertension. Serotonergic contribution alongside SSRIs and SNRIs is real but the clinical risk of serotonin syndrome from this combination alone is generally considered low.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "hydroxyzine": {
+      "class": "First-generation antihistamine", "atc": "N05BB01", "rxcui": "5553",
+      "cyp": {"substrate": {"CYP3A4": "moderate"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 3, "serotonergic": 0, "sedation": 3, "constipating": 2, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "known", "hr": "none", "bp": "none",
+      "notes": "Strongly anticholinergic and sedating with a documented QT signal — dose and duration restrictions apply in several countries. A poor choice when anticholinergic burden or QT risk is already present.",
+      "source": "US SPL; EU restrictions; CredibleMeds known-risk listing.", "reviewed": "2026-07-25"
+    },
+
+    "chlorpheniramine": {
+      "class": "First-generation antihistamine", "atc": "R06AB04", "rxcui": "2400",
+      "cyp": {"substrate": {"CYP2D6": "moderate"}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 3, "serotonergic": 0, "sedation": 3, "constipating": 2, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "notes": "Present in very many over-the-counter cold and cough combinations in India, which is exactly how unrecognised anticholinergic burden accumulates. Check combination products.",
+      "duplication_watch": true,
+      "source": "US SPL; ACB scale.", "reviewed": "2026-07-25"
+    },
+
+    "cetirizine": {
+      "class": "Second-generation antihistamine", "atc": "R06AE07", "rxcui": "20610",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 1, "serotonergic": 0, "sedation": 1, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "renal": "Reduce dose in renal impairment.",
+      "notes": "Much lower anticholinergic and sedative burden than the first-generation agents; the sensible substitution when burden is already high.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "levocetirizine": {
+      "class": "Second-generation antihistamine", "atc": "R06AE09", "rxcui": "612430",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 1, "serotonergic": 0, "sedation": 1, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "renal": "Reduce dose in renal impairment.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "lactulose": {
+      "class": "Osmotic laxative", "atc": "A06AD11", "rxcui": "6218",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": -2, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "notes": "Counteracts constipating burden. Bloating and flatulence limit tolerance in some people.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+
+    "polyethylene_glycol": {
+      "class": "Osmotic laxative", "atc": "A06AD15", "rxcui": "8516",
+      "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+      "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 0, "constipating": -2, "bleeding": 0, "nephrotoxic": 0, "seizure": 0},
+      "qt": "none", "hr": "none", "bp": "none",
+      "notes": "Generally better tolerated than lactulose for sustained use; minimal interaction potential.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    }
+
+  },
+
+  "synonyms": {
+    "nortriptylene": "nortriptyline", "nortryptiline": "nortriptyline", "nortrip": "nortriptyline",
+    "paroxetin": "paroxetine", "paxil": "paroxetine", "paroxitene": "paroxetine", "paroxitine": "paroxetine",
+    "verapramil": "verapamil", "verapamill": "verapamil", "calan": "verapamil",
+    "acetaminophen": "paracetamol", "pcm": "paracetamol", "crocin": "paracetamol", "dolo": "paracetamol",
+    "hyoscine": "hyoscine_butylbromide", "buscopan": "hyoscine_butylbromide",
+    "peg": "polyethylene_glycol", "peg3350": "polyethylene_glycol", "macrogol": "polyethylene_glycol",
+    "cipro": "ciprofloxacin", "levoflox": "levofloxacin",
+    "pan": "pantoprazole", "panto": "pantoprazole",
+    "cyclobenzaprin": "cyclobenzaprine", "amitryptiline": "amitriptyline",
+    "pregablin": "pregabalin", "gabapentine": "gabapentin",
+    "dicycloverine": "dicyclomine", "cyclopam": "dicyclomine",
+    "thiocolchicoside_": "thiocolchicoside", "tcc": "thiocolchicoside",
+    "etoricoxib_": "etoricoxib", "etoshine": "etoricoxib",
+    "ultracet": "tramadol", "tramadol_paracetamol": "tramadol"
+  }
+}

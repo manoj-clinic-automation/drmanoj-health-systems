@@ -1,0 +1,14 @@
+[Unit]
+Description=FitLog - personal physical capacity engine
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root/fitlog
+EnvironmentFile=-/root/fitlog/.env
+ExecStart=/usr/bin/python3 -m gunicorn -w 2 -b 127.0.0.1:8040 app:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

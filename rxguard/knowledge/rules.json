@@ -1,0 +1,410 @@
+{
+  "_meta": {
+    "schema": "medsafe-rules/1",
+    "version": "1.0.0",
+    "reviewed": "2026-07-25",
+    "note": "Named rules for effects the generic property engine cannot derive. Property-based logic (CYP substrate/inhibitor matching, additive burden scoring, renal dose checks) is computed in code and is not duplicated here. Every rule carries a source and a reviewed date; the app flags rules past the staleness threshold.",
+    "flags": ["RED", "AMBER", "UNKNOWN"],
+    "flag_note": "There is deliberately no GREEN. Absence of a flag means nothing was found in this knowledge base, not that the combination is safe."
+  },
+
+  "pairwise": [
+    {
+      "id": "PW001", "a": "paroxetine", "b": "nortriptyline", "flag": "RED",
+      "title": "Paroxetine raises nortriptyline exposure via strong CYP2D6 inhibition",
+      "mechanism": "Paroxetine is a strong CYP2D6 inhibitor. Nortriptyline is cleared principally by CYP2D6. Co-administration converts a normal metaboliser into a functional poor metaboliser, and nortriptyline concentrations can rise several-fold on an unchanged dose.",
+      "consequence": "Dose-dependent tricyclic toxicity at an apparently modest prescribed dose: tachycardia, blood-pressure change, anticholinergic effects including constipation, and at higher exposure QRS widening and QT prolongation. Additionally both drugs are serotonergic.",
+      "monitoring": "Heart rate and blood pressure after any dose increase. ECG for QRS and QTc if exposure is high or symptoms occur. Nortriptyline level is the definitive test and is the fastest way to settle whether the dose or the interaction is the problem.",
+      "action": "If both are required, treat the effective nortriptyline dose as substantially higher than the number prescribed. A level measured at steady state resolves the ambiguity. Sertraline or escitalopram would remove the 2D6 inhibition if the SSRI is the more flexible component.",
+      "source": "US SPL for both agents; well-characterised CYP2D6 inhibition data.",
+      "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW002", "a": "paroxetine", "b": "tramadol", "flag": "RED",
+      "title": "Paroxetine blocks tramadol activation while raising serotonergic load",
+      "mechanism": "Tramadol is a prodrug requiring CYP2D6 to form O-desmethyltramadol, which carries the opioid analgesia. Strong 2D6 inhibition by paroxetine reduces formation of the active metabolite and increases the serotonergic parent drug.",
+      "consequence": "Two effects at once, pulling in opposite directions clinically. Analgesia is reduced or absent, while serotonin-syndrome and seizure-threshold risk rise. The natural response to poor pain relief, increasing the dose, worsens both.",
+      "monitoring": "If used, watch for tremor, clonus, agitation, hyperreflexia, diaphoresis and fever. Do not escalate the dose to chase analgesia.",
+      "action": "Prefer an analgesic that does not depend on CYP2D6. Paracetamol, an NSAID if renal function and blood pressure allow, or tapentadol are the practical alternatives.",
+      "personal_relevance": "Directly relevant to self-treated MSK and radicular episodes, where tramadol is an obvious reach and the failure mode is silent.",
+      "source": "US SPL for both agents; established 2D6 prodrug pharmacology.",
+      "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW003", "a": "paroxetine", "b": "codeine", "flag": "AMBER",
+      "title": "Paroxetine blocks codeine activation",
+      "mechanism": "Codeine requires CYP2D6 conversion to morphine. Strong 2D6 inhibition prevents this.",
+      "consequence": "Analgesia largely fails while constipation and sedation persist. All of the burden, none of the benefit.",
+      "action": "Choose an analgesic not dependent on CYP2D6.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW004", "a": "paroxetine", "b": "metoprolol", "flag": "AMBER",
+      "title": "Paroxetine substantially raises metoprolol exposure",
+      "mechanism": "Metoprolol is largely cleared by CYP2D6; strong inhibition can multiply exposure several-fold.",
+      "consequence": "Bradycardia, hypotension, fatigue and loss of beta-1 selectivity.",
+      "monitoring": "Heart rate and blood pressure after starting either drug.",
+      "action": "Bisoprolol or atenolol are not meaningfully CYP2D6-dependent and avoid the problem.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW005", "a": "verapamil", "b": "nortriptyline", "flag": "AMBER",
+      "title": "Opposing cardiac effects mask each other, with additive constipation",
+      "mechanism": "Verapamil slows the heart and depresses AV conduction; nortriptyline raises heart rate through anticholinergic and noradrenergic effects. Constipation is additive, verapamil being dose-relatedly constipating and nortriptyline anticholinergic.",
+      "consequence": "The cardiac effects partly cancel, so heart rate may look unremarkable while both drugs are exerting significant and opposing effects on conduction. A normal resting rate here is not reassurance. Constipation, by contrast, is straightforwardly additive.",
+      "monitoring": "ECG rather than pulse alone if conduction is a concern. Track bowel function actively.",
+      "source": "Product information for both agents; pharmacodynamic reasoning.",
+      "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW006", "a": "verapamil", "b": "simvastatin", "flag": "RED",
+      "title": "Verapamil raises simvastatin exposure with myopathy risk",
+      "mechanism": "Moderate CYP3A4 inhibition by verapamil raises simvastatin concentrations.",
+      "consequence": "Myopathy and rhabdomyolysis. Labelled dose restrictions apply.",
+      "monitoring": "Muscle pain or weakness; creatine kinase if symptomatic.",
+      "action": "Rosuvastatin or pravastatin avoid the interaction entirely.",
+      "source": "US SPL dose restriction.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW007", "a": "verapamil", "b": "domperidone", "flag": "RED",
+      "title": "Verapamil raises domperidone exposure and QT risk",
+      "mechanism": "Domperidone is a CYP3A4 substrate with dose- and exposure-dependent QT prolongation. Verapamil is a moderate 3A4 inhibitor.",
+      "consequence": "Increased QT prolongation and ventricular arrhythmia risk. Regulators restrict domperidone dose and duration for this reason and specifically caution against CYP3A4 inhibitors.",
+      "monitoring": "ECG QTc; potassium and magnesium.",
+      "action": "Avoid the combination. If a prokinetic is genuinely needed, reconsider the indication and duration.",
+      "personal_relevance": "Domperidone is freely available in India and an obvious reach for GI symptoms, which makes this a realistic accidental combination.",
+      "source": "EU/UK regulatory restrictions; CredibleMeds.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW008", "a": "verapamil", "b": "digoxin", "flag": "RED",
+      "title": "Verapamil raises digoxin levels via P-glycoprotein inhibition",
+      "mechanism": "Verapamil is a potent P-gp inhibitor; digoxin is a P-gp substrate with a narrow therapeutic index. Both also slow AV conduction.",
+      "consequence": "Digoxin toxicity plus additive bradycardia and AV block.",
+      "monitoring": "Digoxin level, heart rate, ECG, potassium.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW009", "a": "verapamil", "b": "colchicine", "flag": "RED",
+      "title": "Verapamil raises colchicine exposure with risk of severe toxicity",
+      "mechanism": "Colchicine is both a CYP3A4 and a P-glycoprotein substrate with a narrow therapeutic index. Verapamil inhibits both pathways.",
+      "consequence": "Colchicine toxicity, which can be severe and has been fatal: myelosuppression, neuromyopathy, multi-organ failure. Onset may be delayed.",
+      "action": "Avoid, or use substantially reduced colchicine dosing with specialist input. Risk is higher still with renal impairment.",
+      "source": "US SPL contraindication/dose-reduction language; published fatal cases.",
+      "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW010", "a": "verapamil", "b": "ivabradine", "flag": "RED",
+      "title": "Verapamil raises ivabradine exposure and adds bradycardia",
+      "mechanism": "Ivabradine is a CYP3A4 substrate; verapamil inhibits 3A4 and independently slows the heart.",
+      "consequence": "Marked bradycardia.",
+      "action": "Combination specifically cautioned against in labelling.",
+      "source": "US SPL.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW011", "a": "ciprofloxacin", "b": "tizanidine", "flag": "RED",
+      "title": "Ciprofloxacin causes a large rise in tizanidine exposure",
+      "mechanism": "Tizanidine is cleared by CYP1A2; ciprofloxacin is a potent CYP1A2 inhibitor.",
+      "consequence": "Pronounced hypotension, bradycardia and sedation. This is a labelled contraindication, not a caution.",
+      "action": "Do not combine. Levofloxacin does not share the CYP1A2 effect.",
+      "personal_relevance": "Both are plausible self-treatment reaches — a muscle relaxant for an MSK episode and a quinolone for a urinary or GI infection — potentially started days apart by different routes.",
+      "source": "US SPL contraindication.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW012", "a": "clarithromycin", "b": "colchicine", "flag": "RED",
+      "title": "Clarithromycin causes severe colchicine toxicity",
+      "mechanism": "Strong dual CYP3A4 and P-glycoprotein inhibition raises colchicine exposure sharply.",
+      "consequence": "Life-threatening colchicine toxicity, with published fatalities.",
+      "action": "Do not combine.",
+      "source": "US SPL; published fatal cases.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW013", "a": "clarithromycin", "b": "simvastatin", "flag": "RED",
+      "title": "Clarithromycin contraindicated with simvastatin",
+      "mechanism": "Strong CYP3A4 inhibition markedly raises simvastatin exposure.",
+      "consequence": "Rhabdomyolysis.",
+      "action": "Contraindicated. Withhold the statin for the antibiotic course, or use azithromycin.",
+      "source": "US SPL contraindication.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW014", "a": "clarithromycin", "b": "verapamil", "flag": "RED",
+      "title": "Clarithromycin raises verapamil exposure",
+      "mechanism": "Strong CYP3A4 inhibition of a 3A4-cleared calcium channel blocker.",
+      "consequence": "Hypotension, bradycardia, AV block and acute kidney injury have been reported, particularly in older patients.",
+      "action": "Avoid; azithromycin is the safer macrolide here.",
+      "source": "US SPL; published pharmacoepidemiology.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW015", "a": "omeprazole", "b": "clopidogrel", "flag": "AMBER",
+      "title": "Omeprazole reduces clopidogrel activation",
+      "mechanism": "Clopidogrel is a prodrug requiring CYP2C19; omeprazole and esomeprazole inhibit CYP2C19.",
+      "consequence": "Reduced antiplatelet effect.",
+      "action": "Use pantoprazole or rabeprazole instead.",
+      "source": "US SPL caution.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW016", "a": "linezolid", "b": "paroxetine", "flag": "RED",
+      "title": "Linezolid is a monoamine oxidase inhibitor",
+      "mechanism": "Linezolid reversibly and non-selectively inhibits monoamine oxidase. Combined with a serotonin reuptake inhibitor this produces a high serotonergic load.",
+      "consequence": "Serotonin syndrome, which can be severe.",
+      "action": "Avoid. If linezolid is unavoidable, the serotonergic agent generally needs to be withheld with specialist input, allowing for washout.",
+      "note": "The same applies to linezolid with any SSRI, SNRI, TCA or tramadol. Easily missed because linezolid is prescribed as an antibiotic.",
+      "source": "US SPL warning; published serotonin-syndrome reports.",
+      "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW017", "a": "paroxetine", "b": "diclofenac", "flag": "AMBER",
+      "title": "SSRI plus NSAID substantially increases gastrointestinal bleeding risk",
+      "mechanism": "SSRIs deplete platelet serotonin and impair aggregation; NSAIDs damage mucosa and inhibit platelet cyclo-oxygenase. The combination is more than additive in observational data.",
+      "consequence": "Upper gastrointestinal bleeding. Risk rises further with aspirin or a corticosteroid.",
+      "action": "If an NSAID course is needed, co-prescribe a proton pump inhibitor and keep the course short.",
+      "note": "Applies to any SSRI or SNRI with any NSAID.",
+      "personal_relevance": "Directly relevant to self-treated MSK episodes while an SSRI is ongoing.",
+      "source": "Published observational data; class labelling.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW018", "a": "diclofenac", "b": "prednisolone", "flag": "AMBER",
+      "title": "NSAID plus corticosteroid increases ulcer risk",
+      "mechanism": "Additive mucosal injury and impaired healing.",
+      "consequence": "Peptic ulceration and bleeding.",
+      "action": "Avoid combining, or co-prescribe gastroprotection and keep the overlap brief.",
+      "source": "Class labelling.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW019", "a": "nortriptyline", "b": "tramadol", "flag": "AMBER",
+      "title": "Additive seizure-threshold lowering and serotonergic load",
+      "mechanism": "Both lower seizure threshold; both contribute serotonergic activity.",
+      "consequence": "Seizure risk and serotonin syndrome, particularly at higher doses or with rapid escalation.",
+      "monitoring": "Tremor, clonus, agitation, hyperreflexia.",
+      "source": "US SPL for both agents.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW020", "a": "nortriptyline", "b": "cyclobenzaprine", "flag": "AMBER",
+      "title": "Cyclobenzaprine is structurally a tricyclic — effectively duplicate therapy",
+      "mechanism": "Cyclobenzaprine shares the tricyclic structure and adds anticholinergic, sedative, serotonergic and tachycardic effects to an existing TCA.",
+      "consequence": "Compounded anticholinergic burden, sedation, tachycardia and constipation, plus conduction effects. Rarely recognised because it is prescribed as a muscle relaxant.",
+      "action": "Prefer a non-tricyclic relaxant if one is needed.",
+      "personal_relevance": "A likely and easily missed addition during an MSK episode.",
+      "source": "US SPL; structural pharmacology.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW021", "a": "tizanidine", "b": "verapamil", "flag": "AMBER",
+      "title": "Additive hypotension and bradycardia",
+      "mechanism": "Alpha-2 agonism plus calcium channel blockade.",
+      "consequence": "Symptomatic hypotension, dizziness, bradycardia.",
+      "monitoring": "Blood pressure sitting and standing after the first doses.",
+      "source": "Product information; pharmacodynamic reasoning.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW022", "a": "spironolactone", "b": "ramipril", "flag": "AMBER",
+      "title": "Additive hyperkalaemia",
+      "mechanism": "Both reduce potassium excretion.",
+      "consequence": "Hyperkalaemia, with arrhythmia risk. Worse with renal impairment or an added NSAID.",
+      "monitoring": "Potassium and creatinine within one to two weeks of starting or increasing either.",
+      "source": "Class labelling.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW023", "a": "fluconazole", "b": "domperidone", "flag": "RED",
+      "title": "Fluconazole raises domperidone exposure, with additive QT effect",
+      "mechanism": "CYP3A4 inhibition plus independent QT prolongation by both drugs.",
+      "consequence": "Substantial QT prolongation and arrhythmia risk.",
+      "action": "Avoid.",
+      "source": "Regulatory restrictions; CredibleMeds.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "PW024", "a": "ciprofloxacin", "b": "prednisolone", "flag": "AMBER",
+      "title": "Fluoroquinolone plus corticosteroid increases tendon rupture risk",
+      "mechanism": "Additive effect on tendon collagen.",
+      "consequence": "Tendinopathy and rupture, classically Achilles, risk increased with age.",
+      "action": "Avoid the combination where an alternative antibiotic will do; warn about tendon pain.",
+      "source": "Class boxed warning.", "reviewed": "2026-07-25"
+    }
+  ],
+
+  "condition_rules": [
+    {
+      "id": "CR001", "condition": "constipation", "trigger": {"burden": "constipating", "min": 3},
+      "flag": "AMBER",
+      "title": "Constipating burden on a background of constipation",
+      "consequence": "Worsening constipation, which in turn drives use of further drugs and can be misread as disease progression.",
+      "action": "Total the constipating contributors and consider substituting the most replaceable one. Anticholinergic antispasmodics and non-dihydropyridine calcium channel blockers are usually the largest single contributors.",
+      "source": "Personal constraint plus class pharmacology.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "CR002", "condition": "ventricular_ectopy", "trigger": {"qt_any": true},
+      "flag": "AMBER",
+      "title": "QT-affecting drug on a background of documented ventricular ectopy",
+      "consequence": "Pre-existing ventricular ectopy raises the clinical significance of any added QT prolongation or conduction effect.",
+      "monitoring": "Baseline and post-initiation ECG with QTc measured, and potassium and magnesium checked, before treating the addition as routine.",
+      "source": "Personal constraint plus established QT risk-factor stacking.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "CR003", "condition": "ventricular_ectopy", "trigger": {"qt_level": "known"},
+      "flag": "RED",
+      "title": "Known QT-prolonging drug with documented ventricular ectopy",
+      "consequence": "Recognised risk of torsades de pointes when a known QT-prolonging agent is added to a substrate of existing ventricular irritability, particularly with electrolyte disturbance or bradycardia.",
+      "action": "Establish baseline QTc and correct potassium and magnesium before starting. Prefer an agent without a known QT signal.",
+      "source": "CredibleMeds risk-factor framework.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "CR004", "condition": "hypertension", "trigger": {"bp": "increase"},
+      "flag": "AMBER",
+      "title": "Blood-pressure-raising drug with hypertension",
+      "consequence": "Loss of blood-pressure control, and blunting of existing antihypertensive therapy in the case of NSAIDs.",
+      "monitoring": "Home blood pressure before and one to two weeks after starting.",
+      "source": "Class labelling.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "CR005", "condition": "renal_impairment", "trigger": {"nephrotoxic": 2},
+      "flag": "RED",
+      "title": "Nephrotoxic drug with existing renal impairment",
+      "consequence": "Further decline in renal function, potentially acute.",
+      "action": "Avoid NSAIDs. Where an analgesic is needed, paracetamol within hepatic limits is the safer starting point.",
+      "source": "Class labelling.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "CR006", "condition": "renal_impairment", "trigger": {"renal_critical": true},
+      "flag": "AMBER",
+      "title": "Renally cleared drug requiring dose adjustment",
+      "consequence": "Accumulation and dose-dependent toxicity on a nominally standard dose.",
+      "action": "Check the renal dosing entry for this drug and adjust before starting.",
+      "source": "Product labelling.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "CR007", "condition": "bradycardia", "trigger": {"hr": "decrease"},
+      "flag": "AMBER",
+      "title": "Rate-lowering drug with existing bradycardia",
+      "consequence": "Symptomatic bradycardia or AV block.",
+      "monitoring": "Heart rate and ECG.",
+      "source": "Class labelling.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "CR008", "condition": "hypokalaemia", "trigger": {"qt_any": true},
+      "flag": "RED",
+      "title": "QT-affecting drug with low potassium",
+      "consequence": "Hypokalaemia is an independent and potent risk factor for torsades de pointes. It converts a modest QT effect into a serious one.",
+      "action": "Correct potassium and magnesium before starting, not after.",
+      "source": "Established QT risk-factor framework.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "CR009", "condition": "peptic_ulcer", "trigger": {"burden": "bleeding", "min": 2},
+      "flag": "RED",
+      "title": "Bleeding-risk drug with peptic ulcer history",
+      "consequence": "Recurrent ulceration and gastrointestinal haemorrhage.",
+      "action": "Avoid NSAIDs; co-prescribe gastroprotection if unavoidable.",
+      "source": "Class labelling.", "reviewed": "2026-07-25"
+    }
+  ],
+
+  "burden_thresholds": {
+    "anticholinergic": {"amber": 3, "red": 5,
+      "consequence": "Dry mouth, constipation, urinary hesitancy, blurred vision, tachycardia, and cognitive slowing. Cumulative burden matters more than any single agent.",
+      "monitoring": "Bowel function, heart rate, cognition."},
+    "serotonergic": {"amber": 4, "red": 6,
+      "consequence": "Serotonin syndrome: tremor, clonus, hyperreflexia, agitation, diaphoresis, hyperthermia. Onset is usually within 24 hours of the precipitating change.",
+      "monitoring": "Clonus and hyperreflexia are the most specific early signs."},
+    "sedation": {"amber": 4, "red": 6,
+      "consequence": "Daytime sedation, impaired concentration, falls, and with opioids plus gabapentinoids a recognised respiratory-depression risk.",
+      "monitoring": "Daytime alertness; avoid driving after any increase."},
+    "constipating": {"amber": 3, "red": 5,
+      "consequence": "Constipation severe enough to prompt further prescribing or to be misattributed to underlying gastrointestinal disease.",
+      "monitoring": "Bowel frequency and stool form."},
+    "bleeding": {"amber": 3, "red": 5,
+      "consequence": "Gastrointestinal and other bleeding.",
+      "monitoring": "Haemoglobin, stool colour, bruising."},
+    "nephrotoxic": {"amber": 3, "red": 4,
+      "consequence": "Acute kidney injury, particularly with volume depletion or an intercurrent illness.",
+      "monitoring": "Creatinine and eGFR."},
+    "seizure": {"amber": 4, "red": 6,
+      "consequence": "Lowered seizure threshold.",
+      "monitoring": "Any myoclonic jerking or aura-like symptoms."}
+  },
+
+  "qt_weights": {"none": 0, "conditional": 1, "possible": 2, "known": 3},
+  "qt_thresholds": {"amber": 3, "red": 5},
+  "qt_modifiers": {
+    "hypokalaemia": 2, "hypomagnesaemia": 2, "bradycardia": 1,
+    "known_ectopy": 2, "qtc_prolonged": 3, "structural_heart_disease": 1
+  },
+
+  "withdrawal_rules": [
+    {
+      "id": "WD001", "trigger": "stop_or_decrease", "property": "withdrawal", "level": "high",
+      "flag": "AMBER",
+      "title": "Discontinuation syndrome expected on stopping or reducing",
+      "consequence": "Dizziness, electric-shock sensations, irritability, nausea, insomnia and flu-like symptoms. Frequently misread as relapse of the original condition or as a new illness, which leads to the drug being restarted unnecessarily.",
+      "action": "Taper gradually rather than stopping. Symptoms appearing within days of a dose reduction, and resolving when the dose is restored, point to withdrawal rather than relapse.",
+      "source": "Product labelling; established class effect.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "WD002", "trigger": "stop", "property": "cyp_inhibitor",
+      "flag": "AMBER",
+      "title": "Stopping an enzyme inhibitor raises clearance of its substrates — the mirror-image interaction",
+      "consequence": "Concentrations of co-prescribed substrates fall, sometimes substantially, over days to weeks. A dose that was effective becomes subtherapeutic, and the loss of effect is usually attributed to tolerance or disease progression rather than to the drug that was stopped.",
+      "action": "Identify which current drugs depend on the inhibited enzyme and anticipate falling levels. This is the interaction most reliably missed, because nothing was added.",
+      "note": "Stopping paroxetine while nortriptyline continues is the concrete case: nortriptyline clearance rises and levels fall.",
+      "source": "Pharmacokinetic first principles.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "WD003", "trigger": "stop", "drugs": ["prednisolone", "methylprednisolone"],
+      "flag": "AMBER",
+      "title": "Adrenal suppression after a prolonged corticosteroid course",
+      "consequence": "Adrenal insufficiency on abrupt withdrawal after roughly three weeks or more of treatment.",
+      "action": "Taper rather than stop.",
+      "source": "Class labelling.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "WD004", "trigger": "stop", "drugs": ["tizanidine", "metoprolol", "bisoprolol", "atenolol", "carvedilol"],
+      "flag": "AMBER",
+      "title": "Rebound hypertension and tachycardia on abrupt withdrawal",
+      "consequence": "Rebound rise in heart rate and blood pressure, with ischaemic risk in those with coronary disease.",
+      "action": "Taper over one to two weeks.",
+      "source": "Class labelling.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "WD005", "trigger": "stop", "drugs": ["baclofen"],
+      "flag": "RED",
+      "title": "Baclofen withdrawal syndrome",
+      "consequence": "Seizures, hallucinations and a hyperthermic syndrome after abrupt withdrawal of prolonged treatment.",
+      "action": "Taper.",
+      "source": "US SPL warning.", "reviewed": "2026-07-25"
+    },
+    {
+      "id": "WD006", "trigger": "stop", "drugs": ["clonazepam", "alprazolam"],
+      "flag": "RED",
+      "title": "Benzodiazepine withdrawal",
+      "consequence": "Rebound anxiety and insomnia, and after sustained use seizures.",
+      "action": "Taper slowly.",
+      "source": "Class labelling.", "reviewed": "2026-07-25"
+    }
+  ],
+
+  "symptom_map": {
+    "_note": "Used by the new-symptom screen to rank recent medication changes against a presenting symptom. Not diagnostic — it orders which drug changes deserve a look first.",
+    "palpitations": ["hr:increase", "burden:anticholinergic", "qt:any", "withdrawal:high"],
+    "tachycardia": ["hr:increase", "burden:anticholinergic", "withdrawal:high"],
+    "bradycardia": ["hr:decrease"],
+    "dizziness": ["bp:decrease", "burden:sedation", "withdrawal:high"],
+    "raised_bp": ["bp:increase", "withdrawal:high"],
+    "constipation": ["burden:constipating", "burden:anticholinergic"],
+    "diarrhoea": ["burden:constipating:negative"],
+    "dry_mouth": ["burden:anticholinergic"],
+    "urinary_hesitancy": ["burden:anticholinergic"],
+    "blurred_vision": ["burden:anticholinergic"],
+    "sedation": ["burden:sedation"],
+    "insomnia": ["bp:increase", "withdrawal:high"],
+    "tremor": ["burden:serotonergic"],
+    "sweating": ["burden:serotonergic"],
+    "agitation": ["burden:serotonergic", "withdrawal:high"],
+    "myoclonus": ["burden:serotonergic", "burden:seizure", "renal_critical"],
+    "muscle_pain": ["class:Statin"],
+    "ankle_swelling": ["oedema"],
+    "gi_bleeding": ["burden:bleeding"],
+    "nausea": ["withdrawal:high", "burden:serotonergic"],
+    "confusion": ["burden:anticholinergic", "burden:sedation", "renal_critical"],
+    "falls": ["burden:sedation", "bp:decrease"],
+    "rash": ["any_recent"],
+    "headache": ["any_recent"],
+    "abdominal_pain": ["any_recent"],
+    "other": ["any_recent"]
+  }
+}

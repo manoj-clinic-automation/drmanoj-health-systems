@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "protocols": [
+    {"id": "P_OT_PRE", "event_type": "OT", "phase": "pre", "condition": "always", "title": "Pre-OT Primer (5 min)",
+     "steps": ["Glute bridge x10", "Standing hip extension x8/side", "Calf raise x15", "Hip hinge x8", "Thoracic opener x5", "March in place 30s"]},
+    {"id": "P_OT_POST", "event_type": "OT", "phase": "post", "condition": "always", "title": "Post-OT Recovery (30 min)",
+     "steps": ["Hydration + protein within 60 min", "Normatec Legs — 20 min", "Heat to lumbar — 10 min (parallel ok)", "5-min mobility: pelvic tilt, knee-to-chest, hinge"]},
+    {"id": "P_OT_POST_HEAVY", "event_type": "OT", "phase": "post", "condition": "intensity>=3", "title": "Post-OT Recovery — Heavy Day (45 min)",
+     "steps": ["Hydration + protein within 60 min", "Normatec Legs — 20 min", "Normatec Hip — 15 min", "Heat to lumbar — 10 min", "5-min mobility"]},
+    {"id": "P_SOC_PRE", "event_type": "SOCIAL", "phase": "pre", "condition": "always", "title": "Pre-Outing Primer (3 min)",
+     "steps": ["Glute bridge x10", "Calf raise x15", "Hip hinge x8"]},
+    {"id": "P_SOC_POST", "event_type": "SOCIAL", "phase": "post", "condition": "always", "title": "Post-Outing Reset (5 min)",
+     "steps": ["5-min mobility next morning: pelvic tilt, knee-to-chest, gentle hinge"]},
+    {"id": "P_TRV_CAR_PRE", "event_type": "TRAVEL", "phase": "pre", "condition": "mode=car", "title": "Pre-Drive Mobility (5 min)",
+     "steps": ["Pelvic tilt x10", "Hip hinge x8", "Calf raise x15", "Thoracic opener x5"]},
+    {"id": "P_TRV_CAR_TRANSIT", "event_type": "TRAVEL", "phase": "transit", "condition": "mode=car & leg>=2", "title": "Drive Breaks",
+     "steps": ["Stop every 90-120 min", "At each stop: 3-min walk", "Hip extension x8/side", "Hip hinge x8"]},
+    {"id": "P_TRV_CAR_POST", "event_type": "TRAVEL", "phase": "post", "condition": "mode=car", "title": "Arrival Reset",
+     "steps": ["10-min walk", "5-min mobility"]},
+    {"id": "P_TRV_FLT_SHORT_PRE", "event_type": "TRAVEL", "phase": "pre", "condition": "mode=flight & leg<3", "title": "Pre-Flight Mobility (5 min)",
+     "steps": ["Pelvic tilt x10", "Hip hinge x8", "Calf raise x15"]},
+    {"id": "P_TRV_FLT_SHORT_TRANSIT", "event_type": "TRAVEL", "phase": "transit", "condition": "mode=flight & leg<3", "title": "In-Flight (short leg)",
+     "steps": ["Seated calf pumps x20 every 30 min", "Glute squeezes x10 every 30 min", "Stand once mid-flight if possible"]},
+    {"id": "P_TRV_FLT_SHORT_POST", "event_type": "TRAVEL", "phase": "post", "condition": "mode=flight & leg<3", "title": "Arrival Reset",
+     "steps": ["10-min walk on arrival", "5-min mobility"]},
+    {"id": "P_TRV_FLT_LONG_PRE", "event_type": "TRAVEL", "phase": "pre", "condition": "mode=flight & leg>=3", "title": "Pre-Flight — Long Haul (8 min)",
+     "steps": ["Full 8-min mobility sequence", "Begin hydration now", "Request/choose aisle seat"]},
+    {"id": "P_TRV_FLT_LONG_TRANSIT", "event_type": "TRAVEL", "phase": "transit", "condition": "mode=flight & leg>=3", "title": "In-Flight — Long Haul",
+     "steps": ["STAND + aisle walk 3-5 min every 60-90 min", "Seated calf pumps x20 + isometric glute/quad 10s x5 every 30 min", "Water every hour", "Minimal alcohol / late caffeine"]},
+    {"id": "P_TRV_FLT_LONG_POST", "event_type": "TRAVEL", "phase": "post", "condition": "mode=flight & leg>=3", "title": "Arrival — Long Haul",
+     "steps": ["10-15 min walk on arrival day", "5-min mobility", "Normatec Hip if packed", "Tomorrow is auto-capped YELLOW (F10)"]}
+  ]
+}

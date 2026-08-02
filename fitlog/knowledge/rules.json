@@ -1,0 +1,41 @@
+{
+  "version": "1.0",
+  "thresholds": {
+    "recovery_pain": 8,
+    "recovery_pain_post_heavy": 6,
+    "red_pain": 7,
+    "red_sleep": 1,
+    "red_energy": 1,
+    "yellow_pain_lo": 4,
+    "yellow_pain_hi": 6,
+    "yellow_sleep": 2,
+    "yellow_energy": 2,
+    "exertion_cap_intensity": 2,
+    "long_flight_hr": 3,
+    "deload_rolling7_min": 150,
+    "deload_week_interval": 4,
+    "w01_pain_level": 5,
+    "w01_days": 7,
+    "w02_adherence_pct": 50,
+    "w02_window_days": 14,
+    "w03_analgesic_days": 3,
+    "w03_window_days": 14
+  },
+  "rules": [
+    {"id": "F01", "name": "Recovery floor", "desc": "pain >= 8, or pain >= 6 with intensity-3 exertion yesterday -> RECOVERY"},
+    {"id": "F02", "name": "Red floor", "desc": "pain >= 7 or sleep = 1 or energy = 1 -> RED"},
+    {"id": "F03", "name": "Yellow band", "desc": "pain 4-6 or sleep = 2 or energy = 2 -> cap YELLOW"},
+    {"id": "F04", "name": "Post-exertion cap", "desc": "exertion intensity >= 2 yesterday -> cap YELLOW"},
+    {"id": "F05", "name": "Pre-exertion protect", "desc": "exertion intensity >= 2 scheduled tomorrow -> cap YELLOW"},
+    {"id": "F06", "name": "Travel mode", "desc": "inside travel period -> TRAVEL portable set"},
+    {"id": "F07", "name": "Deload", "desc": "rolling 7-day minutes > threshold, or every 4th training week -> DELOAD"},
+    {"id": "F08", "name": "Time trim", "desc": "available minutes < verdict duration -> trim session, verdict unchanged"},
+    {"id": "F09", "name": "All clear", "desc": "no rule fired -> GREEN"},
+    {"id": "F10", "name": "Long-haul flight", "desc": "flight leg >= 3h today -> transit set replaces session; yesterday -> cap YELLOW"},
+    {"id": "F11", "name": "Event PRE card", "desc": "event today with PRE protocol -> surface PRE card; never changes verdict"},
+    {"id": "W01", "name": "Persistent site pain", "desc": "same site >= 5 for >= 7 consecutive check-ins -> review flag"},
+    {"id": "W02", "name": "Adherence friction", "desc": "adherence < 50% over 14 days -> system-review flag"},
+    {"id": "W03", "name": "Analgesic frequency", "desc": "analgesic logged on >= 3 days in rolling 14 -> review flag"}
+  ],
+  "verdict_minutes": {"GREEN": [30, 40], "YELLOW": [15, 20], "RED": [5, 8], "RECOVERY": [25, 35], "DELOAD": [15, 20], "TRAVEL": [5, 10]}
+}
