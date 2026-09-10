@@ -5,8 +5,8 @@ GutLog v3.3.1 -> v3.3.2  ::  dose variants on a scheduled medicine
 
 THE PROBLEM
 -----------
-Linaclotide is taken every morning, but the dose varies across 72, 145 and
-290 mcg, and is sometimes a combination such as 145 + 72.
+One scheduled medicine is taken every morning, but its dose varies across
+three strengths, and is sometimes a combination of two of them.
 
 None of the three obvious models works:
   - three scheduled rows, one per strength: one is taken, so the day sits

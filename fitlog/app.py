@@ -612,7 +612,7 @@ def tests():
 def epochs_block():
     rows = db().execute("SELECT * FROM med_epochs ORDER BY date_start DESC").fetchall()
     lst = "".join(f"<tr><td>{r['label']}</td><td class=small>{r['date_start']} \u2192 {r['date_end'] or 'ongoing'}</td></tr>" for r in rows)
-    return f"""<form method=post action="/epochs"><input name=label placeholder="e.g. Nortriptyline taper" required>
+    return f"""<form method=post action="/epochs"><input name=label placeholder="e.g. medication taper" required>
     <div style="display:flex;gap:6px"><input type=date name=ds style="flex:1"><input type=date name=de style="flex:1"></div>
     <button class="btn-sm">Add epoch</button></form><table>{lst}</table>"""
 

@@ -28,30 +28,48 @@ Python 3.9 compatible.
 """
 
 import argparse
+import json
 import os
 import sqlite3
 import sys
 
 DB = "/root/gutlog/health3.db"
 
-# (fragment, group label). Order here is the order on screen.
-ORDER = [
-    ("Colospa",      "gut"),
-    ("Drotaverine",  "gut"),
-    ("Peppermint",   "gut"),
-    ("Paracetamol",  "pain"),
-    ("Etoricoxib",   "pain"),
-    ("Psyllium",     "bowel"),
-    ("Cremaffin",    "bowel"),
-    ("PEG",          "bowel"),
-    ("Electral",     "bowel"),
-    ("Probiotic",    "bowel"),
-    ("Allegra",      "allergy"),
-    ("Bilastine",    "allergy"),
-    ("Fluticasone",  "allergy"),
-    ("Clonazepam",   "sleep"),
-    ("Zolpidem",     "sleep"),
-]
+# The ordering IS clinical data -- it names the medicines and groups them by
+# what they treat. It lives outside the repository, which is public.
+# See tools/NO_SECRETS.py.
+REGIMEN_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "regimen.local.json")
+
+
+def load_order():
+    """
+    (fragment, group) pairs. Order here is the order on screen.
+
+    Fails loudly rather than returning an empty list: a silent empty would
+    leave every sort value untouched and still print a clean-looking report
+    saying the job was done.
+    """
+    if not os.path.exists(REGIMEN_FILE):
+        print("FATAL: regimen data not found: " + REGIMEN_FILE)
+        print("")
+        print("That file is gitignored on purpose - it holds the medicine")
+        print("names, which this public repository must not carry. Copy it")
+        print("into the app directory on the server, or restore it from your")
+        print("own backup. Refusing to run rather than reorder nothing and")
+        print("report success.")
+        return None
+    try:
+        with open(REGIMEN_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except ValueError as exc:
+        print("FATAL: " + REGIMEN_FILE + " is not valid JSON: " + str(exc))
+        return None
+    rows = data.get("extra_order")
+    if not rows:
+        print("FATAL: 'extra_order' is missing or empty in " + REGIMEN_FILE)
+        return None
+    return [(r[0], r[1]) for r in rows]
 
 
 def main():
@@ -62,6 +80,10 @@ def main():
 
     if not os.path.exists(args.db):
         print("FATAL: db not found: " + args.db)
+        return 1
+
+    ORDER = load_order()
+    if ORDER is None:
         return 1
 
     con = sqlite3.connect(args.db)

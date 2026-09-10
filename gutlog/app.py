@@ -2,7 +2,7 @@
 """
 GutLog v3 - single-file personal health logger. Fresh schema (no v2 migration).
 Tabs: Log (day / episode / vitals) . Meals (library-backed picker, food tests) .
-Meds (per-dose PRN ledger, courses, buprenorphine patch) . Files (vault, labs,
+Meds (per-dose PRN ledger, courses, transdermal patch) . Files (vault, labs,
 consults) . Review (trends, FODMAP load, dose overlay, exports).
 Run:  gunicorn -w 2 -b 127.0.0.1:8020 app:app
 """
@@ -126,7 +126,7 @@ LIBRARY_SEED = [
  ("A","Poha","1 plate (~1.5 katori)",3,180,2,"L","",0,"","Low-FODMAP breakfast option"),
  ("A","Ragi roti / porridge","1 roti (~30 g flour)",2.2,100,3.4,"L","",0,"","Best calcium grain (344 mg Ca/80 g)"),
  ("A","Bajra roti","1 roti (~30 g flour)",3.5,105,3.4,"L","",0,"","Alternate with jowar on wheat-free days"),
- ("A","Oats (plain, cooked)","1/2 cup dry (~40 g)",5,150,4,"L","",0,"","Soluble fibre like psyllium"),
+ ("A","Oats (plain, cooked)","1/2 cup dry (~40 g)",5,150,4,"L","",0,"","Soluble fibre"),
  ("A","Sooji / upma","1 katori cooked",3.5,130,1,"M","",0,"","Wheat-derived; keep small"),
  ("A","Rusk + Amul butter","1 rusk + 1 tsp butter",1.5,90,0.5,"M","",0,"comfort","Maida rusk + butter; fructan at 2+"),
  ("A","Parle-G Gold","2 biscuits (~18 g)",1.2,85,0.3,"M","",0,"","2 = M, half-pack = high"),
@@ -207,13 +207,45 @@ LIBRARY_SEED = [
  ("H","Curd rice","1 katori rice + 3/4 katori curd",6.4,240,0.6,"L-M","",1,"","Gentle dinner alternative"),
 ]
 
-PRN_SEED = ["Colospa (mebeverine 135)","Drotaverine 80","Paracetamol 500",
-    "Etoricoxib 60","Allegra 180","Bilastine 20","Fluticasone nasal spray",
-    "Peppermint oil","Psyllium","PEG","Cremaffin","Clonazepam 0.5",
-    "Zolpidem 5","ORS","Probiotic"]
+def _course_chips():
+    """
+    Default chips for the 'Start a course' picker.
 
-DOCTOR_SEED = ["Prof. Ahuja (Gastro)","Dr. V.K. Srivastav (Psychiatry)",
-    "Ophthalmology","Orthopaedics","Physician","Other"]
+    These were four real drugs with doses, hardcoded in a public repository.
+    They are a prefill convenience for a free-text field, so an empty default
+    costs nothing but a little typing. Existing courses are unaffected: they
+    live in the courses table, not here.
+    """
+    vals = _local_seed("course_chips")
+    return "|".join(vals) if vals else "Other"
+
+
+def _local_seed(key):
+    """
+    Seed lists for a BRAND-NEW database, read from regimen.local.json
+    beside this file.
+
+    These were literals here until 2026-09-10: fifteen real medicine names
+    and two named doctors, in a public repository. The data moved out; the
+    file is gitignored.
+
+    Missing file returns an empty list on purpose. _seed() only runs when
+    settings['seeded_v3'] is unset, so an existing database never reaches
+    this code and is unaffected. A fresh install starts empty rather than
+    with someone else's prescription -- which is the right default for a
+    clone. Startup must not fail over an optional seed file.
+    """
+    try:
+        with open(os.path.join(BASE, "regimen.local.json"), "r",
+                  encoding="utf-8") as fh:
+            val = json.load(fh).get(key)
+            return val if isinstance(val, list) else []
+    except (IOError, OSError, ValueError):
+        return []
+
+PRN_SEED = _local_seed("prn_seed")
+
+DOCTOR_SEED = _local_seed("doctor_seed")
 
 SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY
 
@@ -1123,7 +1155,7 @@ def export_csv(table):
 @app.route("/")
 @login_required
 def home():
-    return render_template_string(APP_PAGE)
+    return render_template_string(APP_PAGE, course_chips=_course_chips())
 
 # ------------------------------------------------------------------ auth page
 AUTH_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -1773,10 +1805,10 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
   </div>
 
   <div class="sub" id="meds-course">
-    <p class="hint">Multi-day drugs with a live day counter. The paroxetine &rarr; duloxetine switch runs here.</p>
+    <p class="hint">Multi-day drugs with a live day counter. Switches and tapers run here.</p>
     <div id="activeCourses"></div>
     <div class="card"><p class="q">Start a course</p><div class="chips" data-f="drug" data-sec="course"
-      data-v="Duloxetine 30 mg OD|Paroxetine taper|Nortriptyline (HS)|Rifaximin 550 mg BD|Other"></div>
+      data-v="{{ course_chips }}"></div>
       <p class="lbl" style="margin-top:10px">Start date</p><input type="date" id="c_day">
       <p class="lbl" style="margin-top:10px">Notes (dose plan etc.)</p><textarea id="c_notes" maxlength="500"></textarea></div>
   </div>
@@ -1839,7 +1871,7 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
   <div class="card"><p class="q">Protein target hit-rate</p><div id="proteinHit"></div></div>
   <div class="card"><p class="q">Recent PRN doses</p><div id="rvDoses"></div></div>
   <div class="card"><p class="q">Episodes</p><div id="rvEpisodes"></div></div>
-  <div class="card"><p class="q">Buprenorphine patch history</p><div id="rvPatch"></div></div>
+  <div class="card"><p class="q">Transdermal patch history</p><div id="rvPatch"></div></div>
   <div class="card"><p class="q">Food map</p><div class="reg" id="rvRegistry"></div></div>
   <div class="card"><p class="q">Export for your doctor / analytics</p>
     <div id="expLinks"></div>
@@ -2139,13 +2171,13 @@ async function loadPatch(){
   const p=await jget('/api/patch');const box=$('#patchbox');
   if(p&&p.id){const on=new Date(p.day_on);const days=Math.floor((new Date(todayISO)-on)/86400000)+1;
     box.innerHTML=`<div class="patchcard"><span style="font-size:20px">&#129527;</span>
-      <div><b>Buprenorphine patch on</b> &middot; ${p.strength}<br>
+      <div><b>Patch on</b> &middot; ${p.strength}<br>
       <small style="color:var(--muted)">since ${p.day_on} ${p.time_on||''} &middot; day ${days}</small></div>
       <button type="button" id="patchOff">Remove now</button></div>`;
     $('#patchOff').onclick=async()=>{await post('/api/patch',{action:'off'});await loadPatch();await loadRings();toast('Patch removed');};
   } else {
     box.innerHTML=`<div class="patchcard"><span style="font-size:20px">&#129527;</span>
-      <div><b>Buprenorphine patch</b><br><small style="color:var(--muted)">5 mcg/hr &middot; occasional</small></div>
+      <div><b>Transdermal patch</b><br><small style="color:var(--muted)">occasional</small></div>
       <button type="button" id="patchOn">Apply now</button></div>`;
     $('#patchOn').onclick=async()=>{await post('/api/patch',{action:'on',strength:'5 mcg/hr'});await loadPatch();toast('Patch applied');};
   }

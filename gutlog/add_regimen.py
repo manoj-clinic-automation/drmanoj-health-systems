@@ -7,8 +7,8 @@ Three jobs, in this order:
 
   1. NAMES     bring the six new medicines into the convention the
                original fifteen already use:
-                   Brand (molecule strength)     e.g. Colospa (mebeverine 135)
-                   Molecule strength             e.g. Paracetamol 500
+                   Brand (molecule strength)
+                   Molecule strength
   2. MOLECULES fill prnmeds.molecule, blank on every row since the
                v3.3.0 migration added it. This is the field RxGuard
                matches against in Phase C, so doing it now means that
@@ -26,101 +26,65 @@ Python 3.9 compatible.
 
 import argparse
 import datetime
+import json
 import os
 import sqlite3
 import sys
 
 DB = "/root/gutlog/health3.db"
 
-# ------------------------------------------------------------ new meds
-# (name, molecule, sort). Inserted only if the name is not already there.
-NEW_MEDS = [
-    ("Lintide (linaclotide)", "linaclotide", -1),
-]
-
-# Scheduled lines for medicines created above, keyed by name because their
-# id does not exist until this script runs.
-# (name, slot, dose_text, with_food, variants)
+# ------------------------------------------------------------ regimen data
+# The names, molecules and schedule below used to be literals in this file,
+# which published a real medication list to a PUBLIC repository. They now
+# live in regimen.local.json, which is gitignored. See tools/NO_SECRETS.py.
 #
-# Linaclotide is taken every morning but the dose moves between 72, 145 and
-# 290 mcg, sometimes as a combination. One scheduled row carrying the three
-# strengths as variants means the morning reminder is honest AND the dose
-# actually taken is what gets recorded. Three separate rows would collect
-# two false misses every day; a single fixed strength would record the
-# wrong dose whenever it changed.
-NEW_SCHED = [
-    ("Lintide (linaclotide)", "MORNING", "", "ANY", "72|145|290"),
-]
+# The commentary that explained the clinical choices moved with the data --
+# 'molecules_left_blank' and 'regimen_not_scheduled' in that file record why
+# three medicines carry no molecule, and why two more are deliberately left
+# off the schedule.
+REGIMEN_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "regimen.local.json")
 
-# ---------------------------------------------------------------- names
-# (id, current name, new name). Applied only when the current name
-# matches exactly, so a re-run after the change is a silent no-op.
-RENAMES = [
-    (14, "ORS",           "Electral (ORS sachet, 1 L)"),
-    (16, "calaptin 40",   "Calaptin (verapamil 40)"),
-    (17, "jiardiance 10", "Jardiance (empagliflozin 10)"),
-    (18, "Telma 40",      "Telma (telmisartan 40)"),
-    (21, "Fulnite 2",     "Fulnite (eszopiclone 2)"),
-]
 
-# ------------------------------------------------------------ molecules
-# id -> molecule key. Lower case, one per row; a combination product
-# would use semicolons.
-#
-# DELIBERATELY BLANK, and why:
-#   11 Cremaffin  - the plain and Plus formulations differ, the Plus
-#                   adding sodium picosulfate. Guessing would put a wrong
-#                   laxative into an interaction check. Fill it once you
-#                   have checked which pack you actually use.
-#   14 ORS        - a salt and glucose mix, not a molecule.
-#   15 Probiotic  - an organism, not a molecule, and strain-dependent.
-MOLECULES = {
-    1: "mebeverine",
-    2: "drotaverine",
-    3: "paracetamol",
-    4: "etoricoxib",
-    5: "fexofenadine",
-    6: "bilastine",
-    7: "fluticasone",
-    8: "peppermint oil",
-    9: "psyllium",
-    10: "polyethylene glycol",
-    12: "clonazepam",
-    13: "zolpidem",
-    16: "verapamil",
-    17: "empagliflozin",
-    18: "telmisartan",
-    19: "rosuvastatin",
-    20: "nebivolol",
-    21: "eszopiclone",
-}
+def load_regimen():
+    """
+    Returns (new_meds, new_sched, renames, molecules, regimen) or None.
 
-# ------------------------------------------------------------- schedule
-# (id, name fragment, slot, dose_text, with_food)
-# The fragment guards against an id pointing at a different drug than the
-# one this list was written for. It must survive the renames above, so it
-# uses only the part of the name that does not change.
-#
-# NOT SCHEDULED, deliberately:
-#   Lintide 72 / 145 / 290 - one of three strengths is taken, varying, and
-#     sometimes in the afternoon rather than the morning. Scheduling all
-#     three would show three expected rows every morning against one dose
-#     actually taken, so the day would sit permanently at 1/3 and collect
-#     two false misses. Scheduling a single strength would log the wrong
-#     drug on every day the strength differed. As extra-dose chips at the
-#     front of the list, one tap records the strength actually taken and
-#     the timestamp records when.
-#   Electral - one to two sachets a day is a count the schedule cannot
-#     express. Tapping each one gives a true daily count instead.
-REGIMEN = [
-    (16, "alaptin",      "MORNING", "", "ANY"),
-    (16, "alaptin",      "EVENING", "", "ANY"),
-    (17, "ardiance",     "MORNING", "", "ANY"),
-    (18, "Telma",        "MORNING", "", "ANY"),
-    (19, "Rosuvastatin", "EVENING", "", "ANY"),
-    (20, "Nebivolol",    "EVENING", "", "ANY"),
-    (21, "ulnite",       "NIGHT",   "", "ANY"),
-]
+    Fails loudly. An empty plan would print a tidy report saying there was
+    nothing to do, which is indistinguishable from success and would be
+    believed.
+    """
+    if not os.path.exists(REGIMEN_FILE):
+        print("FATAL: regimen data not found: " + REGIMEN_FILE)
+        print("")
+        print("That file is gitignored on purpose - it holds the medicine")
+        print("names, molecules and schedule, which this public repository")
+        print("must not carry. Copy it into the app directory on the server,")
+        print("or restore it from your own backup.")
+        print("")
+        print("Refusing to run. An empty plan would report 'nothing to do'")
+        print("and look exactly like success.")
+        return None
+    try:
+        with open(REGIMEN_FILE, "r", encoding="utf-8") as fh:
+            d = json.load(fh)
+    except ValueError as exc:
+        print("FATAL: " + REGIMEN_FILE + " is not valid JSON: " + str(exc))
+        return None
+
+    for key in ("new_meds", "new_sched", "renames", "molecules", "regimen"):
+        if key not in d:
+            print("FATAL: '" + key + "' missing from " + REGIMEN_FILE)
+            return None
+
+    new_meds = [tuple(r) for r in d["new_meds"]]
+    new_sched = [tuple(r) for r in d["new_sched"]]
+    renames = [tuple(r) for r in d["renames"]]
+    # JSON object keys are strings; these are prnmeds ids.
+    molecules = dict((int(k), v) for k, v in d["molecules"].items())
+    regimen = [tuple(r) for r in d["regimen"]]
+    return new_meds, new_sched, renames, molecules, regimen
+
 
 VALID_SLOTS = ("MORNING", "NOON", "EVENING", "NIGHT")
 SLOT_ORDER = {"MORNING": 0, "NOON": 1, "EVENING": 2, "NIGHT": 3}
@@ -136,6 +100,11 @@ def main():
     if not os.path.exists(args.db):
         print("FATAL: db not found: " + args.db)
         return 1
+
+    loaded = load_regimen()
+    if loaded is None:
+        return 1
+    NEW_MEDS, NEW_SCHED, RENAMES, MOLECULES, REGIMEN = loaded
 
     con = sqlite3.connect(args.db)
     con.row_factory = sqlite3.Row

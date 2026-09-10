@@ -72,14 +72,21 @@ def main():
         j = c.get("/api/now").get_json()
         assert j["has_schedule"] is False, "empty DB reported a schedule"
         assert j["slots"] == [], "slots should be empty"
-        assert len(j["meds"]) == 15, "expected 15 seeded meds, got " \
-                                     + str(len(j["meds"]))
-        return "empty schedule handled; 15 seeded meds offered"
+        # Seed contents come from the gitignored regimen.local.json, so this
+        # asserts that seeding HAPPENED, not which medicines it produced.
+        # Three is what the rest of the suite needs to pick from.
+        assert len(j["meds"]) >= 3, \
+            "expected at least 3 seeded meds, got " + str(len(j["meds"])) \
+            + " -- is regimen.local.json present beside app.py?"
+        return "empty schedule handled; " + str(len(j["meds"])) \
+               + " seeded meds offered"
 
     def t02_add_schedule():
         meds = c.get("/api/prnmeds/full").get_json()
-        para = [m for m in meds if m["name"].startswith("Paracetamol")][0]
-        colo = [m for m in meds if m["name"].startswith("Colospa")][0]
+        # Positional, not by name: the suite must not carry the owner's
+        # medicine names, and must survive the seed list changing.
+        para = meds[0]
+        colo = meds[1]
         r = c.post("/api/schedule", json={
             "med_id": para["id"], "slot": "MORNING",
             "dose_text": "1 tab", "with_food": "AFTER"})
@@ -138,13 +145,15 @@ def main():
 
     def t07_extra_dose():
         meds = c.get("/api/prnmeds/full").get_json()
-        zol = [m for m in meds if m["name"].startswith("Zolpidem")][0]
+        zol = meds[2]
         r = c.post("/api/now/dose", json={"med_id": zol["id"],
                                           "status": "EXTRA"})
         assert r.get_json().get("ok"), "extra dose failed"
         j = c.get("/api/now").get_json()
         assert len(j["extras"]) == 1, "extra not listed"
-        assert j["extras"][0]["medicine"].startswith("Zolpidem"), \
+        # Compare against the medicine we actually posted, rather than a
+        # hardcoded name -- same assertion, no clinical detail in the repo.
+        assert j["extras"][0]["medicine"] == zol["name"], \
             "wrong extra recorded"
         return "extra dose logged with sched_id NULL and listed separately"
 
@@ -159,7 +168,7 @@ def main():
 
     def t09_schedule_change_is_dated():
         meds = c.get("/api/prnmeds/full").get_json()
-        para = [m for m in meds if m["name"].startswith("Paracetamol")][0]
+        para = meds[0]
         before = c.get("/api/schedule").get_json()
         ep0 = int([r for r in before["rows"]
                    if r["med_id"] == para["id"]][0]["epoch"])

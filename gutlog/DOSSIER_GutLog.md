@@ -81,8 +81,8 @@ The rule: **close the open row, open a new one.**
   is rejected; close-then-open is accepted.
 - Stopping a medicine closes the row and keeps the history — it does not delete.
 
-Live example (`Calaptin (verapamil 40)`): MORNING and EVENING lines at epoch 2
-and 3 are closed, and a new pair opened together at epoch 4.
+Live example: one twice-daily medicine has its MORNING and EVENING lines
+closed at epochs 2 and 3, with a new pair opened together at epoch 4.
 
 `/api/now` computes today's expected doses by reading whichever line is
 effective for today. Test 09 and 10 in `test_phase_a.py` gate this.
@@ -111,11 +111,12 @@ all medicines" button reveals the full list for the genuine case: an unplanned
 extra dose of a regular medicine. Backed by `meds` (unscheduled) and `meds_all`
 from `/api/now` — currently 15 and 22 respectively.
 
-**Lintide (linaclotide) is scheduled *with* dose variants** (`72|145|290`,
-MORNING, epoch 4). A titrating medicine is still a scheduled medicine; the dose
-is picked at log time from the variant chips rather than by editing the regimen
-every time. The variant picker is multi-select, because a combination such as
-145 + 72 is one dose, not two.
+**A titrating medicine is scheduled *with* dose variants** — one MORNING line
+carrying three strengths, rather than three lines or one fixed strength. A
+titrating medicine is still a scheduled medicine; the dose is picked at log
+time from the variant chips rather than by editing the regimen every time. The
+picker is multi-select, because a combination of two strengths is one dose, not
+two. Actual strengths are in `regimen.local.json` (gitignored).
 
 ## Deployment runbook
 Concrete paths and commands are in `gutlog/INFRA_GutLog.local.md` (gitignored).
@@ -173,9 +174,13 @@ rediscovered the expensive way.
    discard bug — and did, every time it ran during that window. A green suite is
    only evidence for the code it actually executes (CLAUDE.md §2).
 
-5. **Cremaffin, Electral (ORS sachet, 1 L) and Probiotic have no `molecule`
-   mapped.** All three are extras. Anything keyed on molecule — RxGuard
-   interaction checking in particular — will not see them.
+5. **Three medicines have no `molecule` mapped** — a laxative whose two
+   formulations differ, a rehydration salt mix, and a live-culture supplement.
+   All three are extras, and blank deliberately rather than by oversight:
+   two are not single molecules at all, and guessing the third would put the
+   wrong laxative into an interaction check. Anything keyed on molecule —
+   RxGuard interaction checking in particular — will not see them. Names and
+   full reasoning in `regimen.local.json` under `molecules_left_blank`.
 
 6. **The systemd unit invokes gunicorn by an absolute path inside a virtualenv**
    rather than `python3 -m gunicorn`. This violates CLAUDE.md §3 and breaks if
@@ -202,7 +207,15 @@ rediscovered the expensive way.
   **Also fixed the Bristol discard bug** (gap 1). `test_phase_a.py` 18/18.
   Rollback snapshots taken for both the app file and the database; exact
   filenames in `INFRA_GutLog.local.md`.
-- **2026-09-10 hardening** — Flask `SECRET_KEY` rotated (logged out all
+- **2026-09-10 hardening (2)** — clinical detail removed from every tracked
+  file. Regimen data (names, molecules, schedule, chip order) moved to the
+  gitignored `regimen.local.json`; `add_regimen.py` and `tidy_extras.py` read
+  it and refuse to run without it; `app.py`'s `PRN_SEED` and `DOCTOR_SEED`
+  read it via `_local_seed()` and fall back to empty, so a fresh install
+  starts with no medicines and no doctors rather than the owner's. Applied by
+  `patch_redact_seed.py`. **Past commits still contain the names — history was
+  deliberately not rewritten.** This stops future disclosure only.
+- **2026-09-10 hardening (1)** — Flask `SECRET_KEY` rotated (logged out all
   devices, by design), infrastructure detail moved out of this file into the
   gitignored `INFRA_GutLog.local.md`, and `tools/NO_SECRETS.py` added: blocks
   databases, env files and credential literals, warns on clinical detail.
@@ -210,7 +223,7 @@ rediscovered the expensive way.
   an Undo / Change dose / Skip strip instead of toggling, so an accidental
   second tap cannot delete a medication record.
 - **2026-09-10 v3.3.2** — dose variants. A scheduled medicine whose dose varies
-  (Lintide `72|145|290`) offers a multi-select picker at log time.
+  across three strengths offers a multi-select picker at log time.
 - **2026-09-10 v3.3.1** — small-screen layout fix.
 - **2026-09-10 v3.3.0** — Phase A quick-log surface: the Now tab, the
   `med_schedule` table with effective dating and epochs, PWA install support

@@ -136,7 +136,7 @@ Python 3.9.25 · SQLite 3.34.1 · Flask 3.1.3 · gunicorn 23.0.0 · 2 sync worke
 
 ## Post-deploy sequence (Phase 2)
 1. Week-0 baseline at /tests (bridge, plank L/R, walk) — before first training week
-2. Add current med epochs at /tests (e.g., nortriptyline taper dates)
+2. Add current med epochs at /tests (e.g. the dates of a medication taper)
 3. Log known future events (OT lists, travel) in advance — enables F05 protection + PRE cards
 4. Daily check-in ≥14 days; Sunday re-tests; tune thresholds in rules.json as needed (re-run smoke after edits)
 

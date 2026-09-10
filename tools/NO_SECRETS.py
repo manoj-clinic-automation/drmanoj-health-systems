@@ -102,7 +102,9 @@ def load_terms():
     stop = set(["nasal", "spray", "sachet", "tablet", "capsule", "syrup",
                 "drops", "cream", "oral", "injection", "powder"])
     terms = []
-    with open(TERMS_FILE, "r", encoding="utf-8") as fh:
+    # utf-8-sig, not utf-8: a BOM on the first line stopped it being seen as
+    # a comment, and the whole comment line was loaded as a phantom "term".
+    with open(TERMS_FILE, "r", encoding="utf-8-sig") as fh:
         for line in fh:
             t = line.strip().lower()
             if not t or t.startswith("#") or len(t) < 4 or t in stop:

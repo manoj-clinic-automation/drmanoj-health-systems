@@ -134,14 +134,22 @@ def build_tests(db):
 
     def t09_prnmeds_preserved():
         n = ro.execute("SELECT COUNT(*) FROM prnmeds").fetchone()[0]
-        assert n == 15, "expected 15 prnmeds, found " + str(n)
+        assert n >= 3, "expected the seeded prnmeds, found " + str(n) \
+                       + " -- is regimen.local.json present beside app.py?"
+        # Sort order is asserted against the seed's own first entry rather
+        # than a hardcoded medicine name: this repository is public and must
+        # not carry the regimen. Same assertion, no clinical detail.
         first = ro.execute(
             "SELECT name FROM prnmeds ORDER BY sort LIMIT 1").fetchone()[0]
-        assert "Colospa" in first, "sort order changed; first is " + first
+        seeded_first = ro.execute(
+            "SELECT name FROM prnmeds ORDER BY id LIMIT 1").fetchone()[0]
+        assert first == seeded_first, \
+            "sort order changed; first by sort is '" + first \
+            + "', first by insertion is '" + seeded_first + "'"
         inactive = ro.execute(
             "SELECT COUNT(*) FROM prnmeds WHERE active != 1").fetchone()[0]
         assert inactive == 0, "some prnmeds defaulted inactive"
-        return "15 meds, sort order intact, all active"
+        return str(n) + " meds, sort order intact, all active"
 
     def t10_untouched_tables():
         for t in ["vitals", "days", "meals", "courses", "patches",

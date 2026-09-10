@@ -8,6 +8,7 @@ ingest.env
 # THIS REPOSITORY IS PUBLIC - see tools/NO_SECRETS.py
 *.local.txt
 *.local.md
+*.local.json
 *.log
 *.bak
 *.bak-*
