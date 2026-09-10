@@ -3,9 +3,27 @@
 RxGuard smoke tests. Runs against a throwaway SQLite database using Flask's
 test client. No network, no external services.
 
-Includes the mandatory index case: nortriptyline + paroxetine + verapamil, with
-documented ventricular ectopy, constipation tendency, escalation from 12.5 mg to
-25 mg, subsequent tachycardia and BP rise, and no demonstrated benefit.
+THE FIXTURE IS SYNTHETIC. Every drug, dose, indication, prescriber, date and
+symptom below is invented to exercise a rule, not drawn from anyone's record.
+This repository is public.
+
+The index case is a strong CYP2D6 inhibitor (paroxetine) alongside a
+narrow-therapeutic-index 2D6 substrate (nortriptyline), plus a rate-lowering
+calcium channel blocker (diltiazem), against a profile carrying ventricular
+ectopy, constipation and hypertension. That combination is what drives the
+rules under test:
+
+    PW001  paroxetine raises nortriptyline exposure (RED, sets the flag)
+    PW002  paroxetine blocks tramadol activation      (step 6)
+    CR001  constipating burden >= 3 on constipation   (2 + 1 + 1 = 4)
+    CR002  QT-affecting drug on ventricular ectopy    (nortriptyline)
+    CR004  BP-raising drug on hypertension            (nortriptyline)
+    WD001  discontinuation syndrome on stopping       (step 7)
+    WD002  stopping an inhibitor raises substrate clearance
+
+Paroxetine and nortriptyline are named because PW001 and PW002 are defined on
+that exact pair -- the pair IS the rule, and rules.json is unchanged. They
+identify a textbook interaction, not a person.
 """
 
 import os
@@ -58,18 +76,20 @@ def main():
         rxguard.g.db_path = path
         check(3, "Misspelling 'paroxitene' resolves",
               rxguard.norm_key("paroxitene") == "paroxetine")
-        check(3, "Misspelling 'verapramil' resolves",
-              rxguard.norm_key("verapramil") == "verapamil")
+        check(3, "Misspelling 'amitryptiline' resolves",
+              rxguard.norm_key("amitryptiline") == "amitriptyline")
         check(3, "Salt suffix stripped ('nortriptyline HCl')",
               rxguard.norm_key("Nortriptyline HCl") == "nortriptyline")
         check(3, "Unknown molecule stays unresolved",
               rxguard.get_drug(rxguard.norm_key("zzzfakedrug")) is None)
 
     # 4 ------------------------------------------------------ build ledger
+    # Synthetic ledger. Doses, indications and prescribers are placeholders
+    # chosen to satisfy the form, not transcribed from any record.
     for drug, dose, freq, ind, pres, spec in [
-        ("nortriptyline", "25 mg", "HS", "chronic abdominal pain", "Dr A", "gastroenterology"),
-        ("paroxetine", "20 mg", "OD", "anxiety", "Dr B", "psychiatry"),
-        ("verapamil", "40 mg", "TDS", "ectopy / rate control", "Dr C", "cardiology"),
+        ("nortriptyline", "25 mg", "HS", "neuropathic pain", "Dr One", "neurology"),
+        ("paroxetine", "20 mg", "OD", "anxiety", "Dr Two", "psychiatry"),
+        ("diltiazem", "60 mg", "TDS", "rate control", "Dr Three", "cardiology"),
     ]:
         c.post("/meds", data={"drug": drug, "dose": dose, "frequency": freq,
                               "indication": ind, "prescriber": pres, "specialty": spec,
@@ -77,7 +97,7 @@ def main():
                follow_redirects=True)
     r = c.get("/meds")
     check(4, "Three chronic drugs recorded",
-          all(x in r.data for x in (b"nortriptyline", b"paroxetine", b"verapamil")))
+          all(x in r.data for x in (b"nortriptyline", b"paroxetine", b"diltiazem")))
 
     # conditions
     c.post("/profile", data={"form": "conditions", "ventricular_ectopy": "1",
@@ -86,9 +106,12 @@ def main():
     r = c.get("/profile")
     check(4, "Conditions saved", b"checked" in r.data)
 
+    # Synthetic constraint text. It must contain "ventricular ectopy" because
+    # the dashboard assertion below and condition rules CR002/CR003 key on
+    # that condition; the surrounding narrative is invented.
     c.post("/profile", data={"form": "constraint",
-                             "text": "Documented ventricular ectopy. HR and BP rose after "
-                                     "nortriptyline escalation 12.5 to 25 mg."},
+                             "text": "Test fixture: documented ventricular ectopy, "
+                                     "constipation tendency and hypertension on file."},
            follow_redirects=True)
     r = c.get("/")
     check(4, "Constraints card shows on dashboard", b"ventricular ectopy" in r.data)
@@ -97,7 +120,7 @@ def main():
     with application.app_context():
         rxguard.g.db_path = path
         res = rxguard.analyse("nortriptyline", action="increase", dose="25 mg",
-                              frequency="HS", indication="chronic abdominal pain")
+                              frequency="HS", indication="neuropathic pain")
     titles = " || ".join(f["title"] for f in res["findings"])
     blob = json.dumps(res).lower()
 
@@ -165,12 +188,15 @@ def main():
           "nortriptyline" in sblob)
 
     # 8 ------------------------- adverse history, symptom timeline, review
+    # Synthetic adverse event. It exercises structured temporality
+    # (latency, dechallenge, rechallenge) and the causality grading that
+    # follows from it -- the values are invented for that purpose.
     c.post("/adverse", data={
-        "drug": "nortriptyline", "symptom": "sinus tachycardia and BP elevation",
-        "onset_date": "2026-03-01", "dose_at_onset": "25 mg", "latency_days": "18",
+        "drug": "nortriptyline", "symptom": "test symptom for causality grading",
+        "onset_date": "2026-01-15", "dose_at_onset": "25 mg", "latency_days": "18",
         "dechallenge": "yes", "dechallenge_resolved": "yes",
         "rechallenge": "no", "confounders": "", "severity": "moderate",
-        "notes": "No meaningful abdominal pain benefit after ~6 months."},
+        "notes": "Fixture: no benefit recorded, to exercise the review path."},
         follow_redirects=True)
     r = c.get("/adverse")
     check(8, "Adverse event stored with structured temporality", b"18" in r.data)
