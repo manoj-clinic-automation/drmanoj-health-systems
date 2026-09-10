@@ -3,9 +3,11 @@
 *.db.*
 *.secret
 *.env
+ingest.env
 *.log
 *.bak
 *.bak-*
+*.bak_*
 *.deployed-*
 # Runtime junk
 __pycache__/
