@@ -1,11 +1,11 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 FitLog -- anchor-verified patcher: drug name out of the epochs form.
 
-The med-epoch form's placeholder read "e.g. Nortriptyline taper", naming a
-real psychiatric medication in a PUBLIC repository. A placeholder is example
-text; a generic one does the same job.
+The med-epoch form's placeholder named a real psychiatric medication in a
+PUBLIC repository. A placeholder is example text; a generic one does the
+same job.
 
 Found by widening the redaction sweep -- this drug was outside the term list,
 which had been derived from GutLog's prnmeds and so never saw it.
@@ -20,6 +20,7 @@ Usage:
     python3 patch_fitlog_redact.py --dry-run
 """
 
+import json
 import os
 import py_compile
 import shutil
@@ -30,10 +31,47 @@ from datetime import datetime
 TARGET = "/root/fitlog/app.py"
 MARKER = 'placeholder="e.g. medication taper"'
 
-A1_OLD = 'placeholder="e.g. Nortriptyline taper"'
+# The anchor IS the drug name this patch removes, so it cannot live in a
+# tracked file -- it would re-publish exactly what the patch takes out. It
+# sits in GutLog's gitignored regimen.local.json, which is the one local
+# store already established for this. The relative path resolves in both
+# layouts: /root/fitlog/../gutlog and repo fitlog/../gutlog.
+ANCHOR_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "gutlog",
+    "regimen.local.json")
+ANCHOR_KEY = "patch_fitlog_redact"
+
 A1_NEW = 'placeholder="e.g. medication taper"'
 
-EDITS = [("epochs form placeholder", A1_OLD, A1_NEW)]
+REPLACEMENTS = [("epochs form placeholder", A1_NEW)]
+
+
+def load_edits():
+    """(label, old, new) triples. Old text comes from the gitignored file."""
+    if not os.path.exists(ANCHOR_FILE):
+        print("FATAL: anchors not found: " + ANCHOR_FILE)
+        print("")
+        print("That file is gitignored on purpose - the anchor IS the drug")
+        print("name this patch removes. Restore it from your own backup to")
+        print("re-apply this patch.")
+        return None
+    try:
+        with open(ANCHOR_FILE, "r", encoding="utf-8") as fh:
+            anchors = json.load(fh).get("patch_anchors", {}).get(ANCHOR_KEY)
+    except ValueError as exc:
+        print("FATAL: " + ANCHOR_FILE + " is not valid JSON: " + str(exc))
+        return None
+    if not anchors:
+        print("FATAL: patch_anchors['" + ANCHOR_KEY + "'] missing from "
+              + ANCHOR_FILE)
+        return None
+    edits = []
+    for label, new in REPLACEMENTS:
+        if label not in anchors:
+            print("FATAL: anchor '" + label + "' missing from " + ANCHOR_FILE)
+            return None
+        edits.append((label, anchors[label], new))
+    return edits
 
 
 def main():
@@ -65,6 +103,10 @@ def main():
     if MARKER in src:
         print("SKIP: already redacted. Nothing to do.")
         return 0
+
+    EDITS = load_edits()
+    if EDITS is None:
+        return 1
 
     patched = src
     for name, old, new in EDITS:

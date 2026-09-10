@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 GutLog -- anchor-verified patcher: drug names out of the courses UI.
@@ -27,6 +27,7 @@ Usage:
     python3 patch_redact_courses.py --dry-run
 """
 
+import json
 import os
 import py_compile
 import shutil
@@ -37,8 +38,13 @@ from datetime import datetime
 TARGET = "/root/gutlog/app.py"
 MARKER = "_course_chips"
 
-A1_OLD = ('    <p class="hint">Multi-day drugs with a live day counter. '
-          'The paroxetine &rarr; duloxetine switch runs here.</p>')
+# The two anchors that carry drug names live in regimen.local.json
+# (gitignored) under patch_anchors -- to replace a name this patcher has to
+# match it, so keeping them here would re-publish what the patch removes.
+ANCHOR_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "regimen.local.json")
+ANCHOR_KEY = "patch_redact_courses"
+
 A1_NEW = ('    <p class="hint">Multi-day drugs with a live day counter. '
           'Switches and tapers run here.</p>')
 
@@ -46,8 +52,6 @@ A1_NEW = ('    <p class="hint">Multi-day drugs with a live day counter. '
 # render_template_string, i.e. Jinja. So the chip list becomes a Jinja
 # placeholder, not a Python concatenation -- inside r""" ... """ a
 # concatenation would render as literal text.
-A2_OLD = ('      data-v="Duloxetine 30 mg OD|Paroxetine taper|'
-          'Nortriptyline (HS)|Rifaximin 550 mg BD|Other"></div>')
 A2_NEW = '      data-v="{{ course_chips }}"></div>'
 
 A4_OLD = 'return render_template_string(APP_PAGE)'
@@ -71,12 +75,43 @@ A3_NEW = '''def _course_chips():
 
 def _local_seed(key):'''
 
-EDITS = [
-    ("courses hint", A1_OLD, A1_NEW),
-    ("course chip list", A2_OLD, A2_NEW),
+# Anchors carrying drug names come from the local file; the other two are
+# drug-free and stay inline.
+NAMED_REPLACEMENTS = [
+    ("courses hint", A1_NEW),
+    ("course chip list", A2_NEW),
+]
+INLINE_EDITS = [
     ("course chip loader", A3_OLD, A3_NEW),
     ("bind chips at render", A4_OLD, A4_NEW),
 ]
+
+
+def load_edits():
+    if not os.path.exists(ANCHOR_FILE):
+        print("FATAL: anchors not found: " + ANCHOR_FILE)
+        print("")
+        print("That file is gitignored on purpose - the anchors ARE the drug")
+        print("names this patch removes. Restore it from your own backup to")
+        print("re-apply this patch.")
+        return None
+    try:
+        with open(ANCHOR_FILE, "r", encoding="utf-8") as fh:
+            anchors = json.load(fh).get("patch_anchors", {}).get(ANCHOR_KEY)
+    except ValueError as exc:
+        print("FATAL: " + ANCHOR_FILE + " is not valid JSON: " + str(exc))
+        return None
+    if not anchors:
+        print("FATAL: patch_anchors['" + ANCHOR_KEY + "'] missing from "
+              + ANCHOR_FILE)
+        return None
+    edits = []
+    for label, new in NAMED_REPLACEMENTS:
+        if label not in anchors:
+            print("FATAL: anchor '" + label + "' missing from " + ANCHOR_FILE)
+            return None
+        edits.append((label, anchors[label], new))
+    return edits + INLINE_EDITS
 
 
 def main():
@@ -112,6 +147,10 @@ def main():
     if "_local_seed" not in src:
         print("FAIL: run patch_redact_seed.py first -- this patch builds on")
         print("      the _local_seed() loader it installs.")
+        return 1
+
+    EDITS = load_edits()
+    if EDITS is None:
         return 1
 
     patched = src
