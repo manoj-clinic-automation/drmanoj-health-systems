@@ -43,6 +43,19 @@ app.config.update(
 )
 _failed = {"count": 0, "until": 0.0}
 
+# ------------------------------------------------------------------ pwa
+# Manifest + service worker + icons live in pwa.py so this file's page
+# template stays untouched. Guarded: a missing pwa.py must not take the
+# app down, it only costs installability.
+try:
+    from pwa import pwa_bp, PWA_HEAD_SNIPPET
+    app.register_blueprint(pwa_bp)
+except Exception as _pwa_err:          # pragma: no cover
+    PWA_HEAD_SNIPPET = ""
+    import sys as _sys
+    print("pwa layer unavailable: " + str(_pwa_err), file=_sys.stderr)
+
+
 # ------------------------------------------------------------------ schema
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -87,6 +100,11 @@ CREATE TABLE IF NOT EXISTS labs (
 CREATE TABLE IF NOT EXISTS files (
   id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT, ftype TEXT, label TEXT,
   stored TEXT, orig TEXT, size INTEGER, created TEXT);
+CREATE TABLE IF NOT EXISTS med_schedule (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, med_id INTEGER NOT NULL, slot TEXT NOT NULL,
+  dose_text TEXT DEFAULT '', with_food TEXT DEFAULT 'ANY', valid_from TEXT NOT NULL,
+  valid_to TEXT DEFAULT '', epoch INTEGER DEFAULT 1, notes TEXT DEFAULT '', created TEXT,
+  variants TEXT DEFAULT '');
 """
 
 ANALYTES = {  # name: (unit, repeat-months or None)
@@ -197,12 +215,88 @@ PRN_SEED = ["Colospa (mebeverine 135)","Drotaverine 80","Paracetamol 500",
 DOCTOR_SEED = ["Prof. Ahuja (Gastro)","Dr. V.K. Srivastav (Psychiatry)",
     "Ophthalmology","Orthopaedics","Physician","Other"]
 
+SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT
+
+# slot -> (label, default clock time). Times are display hints only; the
+# schedule is not time-enforced.
+SLOTS = [("MORNING", "Morning", "08:00"), ("NOON", "Noon", "14:00"),
+         ("EVENING", "Evening", "20:00"), ("NIGHT", "Night", "22:30")]
+
+_V330_COLS = [
+    ("prnmeds", "molecule", "TEXT DEFAULT ''"),
+    ("prnmeds", "form", "TEXT DEFAULT ''"),
+    ("prnmeds", "pack_size", "INTEGER DEFAULT 0"),
+    ("prnmeds", "stock", "REAL DEFAULT 0"),
+    ("prnmeds", "active", "INTEGER DEFAULT 1"),
+    ("prnmeds", "scheduled", "INTEGER DEFAULT 0"),
+    ("doses", "status", "TEXT DEFAULT 'TAKEN'"),
+    ("doses", "med_id", "INTEGER"),
+    ("doses", "sched_id", "INTEGER"),
+    ("doses", "dose_text", "TEXT DEFAULT ''"),
+    ("episodes", "bristol", "TEXT DEFAULT ''"),
+    ("med_schedule", "variants", "TEXT DEFAULT ''"),
+]
+
+_V330_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_sched_med ON med_schedule (med_id)",
+    "CREATE INDEX IF NOT EXISTS idx_sched_open ON med_schedule (valid_to)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_sched_one_open "
+    "ON med_schedule (med_id, slot) WHERE valid_to = ''",
+    "CREATE INDEX IF NOT EXISTS idx_doses_day ON doses (day)",
+    "CREATE INDEX IF NOT EXISTS idx_doses_sched ON doses (day, sched_id)",
+]
+
+_V330_SETTINGS = [
+    ("slot_window_min", "120"),
+    ("bp_flag_sys", "140"),
+    ("bp_flag_dia", "90"),
+    ("med_epoch", "1"),
+]
+
+
 def _migrate(con):
-    # idempotent column adds for DBs created by an earlier v3 build
+    # Fast path: one SELECT per request once the schema is current.
+    # Cheaper than the PRAGMA sweep this replaces.
+    row = con.execute(
+        "SELECT value FROM settings WHERE key='schema_version'").fetchone()
+    if row and row[0] == SCHEMA_VERSION:
+        return
+
+    # -- pre-v3.3.0: vitals.temp (kept from the original _migrate) -----
     cols = [r[1] for r in con.execute("PRAGMA table_info(vitals)").fetchall()]
     if cols and "temp" not in cols:
         con.execute("ALTER TABLE vitals ADD COLUMN temp REAL")
-        con.commit()
+
+    # -- v3.3.0 columns: one PRAGMA per table, not per column ----------
+    seen = {}
+    for table, col, decl in _V330_COLS:
+        if table not in seen:
+            seen[table] = set(
+                r[1] for r in con.execute(
+                    "PRAGMA table_info(" + table + ")").fetchall())
+        if not seen[table]:
+            continue          # table absent; SCHEMA will create it
+        if col not in seen[table]:
+            con.execute("ALTER TABLE " + table + " ADD COLUMN "
+                        + col + " " + decl)
+            seen[table].add(col)
+
+    for stmt in _V330_INDEXES:
+        con.execute(stmt)
+
+    # -- normalise legacy free-text dose rows to prnmeds ---------------
+    con.execute("UPDATE doses SET status='TAKEN' "
+                "WHERE status IS NULL OR status=''")
+    con.execute("UPDATE doses SET med_id=("
+                "SELECT p.id FROM prnmeds p WHERE p.name=doses.medicine) "
+                "WHERE med_id IS NULL")
+
+    for key, val in _V330_SETTINGS:
+        con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)",
+                    (key, val))
+    con.execute("INSERT OR REPLACE INTO settings(key,value) "
+                "VALUES('schema_version',?)", (SCHEMA_VERSION,))
+    con.commit()
 
 def db():
     if "db" not in g:
@@ -568,6 +662,210 @@ def api_prnmeds():
         db().execute("INSERT OR IGNORE INTO prnmeds(name,sort) VALUES(?,99)", (name,))
         db().commit()
     return jsonify([r["name"] for r in db().execute("SELECT name FROM prnmeds ORDER BY sort, id")])
+
+
+@app.route("/api/prnmeds/full")
+@login_required
+def api_prnmeds_full():
+    return jsonify([dict(r) for r in db().execute(
+        "SELECT id, name, sort, active FROM prnmeds WHERE active=1 "
+        "ORDER BY sort, id")])
+
+# ------------------------------------------------------------ now / schedule
+def _slot_meta():
+    return [{"slot": s, "label": lb, "time": tm} for s, lb, tm in SLOTS]
+
+
+def _bump_epoch():
+    cur = setting("med_epoch") or "1"
+    try:
+        nxt = str(int(cur) + 1)
+    except ValueError:
+        nxt = "1"
+    set_setting("med_epoch", nxt)
+    return nxt
+
+
+def _refresh_scheduled_flags():
+    db().execute("UPDATE prnmeds SET scheduled=0")
+    db().execute("UPDATE prnmeds SET scheduled=1 WHERE id IN "
+                 "(SELECT DISTINCT med_id FROM med_schedule WHERE valid_to='')")
+    db().commit()
+
+
+@app.route("/api/now")
+@login_required
+def api_now():
+    """Expected doses for a day, left-joined to what was actually logged.
+
+    Nothing is materialised in advance: expected rows are computed from
+    the effective-dated schedule at read time. No nightly job to fail
+    silently, and no phantom 'missed' rows for days the app never opened.
+    """
+    day = request.args.get("day") or today()
+    rows = db().execute(
+        "SELECT s.id AS sched_id, s.med_id, s.slot, s.dose_text, s.with_food, s.variants, "
+        "       p.name AS name, "
+        "       d.id AS dose_id, d.status AS status, d.dtime AS dtime, "
+        "       d.dose_text AS logged_dose "
+        "FROM med_schedule s "
+        "JOIN prnmeds p ON p.id = s.med_id "
+        "LEFT JOIN doses d ON d.sched_id = s.id AND d.day = ? "
+        "WHERE s.valid_from <= ? AND (s.valid_to = '' OR s.valid_to >= ?) "
+        "ORDER BY s.slot, p.sort, p.id", (day, day, day)).fetchall()
+
+    by_slot = {}
+    for r in rows:
+        by_slot.setdefault(r["slot"], []).append(dict(r))
+
+    slots = []
+    for meta in _slot_meta():
+        items = by_slot.get(meta["slot"], [])
+        if not items:
+            continue
+        done = len([i for i in items if i["status"] in ("TAKEN", "SKIPPED")])
+        meta = dict(meta)
+        meta["rows"] = items
+        meta["done"] = done
+        meta["total"] = len(items)
+        slots.append(meta)
+
+    extras = [dict(r) for r in db().execute(
+        "SELECT d.id, d.medicine, d.dtime, d.status, d.reason "
+        "FROM doses d WHERE d.day=? AND d.sched_id IS NULL "
+        "ORDER BY d.dtime", (day,)).fetchall()]
+
+    meds = [dict(r) for r in db().execute(
+        "SELECT id, name, sort FROM prnmeds WHERE active=1 "
+        "ORDER BY sort, id").fetchall()]
+
+    return jsonify(day=day, slots=slots, extras=extras, meds=meds,
+                   has_schedule=bool(rows))
+
+
+@app.route("/api/now/dose", methods=["POST"])
+@login_required
+def api_now_dose():
+    d = J()
+    status = (d.get("status") or "TAKEN").upper()
+    if status not in ("TAKEN", "SKIPPED", "EXTRA"):
+        return jsonify(ok=False, err="Bad status."), 400
+
+    med_id = d.get("med_id")
+    name = (d.get("medicine") or "").strip()[:80]
+    if med_id:
+        r = db().execute("SELECT name FROM prnmeds WHERE id=?",
+                         (med_id,)).fetchone()
+        if not r:
+            return jsonify(ok=False, err="Unknown medicine."), 400
+        name = r["name"]
+    if not name:
+        return jsonify(ok=False, err="No medicine."), 400
+
+    day = d.get("day") or today()
+    dtime = d.get("dtime") or now_hm()
+    sched_id = d.get("sched_id")
+
+    # Re-tapping a scheduled row corrects it rather than duplicating.
+    if sched_id:
+        ex = db().execute("SELECT id FROM doses WHERE sched_id=? AND day=?",
+                          (sched_id, day)).fetchone()
+        if ex:
+            db().execute(
+                "UPDATE doses SET status=?, dtime=?, reason=?, medicine=?, "
+                "med_id=?, dose_text=? WHERE id=?",
+                (status, dtime, d.get("reason"), name, med_id,
+                 (d.get("dose_text") or "")[:40], ex["id"]))
+            db().commit()
+            return jsonify(ok=True, id=ex["id"], updated=True)
+
+    db().execute(
+        "INSERT INTO doses(day,dtime,medicine,reason,effect,notes,created,"
+        "status,med_id,sched_id,dose_text) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (day, dtime, name, d.get("reason"), None, note(d), now_s(),
+         status, med_id, sched_id, (d.get("dose_text") or "")[:40]))
+    db().commit()
+    rid = db().execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
+    return jsonify(ok=True, id=rid)
+
+
+@app.route("/api/now/undo/<int:did>", methods=["POST"])
+@login_required
+def api_now_undo(did):
+    """Mistap recovery. Deletes one dose row."""
+    db().execute("DELETE FROM doses WHERE id=?", (did,))
+    db().commit()
+    return jsonify(ok=True)
+
+
+@app.route("/api/schedule")
+@login_required
+def api_schedule():
+    rows = db().execute(
+        "SELECT s.*, p.name AS name FROM med_schedule s "
+        "JOIN prnmeds p ON p.id=s.med_id "
+        "WHERE s.valid_to='' ORDER BY s.slot, p.sort, p.id").fetchall()
+    return jsonify(slots=_slot_meta(), rows=[dict(r) for r in rows])
+
+
+@app.route("/api/schedule", methods=["POST"])
+@login_required
+def api_schedule_post():
+    """Add or change one regimen line.
+
+    Effective-dated: a change closes the open row and opens a new one, so
+    history stays interpretable. Rows are never edited in place.
+    """
+    d = J()
+    med_id = d.get("med_id")
+    slot = (d.get("slot") or "").upper()
+    if not med_id or slot not in [s for s, _, _ in SLOTS]:
+        return jsonify(ok=False, err="Pick a medicine and a slot."), 400
+    if not db().execute("SELECT 1 FROM prnmeds WHERE id=?",
+                        (med_id,)).fetchone():
+        return jsonify(ok=False, err="Unknown medicine."), 400
+
+    day = d.get("valid_from") or today()
+    yday = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
+
+    open_row = db().execute(
+        "SELECT id FROM med_schedule WHERE med_id=? AND slot=? AND valid_to=''",
+        (med_id, slot)).fetchone()
+    if open_row:
+        db().execute("UPDATE med_schedule SET valid_to=? WHERE id=?",
+                     (yday, open_row["id"]))
+
+    epoch = _bump_epoch()
+    db().execute(
+        "INSERT INTO med_schedule(med_id,slot,dose_text,with_food,valid_from,"
+        "valid_to,epoch,notes,created) VALUES(?,?,?,?,?,'',?,?,?)",
+        (med_id, slot, (d.get("dose_text") or "")[:40],
+         (d.get("with_food") or "ANY")[:10], day, int(epoch), note(d), now_s()))
+    if d.get("variants") is not None:
+        db().execute(
+            "UPDATE med_schedule SET variants=? WHERE id="
+            "(SELECT MAX(id) FROM med_schedule)",
+            ((d.get("variants") or "")[:120],))
+        db().commit()
+    db().commit()
+    _refresh_scheduled_flags()
+    return jsonify(ok=True, epoch=epoch)
+
+
+@app.route("/api/schedule/close/<int:sid>", methods=["POST"])
+@login_required
+def api_schedule_close(sid):
+    """Stop a medicine. Closes the row; never deletes it."""
+    d = J()
+    day = d.get("valid_to") or today()
+    db().execute("UPDATE med_schedule SET valid_to=? WHERE id=? AND valid_to=''",
+                 (day, sid))
+    db().commit()
+    _bump_epoch()
+    _refresh_scheduled_flags()
+    return jsonify(ok=True)
+
 
 # ------------------------------------------------------------------ patch
 @app.route("/api/patch")
@@ -969,6 +1267,8 @@ APP_PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0B6E6E"><meta name="apple-mobile-web-app-capable" content="yes">
 <title>GutLog</title>
+""" + PWA_HEAD_SNIPPET + r"""
+
 <style>
 :root{--ink:#1D2F33;--teal:#0B6E6E;--teal2:#12907C;--teal-d:#084F4F;--bg:#EFF5F2;--card:#fff;
 --line:#D5E3DD;--muted:#5B7370;--chip:#E6F0EC;--err:#B3372A;--ok:#2E7D32;--amber:#C8860A;
@@ -1036,6 +1336,59 @@ width:44px;height:28px;border-radius:999px}
 nav button.sel{color:var(--teal-d)}
 nav button.sel i{background:#DCEBE4}
 .tab{display:none}.tab.sel{display:block}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.doserow{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1.5px solid var(--line);
+background:#fff;border-radius:13px;margin:0 0 8px;cursor:pointer;transition:transform .06s}
+.doserow:active{transform:scale(.985)}
+.doserow .nm{flex:1;min-width:0}
+.doserow .nm b{display:block;font-size:15.5px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doserow .nm span{font-size:12px;color:var(--muted)}
+.doserow .tick{width:30px;height:30px;border-radius:50%;border:2px solid var(--line);display:grid;
+place-items:center;font-size:15px;color:transparent;flex:0 0 auto}
+.doserow.done{background:#F2F8F5;border-color:#BEDCCB}
+.doserow.done .tick{background:var(--ok);border-color:var(--ok);color:#fff}
+.doserow.skip{background:#FBF1DC;border-color:#EAD3A0}
+.doserow.skip .tick{background:var(--amber);border-color:var(--amber);color:#fff;font-size:13px}
+.doserow .sk{border:0;background:none;color:var(--muted);font-size:12px;padding:6px 4px;
+text-decoration:underline;cursor:pointer;flex:0 0 auto}
+.slothd{display:flex;align-items:center;gap:8px;margin:0 0 8px}
+.slothd .q{margin:0}
+.slothd .cnt{margin-left:auto;font-size:12px;color:var(--muted);font-weight:700}
+.exrow{display:flex;gap:8px;align-items:center;font-size:13.5px;padding:5px 0;border-bottom:1px dashed var(--line)}
+.exrow:last-child{border-bottom:0}
+.exrow .t{color:var(--muted);font-size:12px;flex:0 0 auto}
+.exrow .u{margin-left:auto;border:0;background:none;color:var(--err);font-size:12px;cursor:pointer;text-decoration:underline}
+.schrow{display:flex;gap:8px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+.schrow:last-child{border-bottom:0}
+.schrow .s{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;flex:0 0 62px}
+.schrow .x{margin-left:auto;border:0;background:none;color:var(--err);font-size:12px;cursor:pointer;text-decoration:underline}
+/* GUTLOG_V331_LAYOUT -- grid items default to min-width:auto, which for an
+   <input> is its size-attribute min-content width, not its CSS width. That
+   pushed .row3 past the viewport and clipped the page. Root-cause fix; no
+   overflow-x:hidden, which would only hide the next one of these. */
+.varpick{padding:10px 12px;border:1.5px dashed var(--teal);border-radius:13px;margin:0 0 8px;background:#F7FBF9}
+.varpick .vt{font-size:12.5px;color:var(--muted);margin:0 0 8px;font-weight:600}
+.varpick .vrow{display:flex;flex-wrap:wrap;gap:7px}
+.varpick .vb{display:flex;gap:8px;margin-top:10px}
+.varpick .vb button{flex:1;padding:10px;border-radius:11px;border:1.5px solid var(--line);background:#fff;font-size:14.5px;font-weight:600;cursor:pointer}
+.varpick .vb button.go{background:var(--teal);color:#fff;border-color:var(--teal)}
+.varpick .vb button.danger{background:var(--err);color:#fff;border-color:var(--err)}
+.varpick .vb.three button{font-size:13.5px;padding:10px 4px}
+.doserow .sk{padding:8px 6px;font-size:12.5px}
+.row2,.row3{min-width:0}
+.row2>*,.row3>*{min-width:0}
+.row2 input,.row3 input,.row2 select,.row3 select{min-width:0}
+@media (max-width:430px){
+  main{padding:10px 10px 0}
+  .card{padding:11px;border-radius:14px;margin-bottom:10px}
+  .chip{padding:8px 12px;font-size:14.5px}
+  #n_symSev .chip,#n_symBristol .chip{padding:8px 0;min-width:34px;text-align:center}
+  .row3{gap:7px}
+  .row3 .lbl{font-size:11px}
+  .doserow{padding:10px}
+  .doserow .nm b{font-size:15px}
+  nav button{font-size:10px}
+}
 .hint{font-size:13px;color:var(--muted);margin:2px 2px 12px}
 /* completion ring strip */
 .rings{display:flex;justify-content:space-between;background:var(--card);border:1px solid var(--line);
@@ -1120,7 +1473,41 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 <main>
 
 <!-- ============ LOG ============ -->
-<section class="tab sel" id="tab-log">
+<!-- ============ NOW ============ -->
+<section class="tab sel" id="tab-now">
+  <div class="card" id="nowBP">
+    <p class="q">&#129656; Blood pressure</p>
+    <div class="row3">
+      <div><p class="lbl">Systolic</p><input type="number" inputmode="numeric" id="n_sys" placeholder="—"></div>
+      <div><p class="lbl">Diastolic</p><input type="number" inputmode="numeric" id="n_dia" placeholder="—"></div>
+      <div><p class="lbl">Pulse</p><input type="number" inputmode="numeric" id="n_pulse" placeholder="—"></div>
+    </div>
+    <button type="button" class="addbtn" id="n_bpSave" style="margin-top:10px">Save reading</button>
+    <p class="hint" id="n_bpLast" style="margin:8px 0 0"></p>
+  </div>
+
+  <div id="nowSched"></div>
+
+  <div class="card" id="nowExtraCard">
+    <p class="q">&#10133; Extra dose</p>
+    <div class="chips" id="nowExtras"></div>
+    <button type="button" class="addbtn" id="nowAddMed" style="margin-top:9px">&#10133; Add medicine</button>
+    <p class="hint" style="margin:8px 0 0">One tap logs it at the current time.</p>
+  </div>
+
+
+  <div class="card" id="nowSym">
+    <p class="q">&#129504; Symptom now</p>
+    <div class="chips" id="n_symType"></div>
+    <p class="lbl" style="margin-top:10px">Severity</p>
+    <div class="chips" id="n_symSev"></div>
+    <p class="lbl" style="margin-top:10px">Bristol (optional)</p>
+    <div class="chips" id="n_symBristol"></div>
+    <button type="button" class="addbtn" id="n_symSave" style="margin-top:10px">Save episode</button>
+  </div>
+</section>
+
+<section class="tab" id="tab-log">
   <div class="rings" id="rings"></div>
   <div class="seg" data-seg="log">
     <button data-s="day" class="sel">Day</button><button data-s="episode">+ Episode</button><button data-s="vitals">Vitals</button>
@@ -1256,7 +1643,7 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 <!-- ============ MEDS ============ -->
 <section class="tab" id="tab-meds">
   <div class="seg" data-seg="meds">
-    <button data-s="prn" class="sel">PRN dose</button><button data-s="course">Courses</button>
+    <button data-s="prn" class="sel">PRN dose</button><button data-s="course">Courses</button><button data-s="sched">Schedule</button>
   </div>
 
   <div class="sub sel" id="meds-prn">
@@ -1274,6 +1661,24 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
     <div class="card"><p class="q">Effect (optional - can log later dose instead)</p><div class="chips" data-f="effect" data-sec="prn"
       data-v="Helped fully|Helped partly|No effect|Worse/side effect"></div></div>
     <div class="card"><p class="q">Notes (optional)</p><textarea id="m_notes" maxlength="500"></textarea></div>
+  </div>
+
+
+  <div class="sub" id="meds-sched">
+    <p class="hint">Your regular regimen. Changing a line closes the old one and opens a new one on today's date, so past logs stay readable.</p>
+    <div id="schedList"></div>
+    <div class="card"><p class="q">Add a regular medicine</p>
+      <p class="lbl">Medicine</p><select id="sc_med"></select>
+      <p class="lbl" style="margin-top:10px">Slot</p>
+      <div class="chips" id="sc_slot"></div>
+      <div class="row2" style="margin-top:10px">
+        <div><p class="lbl">Dose</p><input type="text" id="sc_dose" maxlength="40" placeholder="1 tab"></div>
+        <div><p class="lbl">Food</p><select id="sc_food">
+          <option value="ANY">Any</option><option value="BEFORE">Before</option><option value="AFTER">After</option>
+        </select></div>
+      </div>
+      <button type="button" class="addbtn" id="sc_add" style="margin-top:10px">Add to regimen</button>
+    </div>
   </div>
 
   <div class="sub" id="meds-course">
@@ -1353,7 +1758,8 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 
 <div class="save"><button id="saveBtn">Save</button></div>
 <nav id="nav">
-  <button data-t="log" class="sel"><i>&#9998;</i>Log</button>
+  <button data-t="now" class="sel"><i>&#9889;</i>Now</button>
+  <button data-t="log"><i>&#9998;</i>Log</button>
   <button data-t="meals"><i>&#127860;</i>Meals</button>
   <button data-t="meds"><i>&#128138;</i>Meds</button>
   <button data-t="files"><i>&#128194;</i>Files</button>
@@ -1367,7 +1773,7 @@ const nowHM=()=>new Date().toTimeString().slice(0,5);
 const S={log:{},episode:{},vitals:{},meal:{},test:{},prn:{}};
 const FMAP={L:0,'L-M':0.5,M:1,'M-H':1.5,H:2};
 const FMCOL={L:'var(--fmL)','L-M':'var(--fmLM)',M:'var(--fmM)','M-H':'var(--fmMH)',H:'var(--fmH)'};
-let tab='log'; const seg={log:'day',meals:'meal',meds:'prn',files:'vault'};
+let tab='now'; const seg={log:'day',meals:'meal',meds:'prn',files:'vault'};
 let LIB=[], PRN=[], basket=[], libFilter='all', dayProtein=0;
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1700);}
 async function jget(u){const r=await fetch(u);return r.json();}
@@ -1876,6 +2282,9 @@ function saveBtnVisible(){
   const L={'log:day':'Save day','log:episode':'Save episode','log:vitals':'Save vitals',
     'meals:meal':'Save meal','meals:test':'Save food test','meds:prn':'Log dose',
     'meds:course':'Start course','files:consults':'Save visit'};
+  const sb=$('#saveBtn');
+  if(tab==='now'){sb.style.display='none';return;}
+  sb.style.display='';
   $('#saveBtn').textContent=L[tab+':'+seg[tab]]||'Save';
 }
 function switchTab(t){
@@ -1885,11 +2294,14 @@ function switchTab(t){
   if(t==='review')loadReview();
   if(t==='files'){loadFiles();loadLabs();loadDoctors();}
   if(t==='meals'){loadMealTotals();loadRegistry();renderTestFoods();}
+  if(t==='now')loadNow();
   if(t==='meds'){loadPRNToday();loadPatch();loadCourses();}
+  if(t==='meds'&&seg.meds==='sched'){loadSchedMeds();loadSchedule();}
   window.scrollTo(0,0);
 }
 function setSeg(section,s){
   seg[section]=s;
+  if(section==='meds'&&s==='sched'){loadSchedMeds();loadSchedule();}
   $$(`.seg[data-seg="${section}"] button`).forEach(b=>b.classList.toggle('sel',b.dataset.s===s));
   $$(`#tab-${section} .sub`).forEach(el=>el.classList.remove('sel'));
   const el=$(`#${section}-${s}`);if(el)el.classList.add('sel');
@@ -1902,6 +2314,253 @@ $$('.seg').forEach(box=>{const section=box.dataset.seg;
 /* segment chips that set state (slot, drug, reason, etc via generic buildChips already handle S) */
 buildChips();
 
+
+/* ---------- NOW tab ---------- */
+const SEVS=['1','2','3','4','5','6','7','8','9','10'];
+const SYMTYPES=['Abdominal pain','Cramp','Bloating','Urgency','Loose stool','Constipation','Nausea','Reflux','Other'];
+let nowData=null, nSym={type:null,sev:null,bristol:null};
+
+function nowRow(r){
+  const st=r.status||'';
+  const cls=st==='TAKEN'?'done':(st==='SKIPPED'?'skip':'');
+  const mark=st==='TAKEN'?'&#10003;':(st==='SKIPPED'?'&#8212;':'');
+  const shown=(st==='TAKEN'&&r.logged_dose)?r.logged_dose:(r.variants&&!st?'dose varies':(r.dose_text||''));
+  /* a logged row is tappable again -- say so, or the affordance
+     is invisible and the hand has to guess */
+  const sub=[shown,r.with_food&&r.with_food!=='ANY'?r.with_food.toLowerCase()+' food':'',
+             st?(st==='TAKEN'?'taken '+(r.dtime||''):'skipped'):'',
+             st?'tap to change':''].filter(Boolean).join(' \u00b7 ');
+  const d=document.createElement('div');
+  d.className='doserow '+cls;
+  d.innerHTML='<div class="tick">'+mark+'</div><div class="nm"><b></b><span></span></div>'+
+              (st?'<button type="button" class="sk">undo</button>':'<button type="button" class="sk">skip</button>');
+  d.querySelector('.nm b').textContent=r.name;
+  d.querySelector('.nm span').textContent=sub;
+  d.onclick=async e=>{
+    if(e.target.classList.contains('sk'))return;
+    if(st){openRowActions(d,r,st);return;}
+    if(r.variants){openVariantPicker(d,r);return;}
+    try{await post('/api/now/dose',{med_id:r.med_id,sched_id:r.sched_id,status:'TAKEN',
+      day:nowData.day,dose_text:r.dose_text});toast('Logged '+r.name);loadNow();}
+    catch(err){toast(err.message);}
+  };
+  d.querySelector('.sk').onclick=async ev=>{
+    ev.stopPropagation();
+    try{
+      if(st&&r.dose_id){await post('/api/now/undo/'+r.dose_id,{});toast('Undone');}
+      else{await post('/api/now/dose',{med_id:r.med_id,sched_id:r.sched_id,status:'SKIPPED',
+        day:nowData.day,dose_text:r.dose_text});toast('Marked skipped');}
+      loadNow();
+    }catch(err){toast(err.message);}
+  };
+  return d;
+}
+
+/* Tapping a row that is already logged. The instinct is to tap the thing
+   again, so that has to do something -- but an accidental second tap must
+   not silently delete a medication record, hence a strip rather than an
+   immediate toggle. */
+function openRowActions(rowEl,r,st){
+  const old=document.querySelector('.varpick');if(old)old.remove();
+  const box=document.createElement('div');
+  box.className='varpick';
+  const canChange=!!r.variants;
+  let html='<p class="vt"></p><div class="vb'+(canChange?' three':'')+'">'+
+    '<button type="button" class="cx">Cancel</button>';
+  if(canChange)html+='<button type="button" class="ch">Change dose</button>';
+  if(st==='TAKEN')html+='<button type="button" class="sp">Skip</button>';
+  html+='<button type="button" class="danger un">Undo</button></div>';
+  box.innerHTML=html;
+  const was=st==='TAKEN'?('taken'+(r.logged_dose?' '+r.logged_dose:'')):'skipped';
+  box.querySelector('.vt').textContent=r.name+' - '+was;
+  box.querySelector('.cx').onclick=()=>box.remove();
+  box.querySelector('.un').onclick=async()=>{
+    try{
+      if(r.dose_id)await post('/api/now/undo/'+r.dose_id,{});
+      toast('Undone');box.remove();loadNow();
+    }catch(err){toast(err.message);}
+  };
+  const ch=box.querySelector('.ch');
+  if(ch)ch.onclick=()=>{box.remove();openVariantPicker(rowEl,r);};
+  const sp=box.querySelector('.sp');
+  if(sp)sp.onclick=async()=>{
+    try{
+      await post('/api/now/dose',{med_id:r.med_id,sched_id:r.sched_id,
+        status:'SKIPPED',day:nowData.day});
+      toast('Marked skipped');box.remove();loadNow();
+    }catch(err){toast(err.message);}
+  };
+  rowEl.parentNode.insertBefore(box,rowEl.nextSibling);
+  box.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+/* A scheduled medicine whose dose varies. Multi-select, because a
+   combination such as 145 + 72 is one dose, not two. */
+function openVariantPicker(rowEl,r){
+  if(document.querySelector('.varpick'))document.querySelector('.varpick').remove();
+  const opts=r.variants.split('|').map(s=>s.trim()).filter(Boolean);
+  const picked=[];
+  const box=document.createElement('div');
+  box.className='varpick';
+  box.innerHTML='<p class="vt"></p><div class="vrow"></div>'+
+    '<div class="vb"><button type="button" class="cx">Cancel</button>'+
+    '<button type="button" class="go">Log</button></div>';
+  box.querySelector('.vt').textContent=r.name+' - which dose?';
+  const vrow=box.querySelector('.vrow');
+  opts.forEach(v=>{
+    const b=document.createElement('div');b.className='chip';b.textContent=v;
+    b.onclick=()=>{
+      const i=picked.indexOf(v);
+      if(i>=0)picked.splice(i,1);else picked.push(v);
+      b.classList.toggle('sel',picked.indexOf(v)>=0);
+    };
+    vrow.appendChild(b);
+  });
+  box.querySelector('.cx').onclick=()=>box.remove();
+  box.querySelector('.go').onclick=async()=>{
+    if(!picked.length){toast('Pick a dose');return;}
+    const txt=picked.join(' + ');
+    try{
+      await post('/api/now/dose',{med_id:r.med_id,sched_id:r.sched_id,
+        status:'TAKEN',day:nowData.day,dose_text:txt});
+      toast('Logged '+r.name+' '+txt);box.remove();loadNow();
+    }catch(err){toast(err.message);}
+  };
+  rowEl.parentNode.insertBefore(box,rowEl.nextSibling);
+  box.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+async function loadNow(){
+  nowData=await jget('/api/now?day='+todayISO);
+  const box=$('#nowSched');box.innerHTML='';
+  if(!nowData.has_schedule){
+    const c=document.createElement('div');c.className='card';
+    c.innerHTML='<p class="q">&#128138; Today\u2019s doses</p><p class="hint" style="margin:0">'+
+      'No regular medicines set up yet. Add them under '+
+      '<b>Meds &rarr; Schedule</b> and they\u2019ll appear here as one-tap rows.</p>';
+    box.appendChild(c);
+  }else{
+    nowData.slots.forEach(s=>{
+      const c=document.createElement('div');c.className='card';
+      const hd=document.createElement('div');hd.className='slothd';
+      hd.innerHTML='<p class="q">'+s.label+'</p><span class="cnt">'+s.done+'/'+s.total+'</span>';
+      c.appendChild(hd);
+      s.rows.forEach(r=>c.appendChild(nowRow(r)));
+      box.appendChild(c);
+    });
+  }
+  /* extras */
+  const ex=$('#nowExtras');ex.innerHTML='';
+  (nowData.meds||[]).forEach(m=>{
+    const b=document.createElement('div');b.className='chip';b.textContent=m.name;
+    b.onclick=async()=>{try{await post('/api/now/dose',{med_id:m.id,status:'EXTRA',day:nowData.day});
+      toast('Logged '+m.name);loadNow();}catch(err){toast(err.message);}};
+    ex.appendChild(b);
+  });
+  let list=$('#nowExtraList');
+  if(!list){list=document.createElement('div');list.id='nowExtraList';list.style.marginTop='10px';
+    $('#nowExtraCard').appendChild(list);}
+  list.innerHTML='';
+  (nowData.extras||[]).forEach(e=>{
+    const row=document.createElement('div');row.className='exrow';
+    row.innerHTML='<span class="t"></span><span class="m"></span><button type="button" class="u">undo</button>';
+    row.querySelector('.t').textContent=e.dtime||'';
+    row.querySelector('.m').textContent=e.medicine;
+    row.querySelector('.u').onclick=async()=>{await post('/api/now/undo/'+e.id,{});toast('Removed');loadNow();};
+    list.appendChild(row);
+  });
+}
+
+function buildNowStatics(){
+  const t=$('#n_symType');
+  SYMTYPES.forEach(v=>{const b=document.createElement('div');b.className='chip';b.textContent=v;
+    b.onclick=()=>{nSym.type=v;[...t.children].forEach(c=>c.classList.toggle('sel',c===b));};t.appendChild(b);});
+  const s=$('#n_symSev');
+  SEVS.forEach(v=>{const b=document.createElement('div');b.className='chip';b.textContent=v;
+    b.onclick=()=>{nSym.sev=v;[...s.children].forEach(c=>c.classList.toggle('sel',c===b));};s.appendChild(b);});
+  const br=$('#n_symBristol');
+  ['1','2','3','4','5','6','7'].forEach(v=>{const b=document.createElement('div');b.className='chip';b.textContent=v;
+    b.onclick=()=>{nSym.bristol=(nSym.bristol===v?null:v);
+      [...br.children].forEach(c=>c.classList.toggle('sel',c.textContent===nSym.bristol));};br.appendChild(b);});
+
+  $('#n_bpSave').onclick=async()=>{
+    const sys=$('#n_sys').value,dia=$('#n_dia').value,pulse=$('#n_pulse').value;
+    if(!sys&&!dia&&!pulse){toast('Nothing to save');return;}
+    try{await post('/api/vitals',{day:todayISO,vtime:nowHM(),sys:sys,dia:dia,pulse:pulse});
+      $('#n_bpLast').textContent='Saved '+(sys||'-')+'/'+(dia||'-')+(pulse?', pulse '+pulse:'')+' at '+nowHM();
+      $('#n_sys').value='';$('#n_dia').value='';$('#n_pulse').value='';toast('Reading saved');}
+    catch(err){toast(err.message);}
+  };
+  $('#n_symSave').onclick=async()=>{
+    if(!nSym.type){toast('Pick a symptom');return;}
+    try{await post('/api/episodes',{day:todayISO,etime:nowHM(),category:'GI',etype:nSym.type,
+      severity:nSym.sev,bristol:nSym.bristol});
+      toast('Episode saved');nSym={type:null,sev:null,bristol:null};
+      $$('#n_symType .chip,#n_symSev .chip,#n_symBristol .chip').forEach(c=>c.classList.remove('sel'));}
+    catch(err){toast(err.message);}
+  };
+  $('#nowAddMed').onclick=async()=>{
+    const n=prompt('Medicine name (include strength)');if(!n)return;
+    try{await post('/api/prnmeds',{name:n});toast('Added');loadNow();loadSchedMeds();}
+    catch(err){toast(err.message);}
+  };
+}
+
+/* ---------- Schedule editor ---------- */
+let schedSlot=null;
+async function loadSchedMeds(){
+  const meds=await jget('/api/prnmeds/full');
+  const sel=$('#sc_med');if(!sel)return;
+  sel.innerHTML='';
+  meds.forEach(m=>{const o=document.createElement('option');o.value=m.id;o.textContent=m.name;sel.appendChild(o);});
+}
+async function loadSchedule(){
+  const d=await jget('/api/schedule');
+  const sl=$('#sc_slot');
+  if(sl&&!sl.dataset.built){sl.dataset.built=1;
+    d.slots.forEach(s=>{const b=document.createElement('div');b.className='chip';b.textContent=s.label;
+      b.onclick=()=>{schedSlot=s.slot;[...sl.children].forEach(c=>c.classList.toggle('sel',c===b));};
+      sl.appendChild(b);});}
+  const box=$('#schedList');box.innerHTML='';
+  if(!d.rows.length){
+    box.innerHTML='<div class="card"><p class="hint" style="margin:0">No regular medicines yet.</p></div>';
+    return;
+  }
+  const c=document.createElement('div');c.className='card';
+  c.innerHTML='<p class="q">Current regimen</p>';
+  d.rows.forEach(r=>{
+    const row=document.createElement('div');row.className='schrow';
+    row.innerHTML='<span class="s"></span><span class="n"></span><button type="button" class="x">stop</button>';
+    row.querySelector('.s').textContent=r.slot.slice(0,3);
+    row.querySelector('.n').textContent=r.name+(r.dose_text?' \u00b7 '+r.dose_text:'');
+    row.querySelector('.x').onclick=async()=>{
+      if(!confirm('Stop '+r.name+' ('+r.slot.toLowerCase()+')? Past logs are kept.'))return;
+      await post('/api/schedule/close/'+r.id,{});toast('Stopped');loadSchedule();loadNow();};
+    c.appendChild(row);
+  });
+  box.appendChild(c);
+}
+function bindSchedule(){
+  const add=$('#sc_add');if(!add)return;
+  add.onclick=async()=>{
+    if(!schedSlot){toast('Pick a slot');return;}
+    try{await post('/api/schedule',{med_id:parseInt($('#sc_med').value,10),slot:schedSlot,
+      dose_text:$('#sc_dose').value,with_food:$('#sc_food').value});
+      toast('Added to regimen');$('#sc_dose').value='';loadSchedule();loadNow();}
+    catch(err){toast(err.message);}
+  };
+}
+
+/* deep links from the home-screen shortcuts */
+function nowDeepLink(){
+  const p=new URLSearchParams(location.search).get('open');
+  if(!p)return;
+  switchTab('now');
+  const map={bp:'#nowBP',sym:'#nowSym',meds:'#nowSched'};
+  const el=$(map[p]||'#nowSched');
+  if(el)setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'start'}),120);
+}
+
 /* ---------- boot ---------- */
 function initDates(){
   $('#hdrDay').textContent=new Date().toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'});
@@ -1910,11 +2569,15 @@ function initDates(){
 }
 (async function(){
   initDates();
+  buildNowStatics();
+  bindSchedule();
   await loadLib();
   await loadPRN();
   await loadRings();
   renderTestFoods();loadRegistry();
+  await loadNow();
   saveBtnVisible();
+  nowDeepLink();
 })();
 </script>
 </body></html>"""
