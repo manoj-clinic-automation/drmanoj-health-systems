@@ -5,14 +5,20 @@ Single source of truth. Update after every change.
 ## Identity
 - Personal gut/health diary and quick-log surface — medication doses, symptom
   episodes, vitals, meals, labs, consults
-- URL: health.dr-manoj.in · Port: **8020** · Companion apps: RxGuard (8031), FitLog (8040)
+- Runs on the personal VPS behind the OpenLiteSpeed reverse proxy, on its own
+  subdomain and loopback port. Companion apps: RxGuard, FitLog.
 - Repo: `drmanoj-health-systems/gutlog/`
-- Live: `/root/gutlog/app.py` · DB: `/root/gutlog/health3.db`
+- Single-file Flask app plus a SQLite database, both under the app directory.
 
-`/root/gutlog/` also holds `health.db` and `health_pre_v2.db`. **Both are dead
-leftovers.** `app.py:19` opens `health3.db` (`GUTLOG_DB` env, default
-`BASE/health3.db`). This is the GutLog half of the CLAUDE.md §4 lesson —
-confirm the filename before pointing any script at "the database".
+> **Hostnames, ports, IPs and absolute paths are deliberately not in this file.**
+> This repository is public. The concrete values live in
+> `gutlog/INFRA_GutLog.local.md`, which is gitignored.
+
+The app directory also holds **two dead database files** from earlier versions.
+`app.py:19` reads the `GUTLOG_DB` environment variable, defaulting to the
+current database under the app directory. Confirm which file is live before
+pointing any script at "the database" — this is the GutLog half of the
+CLAUDE.md §4 lesson.
 
 ## Architecture
 - Single-file Flask (`app.py`, ~3,900 lines incl. embedded HTML/CSS/JS) + SQLite
@@ -112,17 +118,19 @@ every time. The variant picker is multi-select, because a combination such as
 145 + 72 is one dose, not two.
 
 ## Deployment runbook
-1. WinSCP upload to `/root/gutlog/` (never terminal paste for multi-line files)
+Concrete paths and commands are in `gutlog/INFRA_GutLog.local.md` (gitignored).
+
+1. WinSCP upload to the app directory (never terminal paste for multi-line files)
 2. Patch `app.py` via its versioned patcher — `--check` first, then apply
-3. `systemctl restart gutlog`
-4. `cd /root/gutlog && python3 test_phase_a.py` → must be **18/18**
+3. Restart the service
+4. Run `test_phase_a.py` on the server → must be **18/18**
 5. Verify against real data, not just the fixture — `test_phase_a.py` builds its
-   own DB and never touches `health3.db`
-6. OLS reverse proxy → 127.0.0.1:8020 · CyberPanel SSL · GoDaddy A record `health`
+   own database and never touches the live one
+6. OLS reverse proxy → loopback port · CyberPanel SSL · DNS A record
 
 ## Environment (verified on server, 2026-09-10)
-Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · service
-`gutlog`, `WorkingDirectory=/root/gutlog`, HTTPS live via OLS proxy.
+Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · HTTPS live
+via OLS reverse proxy.
 
 ## Test evidence
 - `test_phase_a.py` — **18/18 PASS** (2026-09-10, post-v3.4.0). Covers
@@ -132,7 +140,7 @@ Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · service
   history, bristol column, vitals regression, PWA assets, page render, legacy
   endpoints, migrate fast path.
 - `test_migration_v330.py` — v3.3.0 migration suite.
-- Post-v3.4.0 verification against a **copy of live `health3.db`**: `/api/now`
+- Post-v3.4.0 verification against a **copy of the live database**: `/api/now`
   200 with 15 extras / 22 total and no scheduled medicine leaking into extras;
   bristol round-trip confirmed (`('Cramp', 4, '6')`); page renders 87,719 bytes
   with all six v3.4.0 changes present, no traceback.
@@ -157,8 +165,8 @@ rediscovered the expensive way.
 
 3. **`tidy_extras.py` writes UPDATEs without taking its own backup.** Unlike the
    `app.py` patchers, it has no `.bak` step. Take a `sqlite3.backup()` copy of
-   `health3.db` before running it with `--apply`. It is dry-run by default,
-   which is the only guard it has.
+   the live database before running it with `--apply`. It is dry-run by
+   default, which is the only guard it has.
 
 4. **`test_phase_a.py` test 12 checks the Bristol column exists, not that a
    value round-trips.** It would have passed 18/18 against the v3.3.0–v3.4.0
@@ -169,10 +177,10 @@ rediscovered the expensive way.
    mapped.** All three are extras. Anything keyed on molecule — RxGuard
    interaction checking in particular — will not see them.
 
-6. **The systemd unit uses a hardcoded venv path.**
-   `ExecStart=/root/gutlog/venv/bin/gunicorn` rather than
-   `python3 -m gunicorn`. This violates CLAUDE.md §3 and breaks if the venv is
-   rebuilt or moved. FitLog and the newer units use the portable form.
+6. **The systemd unit invokes gunicorn by an absolute path inside a virtualenv**
+   rather than `python3 -m gunicorn`. This violates CLAUDE.md §3 and breaks if
+   the venv is rebuilt or moved. FitLog and the newer units use the portable
+   form. Exact `ExecStart` line in `INFRA_GutLog.local.md`.
 
 ## What's next
 - **Phase B** — backfill and review surface
@@ -192,8 +200,12 @@ rediscovered the expensive way.
   collapsible sections with summaries in the header; larger text, real buttons,
   warmer ground (`#E9EDE7`) replacing the bright `#EFF5F2`-on-white pairing.
   **Also fixed the Bristol discard bug** (gap 1). `test_phase_a.py` 18/18.
-  Rollback: `app.py.bak-v340-20260910_105626`,
-  `health3.db.bak-v340-20260910_105612`.
+  Rollback snapshots taken for both the app file and the database; exact
+  filenames in `INFRA_GutLog.local.md`.
+- **2026-09-10 hardening** — Flask `SECRET_KEY` rotated (logged out all
+  devices, by design), infrastructure detail moved out of this file into the
+  gitignored `INFRA_GutLog.local.md`, and `tools/NO_SECRETS.py` added: blocks
+  databases, env files and credential literals, warns on clinical detail.
 - **2026-09-10 v3.3.3** — row actions. Tapping an already-logged dose row opens
   an Undo / Change dose / Skip strip instead of toggling, so an accidental
   second tap cannot delete a medication record.

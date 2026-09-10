@@ -4,6 +4,10 @@
 *.secret
 *.env
 ingest.env
+# Operational detail and clinical term lists stay on the machine.
+# THIS REPOSITORY IS PUBLIC - see tools/NO_SECRETS.py
+*.local.txt
+*.local.md
 *.log
 *.bak
 *.bak-*
