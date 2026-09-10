@@ -88,6 +88,20 @@ echo Checking staged files for databases, env files and snapshots...
 %GIT% diff --cached --name-only > "%TEMP%\_health_staged.txt"
 findstr /i /r "\.db$ \.env$ \.bak_ \.bak- ingest\.env" "%TEMP%\_health_staged.txt" >nul
 if not errorlevel 1 goto :secret_gate_failed
+
+REM  tools\NO_SECRETS.py adds a clinical-disclosure NOTE on top of the path
+REM  check above. It BLOCKS on secrets and only WARNS on drug names, so its
+REM  exit code is still honoured - a non-zero means a real secret.
+REM  `python -B` so the check does not create __pycache__ and trip the
+REM  .gitignore gate below.
+if not exist "tools\NO_SECRETS.py" goto :nosecrets_missing
+python -B "tools\NO_SECRETS.py" --files-from "%TEMP%\_health_staged.txt" "%REPO_DIR%"
+if errorlevel 1 goto :secret_gate_failed
+goto :secret_gate_done
+
+:nosecrets_missing
+echo    !! tools\NO_SECRETS.py NOT FOUND - the clinical-disclosure check did
+echo       NOT run. Publishing anyway, and saying so rather than staying quiet.
 goto :secret_gate_done
 
 :secret_gate_failed
