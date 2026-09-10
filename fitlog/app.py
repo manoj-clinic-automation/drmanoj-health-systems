@@ -14,6 +14,10 @@ DB_PATH = os.environ.get("FITLOG_DB", os.path.join(APP_DIR, "fitlog.db"))
 KDIR = os.path.join(APP_DIR, "knowledge")
 
 app = Flask(__name__)
+
+# --- Phase 3.5: wearable ingest (Apple Watch / Health Connect) ---
+from health_ingest import health_ingest_bp
+app.register_blueprint(health_ingest_bp)
 app.secret_key = os.environ.get("FITLOG_SECRET") or "fitlog-" + hashlib.sha256(DB_PATH.encode()).hexdigest()[:24]
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 

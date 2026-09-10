@@ -15,14 +15,14 @@ Clinic automation lives separately in `drmanoj-clinic-automation` — do not mix
 |---|---|---|---|
 | GutLog v3.2 | health.dr-manoj.in | 8020 | /root/gutlog/health3.db |
 | RxGuard | rx.dr-manoj.in | 8031 | /root/rxguard/ |
-| FitLog v1.0 | fit.dr-manoj.in | 8040 | /root/fitlog/fitlog.db |
+| FitLog v1.0.1 + Phase 3.5 | fit.dr-manoj.in | 8040 | /root/fitlog/fitlog.db (verified on server 2026-09-10) |
 
 ## Non-negotiable conventions
 1. **Deterministic engines only** in safety/decision paths — rules as JSON knowledge files, no LLM calls in analysis. Every decision surfaces which named rules fired.
-2. **Tests before deploy**: each app ships `tests/kb_lint.py` + `tests/smoke_test.py` (with negative controls). Run on server before `systemctl enable`. Re-run after any knowledge-file edit.
+2. **Tests before deploy**: each app ships `tests/kb_lint.py` + `tests/smoke_test.py` (with negative controls). Run on server before `systemctl enable`. Re-run after any knowledge-file edit. **A green suite is only evidence for the code it actually executes** — FitLog's `test_health_ingest.py` scored 23/23 against an HC path carrying two data bugs, because every healthconnect case in it used the legacy payload shape and never entered the new branch. When adding a code path, add a suite that enters it, and check coverage before trusting a gate.
 3. **Stack**: single-file Flask + SQLite + `python3 -m gunicorn` (portable, never hardcoded gunicorn path) + systemd with `EnvironmentFile=-` (optional env, no boot failures) + OLS reverse proxy.
 4. **Backups**: Python `sqlite3.backup()` API (no sqlite3 CLI on server), 30-day retention, and **manually verify the actual live file path once** — silent cron success is not evidence of correctness (GutLog health.db/health3.db lesson).
-5. **Auth pattern**: login password + separate owner key gating credential changes (GutLog v3.2 pattern).
+5. **Auth pattern**: login password + separate owner key gating credential changes (GutLog v3.2 pattern). **Exception — machine-to-machine endpoints are bearer-gated, not owner-key gated.** FitLog `/api/ingest`, `/api/health/daily`, `/api/ingest/status` authenticate with a bearer token from `/root/fitlog/ingest.env` (mode 600, never in git); rotate by editing that file and restarting. Note `fitlog.service` loads `.env`, not `ingest.env` — the blueprint reads the file directly, so no unit edit is needed. FitLog's owner key is a per-route `@login_required` decorator, not a `before_request` hook, so blueprint routes bypass it structurally and need no exemption patch. The HC Webhook feed uses a **second, narrower** token (`FITLOG_HC_TOKEN`) carried in the URL as `?k=` because HC Webhook cannot send headers — scoped POST-only, `healthconnect`-only, no read access. A URL-borne token is acceptable *only* under that scoping. `ingest.env` also carries optional `FITLOG_DB`: `health_ingest.py` reads it from there (env > ingest.env > hardcoded default), which is what keeps the migration and the running app on the same database when it is not named `fitlog.db`.
 6. **Docs**: per-app `DOSSIER.md` is the single source of truth; sync VPS ↔ GitHub ↔ Notion Tech & Systems Register after every change (Register data source: `e2e5e030-efc6-41a3-8f8a-70e808aaa5cb`; use `insert_content`/append for Notion additions, not replace_content).
 7. Owner communicates tersely; deliver working files, confirm actions briefly; preserve rollback copies before replacing deployed files.
 

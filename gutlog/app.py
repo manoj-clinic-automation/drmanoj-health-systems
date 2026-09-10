@@ -215,7 +215,7 @@ PRN_SEED = ["Colospa (mebeverine 135)","Drotaverine 80","Paracetamol 500",
 DOCTOR_SEED = ["Prof. Ahuja (Gastro)","Dr. V.K. Srivastav (Psychiatry)",
     "Ophthalmology","Orthopaedics","Physician","Other"]
 
-SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT
+SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -735,12 +735,19 @@ def api_now():
         "FROM doses d WHERE d.day=? AND d.sched_id IS NULL "
         "ORDER BY d.dtime", (day,)).fetchall()]
 
+    # An expected dose belongs on the dose card. Listing a
+    # scheduled medicine here too invites logging it twice, or in
+    # the wrong place. meds_all backs the "Show all" button for
+    # the rare unplanned dose of a regular medicine.
     meds = [dict(r) for r in db().execute(
+        "SELECT id, name, sort FROM prnmeds WHERE active=1 "
+        "AND COALESCE(scheduled,0)=0 ORDER BY sort, id").fetchall()]
+    meds_all = [dict(r) for r in db().execute(
         "SELECT id, name, sort FROM prnmeds WHERE active=1 "
         "ORDER BY sort, id").fetchall()]
 
     return jsonify(day=day, slots=slots, extras=extras, meds=meds,
-                   has_schedule=bool(rows))
+                   meds_all=meds_all, has_schedule=bool(rows))
 
 
 @app.route("/api/now/dose", methods=["POST"])
@@ -923,10 +930,10 @@ def api_courses_active():
 def api_episodes():
     d = J()
     if not d.get("etype"): return jsonify(ok=False, err="Pick an episode type."), 400
-    insert("episodes", ["day","etime","category","etype","side","severity","duration","notes"],
+    insert("episodes", ["day","etime","category","etype","side","severity","duration","notes","bristol"],
            [d.get("day") or today(), d.get("etime") or now_hm(),
             d.get("category"), d["etype"], d.get("side"), d.get("severity"),
-            d.get("duration"), note(d)])
+            d.get("duration"), note(d), (d.get("bristol") or "")[:4]])
     return jsonify(ok=True)
 
 @app.route("/api/vitals", methods=["POST"])
@@ -1378,6 +1385,73 @@ text-decoration:underline;cursor:pointer;flex:0 0 auto}
 .row2,.row3{min-width:0}
 .row2>*,.row3>*{min-width:0}
 .row2 input,.row3 input,.row2 select,.row3 select{min-width:0}
+/* GUTLOG_V340_READABILITY -- softer ground, heavier text, real buttons.
+   The previous pairing was a bright cool mint behind pure white cards:
+   high contrast, and tiring for something opened at 5am and again late. */
+body{background:#E9EDE7;font-size:17px;line-height:1.5}
+main{padding:14px 14px 0}
+.card{background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;
+margin:0 0 14px;box-shadow:0 1px 3px rgba(29,47,51,.06)}
+.q{font-size:15px;font-weight:800;color:var(--ink);text-transform:none;
+letter-spacing:-.1px;margin:0 0 12px}
+.lbl{font-size:13.5px;font-weight:600;color:var(--muted);margin:0 0 7px}
+.hint{font-size:13.5px}
+.chip{padding:11px 16px;font-size:16px;font-weight:600;border-width:2px;
+background:#EDF3EF;border-color:#CBDCD3}
+.chip.num{min-width:46px;text-align:center;padding:11px 8px}
+.chip.sel{background:var(--teal);border-color:var(--teal);color:#fff;font-weight:700}
+.chip.just{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:700}
+.chip.just::after{content:" \2713"}
+
+/* buttons that look like buttons */
+.btn{border:2px solid var(--line);background:#fff;color:var(--ink);
+border-radius:13px;padding:13px 18px;font-size:16px;font-weight:700;
+cursor:pointer;font-family:inherit}
+.btn.primary{background:var(--teal);border-color:var(--teal);color:#fff;width:100%}
+.btn.ghost{background:#fff;color:var(--teal);border-color:#BAD2C8}
+.btn.tiny{padding:7px 13px;font-size:13.5px;border-radius:10px;
+color:var(--err);border-color:#E4C3BE}
+.btn:active{transform:scale(.98)}
+.btnrow{display:flex;gap:9px;margin-top:12px;flex-wrap:wrap}
+.btnrow .btn{flex:1;min-width:140px}
+
+/* collapsible cards */
+.card.fold{padding:0;overflow:hidden}
+.card.fold .fold-h{width:100%;display:flex;align-items:center;gap:10px;
+padding:16px;border:0;background:none;font-family:inherit;font-size:16px;
+font-weight:800;color:var(--ink);cursor:pointer;text-align:left}
+.card.fold .ft{flex:0 0 auto}
+.card.fold .fs{margin-left:auto;font-size:13.5px;font-weight:600;color:var(--muted)}
+.card.fold .fc{width:11px;height:11px;border-right:2.5px solid var(--muted);
+border-bottom:2.5px solid var(--muted);transform:rotate(45deg) translate(-3px,-3px);
+transition:transform .18s;flex:0 0 auto}
+.card.fold.open .fc{transform:rotate(-135deg) translate(-3px,-3px)}
+.card.fold .cbody{display:none;padding:0 16px 16px}
+.card.fold.open .cbody{display:block}
+.card.fold.pending .fs{color:var(--amber);font-weight:700}
+
+/* dose rows */
+.doserow{padding:13px 14px;border-width:2px;border-radius:14px;margin-bottom:9px}
+.doserow .nm b{font-size:16.5px;font-weight:700}
+.doserow .nm span{font-size:13px}
+.doserow .tick{width:32px;height:32px;border-width:2.5px}
+.doserow .sk{font-size:13px;font-weight:600;padding:9px 6px}
+.slothd{margin:14px 0 9px;align-items:baseline}
+.slothd .sl{font-size:14px;font-weight:800;color:var(--teal-d);
+text-transform:uppercase;letter-spacing:.6px}
+.slothd .cnt{margin-left:auto;font-size:13.5px;font-weight:700;color:var(--muted)}
+.exrow{padding:9px 0;font-size:15px;gap:10px}
+.exrow .t{font-size:13px;font-weight:600}
+.exrow .m{font-weight:600}
+.exrow .u{margin-left:auto}
+@media (max-width:430px){
+  body{font-size:16.5px}
+  .card{padding:14px}
+  .card.fold .fold-h{padding:14px}
+  .card.fold .cbody{padding:0 14px 14px}
+  .chip{padding:10px 14px;font-size:15.5px}
+  .btnrow .btn{min-width:0}
+}
 @media (max-width:430px){
   main{padding:10px 10px 0}
   .card{padding:11px;border-radius:14px;margin-bottom:10px}
@@ -1476,34 +1550,51 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 <!-- ============ NOW ============ -->
 <section class="tab sel" id="tab-now">
   <div class="card" id="nowBP">
-    <p class="q">&#129656; Blood pressure</p>
+    <p class="q">Blood pressure</p>
     <div class="row3">
       <div><p class="lbl">Systolic</p><input type="number" inputmode="numeric" id="n_sys" placeholder="—"></div>
       <div><p class="lbl">Diastolic</p><input type="number" inputmode="numeric" id="n_dia" placeholder="—"></div>
       <div><p class="lbl">Pulse</p><input type="number" inputmode="numeric" id="n_pulse" placeholder="—"></div>
     </div>
-    <button type="button" class="addbtn" id="n_bpSave" style="margin-top:10px">Save reading</button>
-    <p class="hint" id="n_bpLast" style="margin:8px 0 0"></p>
+    <button type="button" class="btn primary" id="n_bpSave">Save reading</button>
+    <p class="hint" id="n_bpLast" style="margin:10px 0 0"></p>
   </div>
 
-  <div id="nowSched"></div>
-
-  <div class="card" id="nowExtraCard">
-    <p class="q">&#10133; Extra dose</p>
-    <div class="chips" id="nowExtras"></div>
-    <button type="button" class="addbtn" id="nowAddMed" style="margin-top:9px">&#10133; Add medicine</button>
-    <p class="hint" style="margin:8px 0 0">One tap logs it at the current time.</p>
+  <div class="card fold" id="nowDoses">
+    <button type="button" class="fold-h">
+      <span class="ft">Today&rsquo;s doses</span><span class="fs" id="doseSum"></span><span class="fc"></span>
+    </button>
+    <div class="cbody"><div id="nowSched"></div></div>
   </div>
 
+  <div class="card fold" id="nowExtraCard">
+    <button type="button" class="fold-h">
+      <span class="ft">Extra dose</span><span class="fs" id="exSum"></span><span class="fc"></span>
+    </button>
+    <div class="cbody">
+      <div class="chips" id="nowExtras"></div>
+      <div id="nowExtraList"></div>
+      <div class="btnrow">
+        <button type="button" class="btn ghost" id="nowShowAll">Show all medicines</button>
+        <button type="button" class="btn ghost" id="nowAddMed">Add medicine</button>
+      </div>
+      <p class="hint" style="margin:10px 0 0">One tap logs it at the current time.</p>
+    </div>
+  </div>
 
-  <div class="card" id="nowSym">
-    <p class="q">&#129504; Symptom now</p>
-    <div class="chips" id="n_symType"></div>
-    <p class="lbl" style="margin-top:10px">Severity</p>
-    <div class="chips" id="n_symSev"></div>
-    <p class="lbl" style="margin-top:10px">Bristol (optional)</p>
-    <div class="chips" id="n_symBristol"></div>
-    <button type="button" class="addbtn" id="n_symSave" style="margin-top:10px">Save episode</button>
+  <div class="card fold" id="nowSym">
+    <button type="button" class="fold-h">
+      <span class="ft">Symptom now</span><span class="fs">tap to open</span><span class="fc"></span>
+    </button>
+    <div class="cbody">
+      <p class="lbl">What &mdash; pick one or more</p>
+      <div class="chips" id="n_symType"></div>
+      <p class="lbl" style="margin-top:14px">Severity</p>
+      <div class="chips" id="n_symSev"></div>
+      <p class="lbl" style="margin-top:14px">Bristol (optional)</p>
+      <div class="chips" id="n_symBristol"></div>
+      <button type="button" class="btn primary" id="n_symSave" style="margin-top:14px">Save episode</button>
+    </div>
   </div>
 </section>
 
@@ -2318,15 +2409,26 @@ buildChips();
 /* ---------- NOW tab ---------- */
 const SEVS=['1','2','3','4','5','6','7','8','9','10'];
 const SYMTYPES=['Abdominal pain','Cramp','Bloating','Urgency','Loose stool','Constipation','Nausea','Reflux','Other'];
-let nowData=null, nSym={type:null,sev:null,bristol:null};
+let nowData=null, nSym={types:[],sev:null,bristol:null}, showAllMeds=false;
+
+/* Collapsible cards. Only blood pressure stays open; the rest carry their
+   state in the header so the summary is readable without expanding. */
+function bindFolds(){
+  $$('.card.fold .fold-h').forEach(h=>{
+    h.onclick=()=>{
+      const card=h.closest('.card');
+      card.classList.toggle('open');
+      if(card.classList.contains('open'))
+        setTimeout(()=>card.scrollIntoView({behavior:'smooth',block:'nearest'}),80);
+    };
+  });
+}
 
 function nowRow(r){
   const st=r.status||'';
   const cls=st==='TAKEN'?'done':(st==='SKIPPED'?'skip':'');
   const mark=st==='TAKEN'?'&#10003;':(st==='SKIPPED'?'&#8212;':'');
   const shown=(st==='TAKEN'&&r.logged_dose)?r.logged_dose:(r.variants&&!st?'dose varies':(r.dose_text||''));
-  /* a logged row is tappable again -- say so, or the affordance
-     is invisible and the hand has to guess */
   const sub=[shown,r.with_food&&r.with_food!=='ANY'?r.with_food.toLowerCase()+' food':'',
              st?(st==='TAKEN'?'taken '+(r.dtime||''):'skipped'):'',
              st?'tap to change':''].filter(Boolean).join(' \u00b7 ');
@@ -2356,130 +2458,80 @@ function nowRow(r){
   return d;
 }
 
-/* Tapping a row that is already logged. The instinct is to tap the thing
-   again, so that has to do something -- but an accidental second tap must
-   not silently delete a medication record, hence a strip rather than an
-   immediate toggle. */
-function openRowActions(rowEl,r,st){
-  const old=document.querySelector('.varpick');if(old)old.remove();
-  const box=document.createElement('div');
-  box.className='varpick';
-  const canChange=!!r.variants;
-  let html='<p class="vt"></p><div class="vb'+(canChange?' three':'')+'">'+
-    '<button type="button" class="cx">Cancel</button>';
-  if(canChange)html+='<button type="button" class="ch">Change dose</button>';
-  if(st==='TAKEN')html+='<button type="button" class="sp">Skip</button>';
-  html+='<button type="button" class="danger un">Undo</button></div>';
-  box.innerHTML=html;
-  const was=st==='TAKEN'?('taken'+(r.logged_dose?' '+r.logged_dose:'')):'skipped';
-  box.querySelector('.vt').textContent=r.name+' - '+was;
-  box.querySelector('.cx').onclick=()=>box.remove();
-  box.querySelector('.un').onclick=async()=>{
-    try{
-      if(r.dose_id)await post('/api/now/undo/'+r.dose_id,{});
-      toast('Undone');box.remove();loadNow();
-    }catch(err){toast(err.message);}
-  };
-  const ch=box.querySelector('.ch');
-  if(ch)ch.onclick=()=>{box.remove();openVariantPicker(rowEl,r);};
-  const sp=box.querySelector('.sp');
-  if(sp)sp.onclick=async()=>{
-    try{
-      await post('/api/now/dose',{med_id:r.med_id,sched_id:r.sched_id,
-        status:'SKIPPED',day:nowData.day});
-      toast('Marked skipped');box.remove();loadNow();
-    }catch(err){toast(err.message);}
-  };
-  rowEl.parentNode.insertBefore(box,rowEl.nextSibling);
-  box.scrollIntoView({behavior:'smooth',block:'nearest'});
-}
-
-/* A scheduled medicine whose dose varies. Multi-select, because a
-   combination such as 145 + 72 is one dose, not two. */
-function openVariantPicker(rowEl,r){
-  if(document.querySelector('.varpick'))document.querySelector('.varpick').remove();
-  const opts=r.variants.split('|').map(s=>s.trim()).filter(Boolean);
-  const picked=[];
-  const box=document.createElement('div');
-  box.className='varpick';
-  box.innerHTML='<p class="vt"></p><div class="vrow"></div>'+
-    '<div class="vb"><button type="button" class="cx">Cancel</button>'+
-    '<button type="button" class="go">Log</button></div>';
-  box.querySelector('.vt').textContent=r.name+' - which dose?';
-  const vrow=box.querySelector('.vrow');
-  opts.forEach(v=>{
-    const b=document.createElement('div');b.className='chip';b.textContent=v;
-    b.onclick=()=>{
-      const i=picked.indexOf(v);
-      if(i>=0)picked.splice(i,1);else picked.push(v);
-      b.classList.toggle('sel',picked.indexOf(v)>=0);
-    };
-    vrow.appendChild(b);
-  });
-  box.querySelector('.cx').onclick=()=>box.remove();
-  box.querySelector('.go').onclick=async()=>{
-    if(!picked.length){toast('Pick a dose');return;}
-    const txt=picked.join(' + ');
-    try{
-      await post('/api/now/dose',{med_id:r.med_id,sched_id:r.sched_id,
-        status:'TAKEN',day:nowData.day,dose_text:txt});
-      toast('Logged '+r.name+' '+txt);box.remove();loadNow();
-    }catch(err){toast(err.message);}
-  };
-  rowEl.parentNode.insertBefore(box,rowEl.nextSibling);
-  box.scrollIntoView({behavior:'smooth',block:'nearest'});
-}
-
 async function loadNow(){
   nowData=await jget('/api/now?day='+todayISO);
   const box=$('#nowSched');box.innerHTML='';
+  let done=0,total=0;
   if(!nowData.has_schedule){
-    const c=document.createElement('div');c.className='card';
-    c.innerHTML='<p class="q">&#128138; Today\u2019s doses</p><p class="hint" style="margin:0">'+
-      'No regular medicines set up yet. Add them under '+
-      '<b>Meds &rarr; Schedule</b> and they\u2019ll appear here as one-tap rows.</p>';
-    box.appendChild(c);
+    box.innerHTML='<p class="hint" style="margin:0">No regular medicines yet. '+
+      'Add them under <b>Meds &rarr; Schedule</b>.</p>';
+    $('#doseSum').textContent='none set';
   }else{
     nowData.slots.forEach(s=>{
-      const c=document.createElement('div');c.className='card';
+      done+=s.done;total+=s.total;
       const hd=document.createElement('div');hd.className='slothd';
-      hd.innerHTML='<p class="q">'+s.label+'</p><span class="cnt">'+s.done+'/'+s.total+'</span>';
-      c.appendChild(hd);
-      s.rows.forEach(r=>c.appendChild(nowRow(r)));
-      box.appendChild(c);
+      hd.innerHTML='<span class="sl"></span><span class="cnt"></span>';
+      hd.querySelector('.sl').textContent=s.label;
+      hd.querySelector('.cnt').textContent=s.done+'/'+s.total;
+      box.appendChild(hd);
+      s.rows.forEach(r=>box.appendChild(nowRow(r)));
     });
+    $('#doseSum').textContent=done+' of '+total+' taken';
+    const card=$('#nowDoses');
+    if(done<total)card.classList.add('pending');else card.classList.remove('pending');
   }
-  /* extras */
+
+  /* extras: scheduled medicines are hidden, since an expected dose belongs
+     on the dose card, not here. Show all reveals them for the rare
+     unplanned dose of a regular medicine. */
   const ex=$('#nowExtras');ex.innerHTML='';
-  (nowData.meds||[]).forEach(m=>{
+  const list=showAllMeds?(nowData.meds_all||nowData.meds):nowData.meds;
+  list.forEach(m=>{
     const b=document.createElement('div');b.className='chip';b.textContent=m.name;
-    b.onclick=async()=>{try{await post('/api/now/dose',{med_id:m.id,status:'EXTRA',day:nowData.day});
-      toast('Logged '+m.name);loadNow();}catch(err){toast(err.message);}};
+    b.onclick=async()=>{
+      if(b.dataset.busy)return; b.dataset.busy=1;
+      b.classList.add('just');
+      try{await post('/api/now/dose',{med_id:m.id,status:'EXTRA',day:nowData.day});
+        toast('Logged '+m.name);setTimeout(()=>loadNow(),320);}
+      catch(err){b.classList.remove('just');b.dataset.busy='';toast(err.message);}
+    };
     ex.appendChild(b);
   });
-  let list=$('#nowExtraList');
-  if(!list){list=document.createElement('div');list.id='nowExtraList';list.style.marginTop='10px';
-    $('#nowExtraCard').appendChild(list);}
-  list.innerHTML='';
-  (nowData.extras||[]).forEach(e=>{
+  const sa=$('#nowShowAll');
+  if(sa)sa.textContent=showAllMeds?'Show fewer':'Show all medicines';
+
+  const el=$('#nowExtraList');el.innerHTML='';
+  const extras=nowData.extras||[];
+  $('#exSum').textContent=extras.length?(extras.length+' logged today'):'none yet';
+  extras.forEach(e=>{
     const row=document.createElement('div');row.className='exrow';
-    row.innerHTML='<span class="t"></span><span class="m"></span><button type="button" class="u">undo</button>';
+    row.innerHTML='<span class="t"></span><span class="m"></span>'+
+      '<button type="button" class="btn tiny u">Undo</button>';
     row.querySelector('.t').textContent=e.dtime||'';
     row.querySelector('.m').textContent=e.medicine;
-    row.querySelector('.u').onclick=async()=>{await post('/api/now/undo/'+e.id,{});toast('Removed');loadNow();};
-    list.appendChild(row);
+    row.querySelector('.u').onclick=async()=>{
+      await post('/api/now/undo/'+e.id,{});toast('Removed');loadNow();};
+    el.appendChild(row);
   });
 }
 
 function buildNowStatics(){
+  bindFolds();
+
   const t=$('#n_symType');
   SYMTYPES.forEach(v=>{const b=document.createElement('div');b.className='chip';b.textContent=v;
-    b.onclick=()=>{nSym.type=v;[...t.children].forEach(c=>c.classList.toggle('sel',c===b));};t.appendChild(b);});
+    b.onclick=()=>{
+      const i=nSym.types.indexOf(v);
+      if(i>=0)nSym.types.splice(i,1);else nSym.types.push(v);
+      b.classList.toggle('sel',nSym.types.indexOf(v)>=0);
+    };t.appendChild(b);});
+
   const s=$('#n_symSev');
-  SEVS.forEach(v=>{const b=document.createElement('div');b.className='chip';b.textContent=v;
+  SEVS.forEach(v=>{const b=document.createElement('div');b.className='chip num';b.textContent=v;
     b.onclick=()=>{nSym.sev=v;[...s.children].forEach(c=>c.classList.toggle('sel',c===b));};s.appendChild(b);});
+
   const br=$('#n_symBristol');
-  ['1','2','3','4','5','6','7'].forEach(v=>{const b=document.createElement('div');b.className='chip';b.textContent=v;
+  ['1','2','3','4','5','6','7'].forEach(v=>{const b=document.createElement('div');b.className='chip num';b.textContent=v;
     b.onclick=()=>{nSym.bristol=(nSym.bristol===v?null:v);
       [...br.children].forEach(c=>c.classList.toggle('sel',c.textContent===nSym.bristol));};br.appendChild(b);});
 
@@ -2491,19 +2543,30 @@ function buildNowStatics(){
       $('#n_sys').value='';$('#n_dia').value='';$('#n_pulse').value='';toast('Reading saved');}
     catch(err){toast(err.message);}
   };
+
+  /* one episode per symptom chosen, sharing time, severity and Bristol --
+     two symptoms at once are two findings, not one blended row */
   $('#n_symSave').onclick=async()=>{
-    if(!nSym.type){toast('Pick a symptom');return;}
-    try{await post('/api/episodes',{day:todayISO,etime:nowHM(),category:'GI',etype:nSym.type,
-      severity:nSym.sev,bristol:nSym.bristol});
-      toast('Episode saved');nSym={type:null,sev:null,bristol:null};
-      $$('#n_symType .chip,#n_symSev .chip,#n_symBristol .chip').forEach(c=>c.classList.remove('sel'));}
-    catch(err){toast(err.message);}
+    if(!nSym.types.length){toast('Pick a symptom');return;}
+    const t=nowHM();
+    try{
+      for(const ty of nSym.types){
+        await post('/api/episodes',{day:todayISO,etime:t,category:'GI',etype:ty,
+          severity:nSym.sev,bristol:nSym.bristol});
+      }
+      toast(nSym.types.length>1?(nSym.types.length+' episodes saved'):'Episode saved');
+      nSym={types:[],sev:null,bristol:null};
+      $$('#n_symType .chip,#n_symSev .chip,#n_symBristol .chip').forEach(c=>c.classList.remove('sel'));
+    }catch(err){toast(err.message);}
   };
+
   $('#nowAddMed').onclick=async()=>{
     const n=prompt('Medicine name (include strength)');if(!n)return;
     try{await post('/api/prnmeds',{name:n});toast('Added');loadNow();loadSchedMeds();}
     catch(err){toast(err.message);}
   };
+  const sa=$('#nowShowAll');
+  if(sa)sa.onclick=()=>{showAllMeds=!showAllMeds;loadNow();};
 }
 
 /* ---------- Schedule editor ---------- */
