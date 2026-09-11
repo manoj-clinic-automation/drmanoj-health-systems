@@ -1,4 +1,4 @@
-# RxGuard v1.2.2
+# RxGuard v1.3.0
 
 `rx.dr-manoj.in` · service `rxguard` · port 8031 · `/root/rxguard`
 
@@ -102,7 +102,18 @@ medicine's own ATC class is preferred over a fixed-combination class, label
 bullets are split into single statements, pending drafts from an older
 builder are rebuilt, and strengths edited in GutLog reach pending drafts.
 
-**Sources review** (`/kb`): tick the properties and pairs to keep → they are
+**Your review** (`/kb`, v1.3.0) leads with what bears on the medicines taken
+now: one card per interacting pair (RED first) in plain words derived from
+both medicines' properties ("both slow the heart rate", "X blocks CYP3A4,
+which clears Y"), the source wording one tap away. Each new medicine shows
+chips for what bears on current medicines (and with which) and a line for
+what is kept for future checks; kidney/liver notes with no matching
+condition, stopping notes and gaps sit in a small footnote. *Accept all
+recommended* approves everything in one tap; each medicine can still be
+narrowed or rejected. Kidney/liver sentences that ask for no action are
+stored as reference and no longer drive a dose-review finding.
+
+Accepting writes the chosen properties and pairs → they are
 written to `knowledge/drugs.local.json` / `rules.local.json` (never
 committed) and the engine uses them at once. The curated `drugs.json` /
 `rules.json` always win. Gaps are stated ("label silent — not proof of
@@ -111,7 +122,7 @@ its banner counts. Only molecule names ever leave the server. Paid and
 licensed sources (e.g. CDSCO-backed Indian compendia, commercial checkers)
 are deliberately not used.
 
-Tests: `test_kb.py` **29/29** — a fake server replaying the real formats:
+Tests: `test_kb.py` **32/32** — a fake server replaying the real formats:
 FDA table parser and outage fallback, DDInter index, RxNorm identity, label
 choice, draft properties and pairs, FDA table over label, sync + idempotency,
 review page, partial approval reaching the engine, reject, alias, pair
@@ -134,7 +145,7 @@ rxguard.service           systemd unit (port 8031)
 backup.sh                 nightly backup, GutLog cron pattern
 kb_sources.py             v1.2.0: fetchers and draft builder (free sources)
 kb_sync.py                v1.2.0: cron / Fetch now sync; --report
-test_kb.py                v1.2.2: 29 checks against a fake source server
+test_kb.py                v1.3.0: 32 checks against a fake source server
 knowledge/cache/          downloaded source data (gitignored, rebuilt)
 ```
 

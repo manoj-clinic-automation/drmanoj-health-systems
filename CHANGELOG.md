@@ -3,6 +3,15 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-11 — RxGuard v1.3.0: "Your review"
+
+The Sources review page listed every property from every source with equal
+weight. It now leads with what bears on the medicines taken now (interaction
+cards, RED first, plain-language reasons), shows each new medicine as plain
+chips, and moves reference-only lines to a footnote. One *Accept all
+recommended* button. Reassuring kidney/liver wording is stored as reference,
+not as a dose-review trigger. `patch_rxguard_v130.py`, `test_kb.py` 32/32.
+
 ## 2026-09-11 — RxGuard v1.2.2: draft quality after the first live run
 
 First live sync: all five sources reachable; FDA table 244 rows, DDInter
