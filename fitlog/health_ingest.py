@@ -274,6 +274,74 @@ def classify_workout(wtype):
     return "other"
 
 
+# Health Auto Export reports energy in kilojoules. Canonical names end
+# in _kcal, so the value has to be converted, not just relabelled.
+_KJ_PER_KCAL = 4.184
+
+_ENERGY_METRICS = ("active_energy_kcal", "basal_energy_kcal")
+
+_KJ_UNITS = ("kj", "kilojoule", "kilojoules")
+_KCAL_UNITS = ("kcal", "cal", "calorie", "calories", "kilocalorie",
+               "kilocalories")
+
+
+def _apple_convert(canonical, value, unit):
+    """Normalise a sample to the unit its canonical name promises."""
+    u = str(unit or "").strip().lower()
+    if canonical in _ENERGY_METRICS:
+        if u in _KJ_UNITS:
+            return value / _KJ_PER_KCAL, "kcal"
+        if u in _KCAL_UNITS:
+            return value, "kcal"
+    return value, unit
+
+
+# A day's samples must be combined, not overwritten. Counts and durations
+# add up; levels are averaged. Every canonical name in METRIC_MAP appears
+# in one of these two lists.
+_APPLE_SUM = (
+    "steps", "active_energy_kcal", "basal_energy_kcal",
+    "exercise_minutes", "stand_hours", "flights",
+    "mindful_min", "sleep_hours", "distance_km",
+)
+
+_APPLE_MEAN = (
+    "resting_hr", "walking_hr_avg", "hrv_ms", "resp_rate",
+    "spo2_pct", "weight_kg",
+)
+
+
+def _apple_aggregate(rows):
+    """
+    Collapse one calendar day's samples per metric.
+
+    Anything not named in either list defaults to the mean, which fails
+    far less loudly than a silent overwrite. Insertion order is kept so
+    the result is deterministic.
+    """
+    order = []
+    bucket = {}
+    for date, metric, value, unit in rows:
+        key = (date, metric)
+        if key not in bucket:
+            bucket[key] = []
+            order.append(key)
+        bucket[key].append((value, unit))
+
+    out = []
+    for key in order:
+        date, metric = key
+        samples = bucket[key]
+        nums = [v for v, u in samples]
+        unit = samples[-1][1]
+        if metric in _APPLE_SUM:
+            value = sum(nums)
+        else:
+            value = sum(nums) / len(nums)
+        out.append((date, metric, value, unit))
+    return out
+
+
 def parse_payload(payload):
     """
     Normalise a Health Auto Export style body into metric and workout rows.
@@ -311,7 +379,15 @@ def parse_payload(payload):
                     value = _num(point.get("Avg"))
             if value is None:
                 continue
-            metrics_out.append((date, canonical, value, unit))
+            # Bind to a fresh name: `unit` is the entry-level unit and is
+            # reused by every point in this entry. Rebinding it converts
+            # the first sample, then makes every later sample look like
+            # it is already in kcal and pass through unconverted.
+            value, point_unit = _apple_convert(canonical, value, unit)
+            metrics_out.append((date, canonical, value, point_unit))
+
+    # Without this the last sample of the day silently wins.
+    metrics_out = _apple_aggregate(metrics_out)
 
     for wk in data.get("workouts") or []:
         if not isinstance(wk, dict):
@@ -426,6 +502,127 @@ def resolve_daily(conn, date):
 # snake_case array per data type. Records are intervals, delivered
 # incrementally, with retries. Summed per day after dedup.
 
+# iOS Health Webhook arrays. Same idea as Android, different value keys.
+# basal_metabolic_rate is deliberately excluded - hundreds of records a
+# day and no use in any rule.
+IOS_ARRAY_MAP = {
+    "steps": ("steps", "count", "count"),
+    "distance": ("distance_km", "meters", "km"),
+    "active_calories": ("active_energy_kcal", "kilocalories", "kcal"),
+    "total_calories": ("total_energy_kcal", "kilocalories", "kcal"),
+    "resting_heart_rate": ("resting_hr", "bpm", "count/min"),
+    "heart_rate": ("hr", "bpm", "count/min"),
+    "heart_rate_variability": ("hrv_ms", "milliseconds", "ms"),
+}
+
+# Summed across the day; everything else is averaged.
+IOS_SUMMED = ("steps", "distance_km", "active_energy_kcal",
+              "total_energy_kcal")
+
+IST_OFFSET_MINUTES = 330
+
+
+def _to_ist_date(raw):
+    """
+    Derive the IST calendar date from an ISO timestamp.
+
+    iOS Health Webhook emits UTC with a Z suffix. 18:30Z is 00:00 IST
+    the FOLLOWING day, so slicing the first ten characters files the
+    record a day early. Offsets already expressed as +05:30 are taken
+    at face value.
+    """
+    if not raw or not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    try:
+        if text.endswith("Z"):
+            base = text[:-1].split(".")[0]
+            stamp = datetime.strptime(base, "%Y-%m-%dT%H:%M:%S")
+            stamp = stamp + timedelta(minutes=IST_OFFSET_MINUTES)
+            return stamp.strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None
+    return _parse_date(text)
+
+
+def parse_ios_payload(payload):
+    """
+    Returns (records, workouts).
+    records: list of (record_key, date, metric, value, unit)
+    """
+    records = []
+    workouts = []
+    if not isinstance(payload, dict):
+        return records, workouts
+
+    for array_name, spec in IOS_ARRAY_MAP.items():
+        metric, value_key, unit = spec
+        entries = payload.get(array_name)
+        if not isinstance(entries, list):
+            continue
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            stamp = item.get("start_time") or item.get("time")
+            date = _to_ist_date(stamp)
+            if not date:
+                continue
+            val = _num(item.get(value_key))
+            if val is None:
+                continue
+            if metric == "distance_km":
+                val = val / 1000.0
+            end = item.get("end_time") or ""
+            key = "|".join(["ios", metric, str(stamp).strip(), str(end).strip()])
+            records.append((key, date, metric, val, unit))
+
+    # activity_rings already carries a local calendar date - trust it.
+    for ring in payload.get("activity_rings") or []:
+        if not isinstance(ring, dict):
+            continue
+        date = _parse_date(str(ring.get("date") or ""))
+        if not date:
+            continue
+        for field, metric, unit in (
+            ("stand_hours", "stand_hours", "count"),
+            ("exercise_minutes", "exercise_minutes", "min"),
+            ("move_kilocalories", "move_energy_kcal", "kcal"),
+            # The goal each ring is measured against. Context-only by
+            # construction: a target is not a measurement, and no F-rule
+            # may read one. Absent from RULE_BEARING on purpose.
+            ("stand_goal_hours", "stand_goal_hours", "count"),
+            ("exercise_goal_minutes", "exercise_goal_min", "min"),
+            ("move_goal_kilocalories", "move_goal_kcal", "kcal"),
+        ):
+            val = _num(ring.get(field))
+            if val is None:
+                continue
+            key = "|".join(["ios", metric, date])
+            records.append((key, date, metric, val, unit))
+
+    for ex in payload.get("exercise") or []:
+        if not isinstance(ex, dict):
+            continue
+        start = ex.get("start_time")
+        date = _to_ist_date(start)
+        if not date:
+            continue
+        dist = _num(ex.get("distance_meters"))
+        workouts.append((
+            date,
+            str(start).strip(),
+            str(ex.get("end_time") or "").strip() or None,
+            str(ex.get("type") or "unknown"),
+            _num(ex.get("duration_seconds")),
+            _num(ex.get("kilocalories")),
+            (dist / 1000.0) if dist is not None else None,
+            None,
+            None,
+        ))
+
+    return records, workouts
+
+
 HC_ARRAY_MAP = {
     "steps": ("steps", "count"),
     "distance": ("distance_km", "km"),
@@ -508,19 +705,46 @@ def parse_hc_payload(payload):
     return out
 
 
-def store_hc(conn, records, raw_text):
+def _ensure_hc_source_column(conn):
+    """
+    health_hc_records predates multi-source record ingest.
+
+    Without a source column the daily recompute sums Apple Watch and
+    Health Connect records for the same date+metric into one total,
+    which breaks S01. The column is added in place; every row that
+    existed before this ran came from Health Connect, which is exactly
+    what the default records.
+
+    Additive, idempotent, and a no-op when the table is absent (some
+    suites build their own schema).
+    """
+    cols = [r[1] for r in conn.execute(
+        "PRAGMA table_info(health_hc_records)").fetchall()]
+    if not cols:
+        return False
+    if "source" not in cols:
+        conn.execute(
+            "ALTER TABLE health_hc_records ADD COLUMN source TEXT "
+            "NOT NULL DEFAULT 'healthconnect'"
+        )
+    return True
+
+
+def store_hc(conn, records, raw_text, source="healthconnect",
+             summed=None, workouts=None):
     """
     Insert records under a unique key, then recompute daily totals for
     every affected date. Correct under partial batches, idempotent under
     redelivery.
     """
     ts = _now()
+    _ensure_hc_source_column(conn)
     cur = conn.cursor()
 
     cur.execute(
         "INSERT INTO health_raw (received_at, source, n_bytes, payload) "
         "VALUES (?, ?, ?, ?)",
-        (ts, "healthconnect", len(raw_text or ""), raw_text or ""),
+        (ts, source, len(raw_text or ""), raw_text or ""),
     )
 
     new_rows = 0
@@ -533,12 +757,12 @@ def store_hc(conn, records, raw_text):
         ).fetchone()
         cur.execute(
             "INSERT INTO health_hc_records "
-            "(record_key, date, metric, value, unit, ingested_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
+            "(record_key, date, metric, value, unit, ingested_at, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(record_key) DO UPDATE SET "
             "value=excluded.value, unit=excluded.unit, "
-            "ingested_at=excluded.ingested_at",
-            (key, date, metric, value, unit, ts),
+            "ingested_at=excluded.ingested_at, source=excluded.source",
+            (key, date, metric, value, unit, ts, source),
         )
         if prior is None:
             new_rows = new_rows + 1
@@ -546,26 +770,41 @@ def store_hc(conn, records, raw_text):
             updated_rows = updated_rows + 1
         touched.add((date, metric))
 
+    for row in (workouts or []):
+        cur.execute(
+            "INSERT INTO health_workouts "
+            "(date, start_ts, end_ts, wtype, duration_s, energy_kcal, "
+            " distance_km, avg_hr, max_hr, source, ingested_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(start_ts, wtype, source) DO UPDATE SET "
+            "end_ts=excluded.end_ts, duration_s=excluded.duration_s, "
+            "energy_kcal=excluded.energy_kcal, "
+            "distance_km=excluded.distance_km, "
+            "ingested_at=excluded.ingested_at",
+            tuple(row) + (source, ts),
+        )
+
+    summed_set = HC_SUMMED if summed is None else summed
     for date, metric in touched:
-        if metric in HC_SUMMED:
+        if metric in summed_set:
             agg = "SUM(value)"
         else:
             agg = "AVG(value)"
         row = cur.execute(
             "SELECT " + agg + ", unit FROM health_hc_records "
-            "WHERE date = ? AND metric = ?",
-            (date, metric),
+            "WHERE date = ? AND metric = ? AND source = ?",
+            (date, metric, source),
         ).fetchone()
         if row is None or row[0] is None:
             continue
         cur.execute(
             "INSERT INTO health_metrics "
             "(date, metric, value, unit, source, ingested_at) "
-            "VALUES (?, ?, ?, ?, 'healthconnect', ?) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(date, metric, source) DO UPDATE SET "
             "value=excluded.value, unit=excluded.unit, "
             "ingested_at=excluded.ingested_at",
-            (date, metric, row[0], row[1], ts),
+            (date, metric, row[0], row[1], source, ts),
         )
 
     conn.commit()
@@ -606,7 +845,33 @@ def api_ingest():
 
     # HC Webhook uses a different payload shape: snake_case arrays of
     # interval records rather than daily totals under data.metrics.
+    # Route by payload SHAPE. Health Webhook on iOS posts the same array
+    # style as the Android app but under source=applewatch, so keying off
+    # the source name alone silently drops it into the Apple parser and
+    # stores nothing.
+    is_ios = isinstance(payload, dict) and payload.get("platform") == "ios"
     is_hc = (source == "healthconnect" and "data" not in payload)
+
+    if is_ios:
+        records, workouts = parse_ios_payload(payload)
+        conn = _connect()
+        try:
+            new_rows, updated_rows, dates = store_hc(
+                conn, records, raw_text, source=source,
+                summed=IOS_SUMMED, workouts=workouts,
+            )
+        finally:
+            conn.close()
+        return jsonify({
+            "ok": True,
+            "source": source,
+            "format": "ios_health_webhook",
+            "records_seen": len(records),
+            "records_new": new_rows,
+            "records_updated": updated_rows,
+            "workouts_stored": len(workouts),
+            "dates": dates,
+        }), 200
 
     if is_hc:
         records = parse_hc_payload(payload)

@@ -20,7 +20,7 @@ DB_PATH = os.environ.get("GUTLOG_DB", os.path.join(BASE, "health3.db"))
 UPLOAD_DIR = os.environ.get("GUTLOG_UPLOADS", os.path.join(BASE, "uploads"))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
-MAX_FILE_MB = 12
+MAX_FILE_MB = 25   # v3.11.0: report pages are saved at ~220dpi now, not ~110
 
 def _secret():
     env = os.environ.get("GUTLOG_SECRET")
@@ -271,7 +271,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD
+SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -2088,7 +2088,15 @@ Batch mode saves every page as its own file.</p></div>
 <script>
 window.SCANNER_CONFIG = {title: "Scan a report", uploadUrl: "/api/upload", fileField: "file",
   uploadFields: {ftype: "Lab report", day: "__DAY__"}, nameBase: "Lab_report", backUrl: "/?open=records",
-  allowIdCard: false, allowBatch: true};
+  allowIdCard: false, allowBatch: true,
+  /* v3.11.0 -- a report is not a bill.
+     captureMax/warpMax  1400/1600 put an A4 page at ~110dpi, which is where an
+                         OCR starts guessing at 8pt print. 2600 is ~220dpi.
+     wholePageFirst      the whole page is what a report scan is FOR, so it is
+                         the big button and the crop is the small one; and when
+                         the edges are not obvious the whole photo is kept
+                         instead of an 8% inset that cuts into the print. */
+  captureMax: 2600, warpMax: 2600, jpegQuality: 0.92, wholePageFirst: true};
 (function () {
   var C = window.SCANNER_CONFIG;
   document.getElementById("s_type").onchange = function () {
