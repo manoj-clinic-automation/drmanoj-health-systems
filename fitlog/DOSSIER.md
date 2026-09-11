@@ -154,6 +154,36 @@ by silently bending the data.
 and after Phase 3.5, deliberately. Wire metrics into rules only after a few
 weeks of real data shows what an OT day looks like on the wrist.
 
+## Observability — request logging (2026-09-11)
+
+Two logs answer "did the request arrive, and what did we say back?".
+
+| Log | Written by | Path | Notes |
+|---|---|---|---|
+| OLS vhost access log | OpenLiteSpeed | `/home/fit.dr-manoj.in/logs/fit.dr-manoj.in.access_log` | Config: `/usr/local/lsws/conf/vhosts/fit.dr-manoj.in/vhost.conf`. Rolls at 10 M, `keepDays 10`. **Records the full query string — the `?k=` HC token lands here in plain text.** |
+| gunicorn access log | FitLog | `/var/log/fitlog/access.log` | `gunicorn_conf.py`, `RedactingLogger`. 30-day logrotate (`/etc/logrotate.d/fitlog`). |
+
+Gunicorn ran with no access log until 2026-09-11, which is why a client-side
+auth failure was indistinguishable from a request that never arrived.
+`gunicorn_conf.py` turns it on and routes every line through a redacting
+logger, so `source=` stays visible for diagnosis while `k=`/`token=`/`key=`
+values are written as `<redacted>`. `%(h)s` is always `127.0.0.1` behind the
+proxy, so the real client is the `fwd=` field (`X-Forwarded-For`).
+
+`LogsDirectory=fitlog` in the unit creates and owns `/var/log/fitlog`.
+`ExecStart` gained `-c /root/fitlog/gunicorn_conf.py`; bind and worker count
+stay on the command line. Rollback: `fitlog.service.bak-accesslog-*`.
+
+**Caveat:** the redactor keys on the *parameter name*. A client that puts a
+token in some other parameter (e.g. `?source=<token>`, which is exactly what
+the Android feed was doing) still writes it to the log in clear.
+
+### Verified transport (2026-09-11)
+OLS forwards `Authorization` to gunicorn intact — `GET /api/ingest/status`
+with the bearer returns `200` through `https://fit.dr-manoj.in` and `200`
+direct to `127.0.0.1:8040`. Any `401` on `/api/ingest` is the app rejecting
+the credential the client actually sent, never the proxy stripping it.
+
 ## Deployment runbook
 1. WinSCP upload folder → `/root/fitlog/` (WinSCP, not terminal paste — established pattern)
 2. `pip3 install flask gunicorn` (if absent)
@@ -202,6 +232,7 @@ healthconnect case in it uses the legacy shape, so `is_hc` is false. It scored
 on HC changes.
 
 ## Changelog
+- 2026-09-11 Observability — DEPLOYED. gunicorn access logging on (`gunicorn_conf.py` + `-c` in `fitlog.service`, `LogsDirectory=fitlog`, 30-day logrotate), URL tokens redacted. Diagnosis of "no phone data since 10-Sep": every phone POST **did** arrive and was answered `401` by FitLog — OLS access log carries them hourly (Android `okhttp/4.12.0`) and in bursts (iOS `Health Webhook/4`, `Auto Export/20260909.1`). Android sends `?source=<token>` — token in the wrong parameter, no `k=`, no `source` — so `_authorised_hc` is never reached. iOS sends `?source=applewatch` with no usable `Authorization` header; `k=` cannot substitute, being healthconnect-scoped by design. Both corrected shapes replayed `200` through OLS. Probe rows removed: `health_raw` back to id 4 only, `health_metrics` 0. **Open:** `FITLOG_HC_TOKEN` is in clear text in the OLS log and, via the mis-set `source=`, in the new gunicorn log — rotate once both phones are reconfigured.
 - 2026-09-11 v1.2.0 — activity feed for GutLog, Home *Activity today* card, mindful minutes, indoor workouts (`patch_fitlog_v120.py`, app.py + health_ingest.py). All earlier suites unchanged; `test_activity_feed.py` 12/12.
 - 2026-09-11 v1.1.0 — DEPLOYED 07:37 IST. W03 and the Meds page read doses from GutLog's feed (`patch_fitlog_v110.py`, 4 anchors). Suites: smoke 53/53, kb_lint, 23/23, 36/36, 12/12 unchanged; new `test_gutlog_feed.py` 10/10 (0/10 against v1.0.1, as it should). On-server: all suites green, `verify_phase_c.py` 9/9. Rollback: `app.py.bak-v110-20260911_073740`.
 - 2026-09-10 Phase 3.5b — DEPLOYED. HC Webhook support (`patch_hc_support.py`) + `FITLOG_DB` pinning (`patch_db_pin.py`). Separate URL-borne token for the healthconnect feed, scope-verified in production. Record-level ingest with interval-keyed upsert. Suites: 23/23, 36/36, 12/12 on Python 3.9.25. Live probe through OLS confirmed R1: a redelivered interval grown 600→900 resolved to 900, not 1500. Probe removed, all four ingest tables back to 0. `app.py` untouched (MD5 `fb8520e5…`, unchanged since Phase 3.5). Rollback: `health_ingest.py.bak_20260910_083629` (pre-HC), `health_ingest.py.bak_20260910_084058` (pre-pin), `fitlog.db.bak_20260910_083629`.

@@ -18,6 +18,7 @@ import json
 import os
 import sqlite3
 import secrets
+import sys
 from datetime import date, datetime, timedelta
 from functools import wraps
 
@@ -25,7 +26,7 @@ from flask import (Flask, g, redirect, render_template_string, request,
                    session, url_for, flash, Response)
 from werkzeug.security import check_password_hash, generate_password_hash
 
-APP_VERSION = "1.1.0"   # RXGUARD_V110_ASTAKEN
+APP_VERSION = "1.4.0"   # RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KNOWLEDGE_DIR = os.path.join(BASE_DIR, "knowledge")
 DEFAULT_DB = os.path.join(BASE_DIR, "rxguard.db")
@@ -56,6 +57,59 @@ QT_MODIFIERS = RULES_DOC["qt_modifiers"]
 WITHDRAWAL_RULES = RULES_DOC["withdrawal_rules"]
 SYMPTOM_MAP = RULES_DOC["symptom_map"]
 
+# --------------------------------------------------------------------------
+# RXGUARD_V120_SOURCES -- owner-approved additions from free sources.
+# The curated files above are the base and always win a clash; the
+# .local.json overlay holds only what the owner approved on /kb.
+# --------------------------------------------------------------------------
+LOCAL_DRUGS = os.path.join(KNOWLEDGE_DIR, "drugs.local.json")
+LOCAL_RULES = os.path.join(KNOWLEDGE_DIR, "rules.local.json")
+_BASE_DRUGS = dict(DRUGS)
+_BASE_SYN = dict(SYNONYMS)
+_BASE_PAIRWISE = list(PAIRWISE)
+_OVERLAY_MTIME = [None]
+
+
+def _read_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return default
+
+
+def _write_json(path, doc):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=1, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def reload_overlay(force=False):
+    m = tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in (LOCAL_DRUGS, LOCAL_RULES))
+    if not force and m == _OVERLAY_MTIME[0]:
+        return
+    _OVERLAY_MTIME[0] = m
+    ld = _read_json(LOCAL_DRUGS, {})
+    lr = _read_json(LOCAL_RULES, {})
+    DRUGS.clear()
+    DRUGS.update(_BASE_DRUGS)
+    for k, v in (ld.get("drugs") or {}).items():
+        if k not in _BASE_DRUGS:
+            DRUGS[k] = v
+    SYNONYMS.clear()
+    SYNONYMS.update(_BASE_SYN)
+    for k, v in (ld.get("synonyms") or {}).items():
+        if k not in SYNONYMS and k not in DRUGS and v in DRUGS:
+            SYNONYMS[k] = v
+    base_pairs = set(frozenset((r["a"], r["b"])) for r in _BASE_PAIRWISE)
+    PAIRWISE[:] = list(_BASE_PAIRWISE) + [
+        r for r in (lr.get("pairwise") or [])
+        if r.get("a") and r.get("b") and frozenset((r["a"], r["b"])) not in base_pairs]
+
+
+reload_overlay(force=True)
+
 CONDITIONS = [
     ("constipation", "Constipation tendency"),
     ("ventricular_ectopy", "Previous ventricular ectopy"),
@@ -70,6 +124,11 @@ CONDITIONS = [
     ("peptic_ulcer", "Peptic ulcer / GI bleed history"),
     ("diabetes", "Diabetes"),
     ("seizure_history", "Seizure history"),
+    ("thrombocytopenia", "Low platelet count"),
+    ("hyponatraemia", "Low sodium (recent or recurrent)"),
+    ("hypocalcaemia", "Low ionic calcium"),
+    ("conduction_disease", "Conduction disease (e.g. bundle branch block)"),
+    ("coronary_disease", "Coronary artery disease"),
 ]
 CONDITION_LABELS = dict(CONDITIONS)
 
@@ -191,6 +250,20 @@ CREATE TABLE IF NOT EXISTS consultations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     consult_date TEXT, doctor TEXT, specialty TEXT,
     mode TEXT, summary TEXT, changes TEXT, created TEXT);
+CREATE TABLE IF NOT EXISTS kb_drafts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE, term TEXT, strength TEXT,
+    status TEXT DEFAULT 'pending', draft_json TEXT, created TEXT, decided TEXT, note TEXT);
+
+CREATE TABLE IF NOT EXISTS kb_pairs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, a TEXT, b TEXT, kind TEXT, flag TEXT, quote TEXT,
+    source TEXT, status TEXT DEFAULT 'pending', created TEXT, decided TEXT,
+    UNIQUE(a, b, kind, source));
+
+CREATE TABLE IF NOT EXISTS kb_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, url TEXT UNIQUE,
+    status TEXT DEFAULT 'new', created TEXT);
+
+CREATE TABLE IF NOT EXISTS kb_meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
 
@@ -458,6 +531,8 @@ def condition_findings(proposed_key, conditions, totals):
         hit = False
         if "burden" in t:
             hit = totals.get(t["burden"], 0) >= t.get("min", 1)
+        elif "drugs" in t:
+            hit = proposed_key in t["drugs"]
         elif t.get("qt_any"):
             hit = d.get("qt", "none") != "none"
         elif "qt_level" in t:
@@ -1019,6 +1094,315 @@ def astaken_summary():
 
 
 # --------------------------------------------------------------------------
+# Sources review helpers -- RXGUARD_V120_SOURCES
+# --------------------------------------------------------------------------
+def draft_to_entry(d, chosen):
+    e = {"class": "", "atc": "", "rxcui": (d.get("identity") or {}).get("rxcui", ""),
+         "cyp": {"substrate": {}, "inhibitor": {}, "inducer": {}},
+         "burden": dict((k, 0) for k in BURDEN_KEYS), "qt": "none", "hr": "none", "bp": "none"}
+    for p in chosen:
+        f, v = p["field"], p["value"]
+        if f in ("renal", "hepatic"):
+            if organ_note_actionable(v):
+                e[f] = v
+            else:
+                e.setdefault("reference", {})[f] = v
+        elif f in ("class", "atc", "qt", "hr", "bp", "withdrawal_note"):
+            e[f] = v
+        elif f.startswith("burden."):
+            try:
+                e["burden"][f.split(".", 1)[1]] = int(v)
+            except (ValueError, KeyError):
+                pass
+        elif f.startswith("cyp."):
+            parts = f.split(".", 2)
+            if len(parts) == 3 and parts[1] in e["cyp"]:
+                e["cyp"][parts[1]][parts[2]] = v
+    if not d.get("label_set_id"):
+        e["no_us_label"] = True
+    e["source"] = "; ".join(s["name"] for s in d.get("sources") or []) + \
+        " -- drafted by RxGuard from free sources, approved by owner"
+    e["reviewed"] = date.today().isoformat()
+    e["evidence"] = chosen
+    e["gaps"] = d.get("gaps") or []
+    e["strength_logged"] = d.get("strength", "")
+    e["notes"] = "Approved from sources review. Fields the sources did not settle " \
+                 "are at their defaults and listed under gaps."
+    return e
+
+
+def _next_rule_id(rules, prefix):
+    n = 0
+    for r in rules:
+        rid = r.get("id", "")
+        if rid.startswith(prefix) and rid[len(prefix):].isdigit():
+            n = max(n, int(rid[len(prefix):]))
+    return "%s%03d" % (prefix, n + 1)
+
+
+def approve_pairs(pairs):
+    doc = _read_json(LOCAL_RULES, {"pairwise": []})
+    rules = doc.setdefault("pairwise", [])
+    have = set((r["a"], r["b"], r.get("source", "")) for r in rules)
+    for p in pairs:
+        k = (p["a"], p["b"], p["source"])
+        if k in have or (p["b"], p["a"], p["source"]) in have:
+            continue
+        have.add(k)
+        rules.append({
+            "id": _next_rule_id(rules, "DD" if p.get("kind") == "ddinter" else "LB"),
+            "a": p["a"], "b": p["b"], "flag": p["flag"],
+            "title": "%s + %s: %s" % (display_name(p["a"]), display_name(p["b"]),
+                                      "interaction rated %s by DDInter" % p["quote"].split(": ")[-1]
+                                      if p.get("kind") == "ddinter" else "named in the FDA label"),
+            "mechanism": p["quote"], "consequence": "", "source": p["source"],
+            "reviewed": date.today().isoformat(), "origin": p.get("kind", "")})
+    _write_json(LOCAL_RULES, doc)
+    reload_overlay(force=True)
+
+
+def approve_entry(key, entry, alias_terms):
+    doc = _read_json(LOCAL_DRUGS, {"drugs": {}, "synonyms": {}})
+    doc.setdefault("drugs", {})
+    doc.setdefault("synonyms", {})
+    if entry is not None:
+        doc["drugs"][key] = entry
+    for t in alias_terms:
+        t = norm_key(t) if t else ""
+        if t and t != key:
+            doc["synonyms"][t] = key
+    _write_json(LOCAL_DRUGS, doc)
+    reload_overlay(force=True)
+
+
+def kb_counts():
+    db = get_db()
+    q = lambda sql: db.execute(sql).fetchone()[0]
+    return {"drafts": q("SELECT COUNT(*) FROM kb_drafts WHERE status IN ('pending','source_changed')"),
+            "pairs": q("SELECT COUNT(*) FROM kb_pairs WHERE status='pending'"),
+            "alerts": q("SELECT COUNT(*) FROM kb_alerts WHERE status='new'")}
+
+
+import re
+
+# --------------------------------------------------------------------------
+# Your review -- RXGUARD_V130_REVIEW. Sorts every draft line into what bears
+# on the medicines you take now, what is kept quietly for later, and what is
+# reference only. Plain words first; the source wording one tap away.
+# --------------------------------------------------------------------------
+_ACTIONABLE = re.compile(r"reduc|adjust|avoid|not recommended|contraindicat|lower (starting )?dose|"
+                         r"caution|\d+(\.\d+)?-fold|by \d+ ?%|accumulat", re.I)
+_REASSURING = re.compile(r"no dose adjustment|not necessary|not expected|no clinically (relevant|significant)|"
+                         r"may be used|not affect|unchanged|no (meaningful|significant) (effect|change)", re.I)
+
+
+def organ_note_actionable(sentence):
+    """A renal/hepatic sentence only drives a check when it asks for action."""
+    s = sentence or ""
+    return bool(_ACTIONABLE.search(s)) and not _REASSURING.search(s)
+
+
+PLAIN_PROP = {
+    "hr": "slows the heart rate", "bp": "lowers blood pressure",
+    "burden.sedation": "causes drowsiness", "burden.serotonergic": "adds to serotonin effects",
+    "burden.anticholinergic": "anticholinergic (dry mouth, constipation, confusion)",
+    "burden.bleeding": "raises bleeding risk", "burden.nephrotoxic": "can strain the kidneys",
+    "burden.seizure": "can lower the seizure threshold", "burden.constipating": "constipates",
+    "qt": "can prolong the QT interval",
+}
+ENGINE_FIELDS = ("qt", "hr", "bp")
+
+
+def plain_prop(p):
+    f, v = p["field"], p["value"]
+    if f.startswith("cyp."):
+        _c, role, enz = (f.split(".", 2) + ["", ""])[:3]
+        if role == "substrate":
+            return "broken down by %s%s" % (enz, " (mainly)" if v == "major" else "")
+        if role == "inhibitor":
+            return "blocks %s (%s) - raises levels of drugs it clears" % (enz, v)
+        if role == "inducer":
+            return "speeds up %s (%s) - lowers levels of drugs it clears" % (enz, v)
+    if f == "hr" and v != "decrease":
+        return "raises the heart rate"
+    if f == "bp" and v != "decrease":
+        return "raises blood pressure"
+    return PLAIN_PROP.get(f, "")
+
+
+def _profile(entry):
+    """(hr, bp, burden dict, cyp dict, qt) from a knowledge entry."""
+    e = entry or {}
+    return (e.get("hr") or "none", e.get("bp") or "none", e.get("burden") or {},
+            e.get("cyp") or {}, e.get("qt") or "none")
+
+
+def pair_reasons(ka, ea, kb, eb):
+    """Plain reasons two medicines interact, from their properties."""
+    ha, ba, bua, ca, qa = _profile(ea)
+    hb, bb, bub, cb, qb = _profile(eb)
+    na, nb = display_name(ka), display_name(kb)
+    out = []
+    if ha == "decrease" and hb == "decrease":
+        out.append("Both slow the heart rate - together more bradycardia and slowed conduction.")
+    if ba in ("decrease", "both") and bb in ("decrease", "both"):
+        out.append("Both lower blood pressure - the fall adds up (dizziness on standing).")
+    for bk, txt in (("sedation", "Drowsiness adds up."), ("serotonergic", "Serotonin effects add up."),
+                    ("bleeding", "Bleeding risk adds up."), ("nephrotoxic", "Kidney strain adds up."),
+                    ("anticholinergic", "Anticholinergic load adds up."), ("constipating", "Constipation adds up.")):
+        if (bua.get(bk) or 0) > 0 and (bub.get(bk) or 0) > 0:
+            out.append(txt)
+    for (x, ex, nx), (y, ey, ny) in (((ka, ca, na), (kb, cb, nb)), ((kb, cb, nb), (ka, ca, na))):
+        for enz in (ex.get("substrate") or {}):
+            lv = (ey.get("inhibitor") or {}).get(enz)
+            if lv:
+                out.append("%s blocks %s, which clears %s - %s levels can rise." % (ny, enz, nx, nx))
+            lv = (ey.get("inducer") or {}).get(enz)
+            if lv:
+                out.append("%s speeds up %s, which clears %s - %s levels can fall." % (ny, enz, nx, nx))
+    if qa not in ("none", "") and qb not in ("none", ""):
+        out.append("Both can prolong QT.")
+    return out
+
+
+def _cap(s):
+    return (s[:1].upper() + s[1:]) if s else s
+
+
+def _current_keys():
+    keys = set(m["drug_key"] for m in active_meds())
+    data, _err = gutlog_stack(30)
+    if data:
+        for r in (data.get("regimen") or []) + (data.get("taken") or []):
+            for k in _split_molecules(r.get("molecule")):
+                keys.add(k)
+    return keys
+
+
+def recommended_props(d):
+    """Everything the checks can use is recommended; organ notes that ask
+    for no action and withdrawal wording are kept as reference, not scored."""
+    return list(d.get("props") or [])
+
+
+def kb_view():
+    db = get_db()
+    conds = active_conditions()
+    egfr_low = False
+    try:
+        egfr_low = float(profile_value("egfr", "")) < 60
+    except (TypeError, ValueError):
+        egfr_low = False
+    current = _current_keys()
+    drafts, entries = [], {}
+    for r in db.execute("SELECT * FROM kb_drafts WHERE status IN ('pending','source_changed') "
+                        "ORDER BY id").fetchall():
+        d = json.loads(r["draft_json"] or "{}")
+        drafts.append((r, d))
+        if not d.get("alias_of"):
+            entries[d["key"]] = draft_to_entry(d, d.get("props") or [])
+            current.add(d["key"])
+            for p in d.get("pairs") or []:        # pairs were built against what GutLog shows current
+                current.add(p["b"])
+
+    def entry(k):
+        return entries.get(k) or get_drug(k) or {}
+
+    # ---- interactions, merged per pair, RED first
+    merged = {}
+
+    def add_pair(a, b, flag, quote, source, origin):
+        k = tuple(sorted((a, b)))
+        m = merged.setdefault(k, {"a": k[0], "b": k[1], "flag": flag, "sources": [], "origin": origin})
+        if FLAG_ORDER.get(flag, 9) < FLAG_ORDER.get(m["flag"], 9):
+            m["flag"] = flag
+        m["sources"].append({"source": source, "quote": quote})
+        if origin == "known":
+            m["origin"] = "known"
+
+    for r, d in drafts:
+        for p in d.get("pairs") or []:
+            add_pair(p["a"], p["b"], p["flag"], p["quote"], p["source"], "draft")
+    for p in db.execute("SELECT * FROM kb_pairs WHERE status='pending'").fetchall():
+        add_pair(p["a"], p["b"], p["flag"], p["quote"], p["source"], "known")
+    matters = []
+    for m in merged.values():
+        m["title"] = "%s + %s" % (_cap(display_name(m["a"])), _cap(display_name(m["b"])))
+        m["why"] = pair_reasons(m["a"], entry(m["a"]), m["b"], entry(m["b"])) or \
+            ["The sources rate this pair but do not state the mechanism."]
+        m["rated"] = " · ".join(sorted(set(
+            (s["quote"].replace("DDInter 2.0 risk level: ", "DDInter: ") if "DDInter" in s["source"]
+             else "named in the " + s["source"].split(" - ")[0]) for s in m["sources"])))
+        matters.append(m)
+    matters.sort(key=lambda m: (FLAG_ORDER.get(m["flag"], 9), m["title"]))
+
+    # ---- medicines: what bears on you / kept for later / reference
+    meds = []
+    for r, d in drafts:
+        if d.get("alias_of"):
+            meds.append({"id": r["id"], "status": r["status"], "alias": True, "d": d,
+                         "name": d.get("display", ""), "now": [], "later": [], "ref": [], "gaps": []})
+            continue
+        k = d["key"]
+        others = [(o, entry(o)) for o in current if o != k]
+        now, later, ref = [], [], []
+        for i, p in enumerate(d.get("props") or []):
+            f = p["field"]
+            item = {"i": i, "p": p, "text": plain_prop(p)}
+            if f in ("class", "atc"):
+                continue
+            if f in ("renal", "hepatic", "withdrawal_note"):
+                bears = (f == "renal" and (egfr_low or "renal_impairment" in conds)) or \
+                        (f == "hepatic" and "hepatic_impairment" in conds)
+                item["text"] = {"renal": "Kidney note", "hepatic": "Liver note",
+                                "withdrawal_note": "Stopping note"}[f]
+                (now if bears and organ_note_actionable(p["value"]) else ref).append(item)
+                continue
+            partner = []
+            for o, eo in others:
+                ho, bo, buo, co, qo = _profile(eo)
+                if f == "hr" and ho == p["value"] or f == "bp" and bo in (p["value"], "both"):
+                    partner.append(o)
+                elif f.startswith("burden.") and (buo.get(f.split(".", 1)[1]) or 0) > 0:
+                    partner.append(o)
+                elif f == "qt" and qo not in ("none", ""):
+                    partner.append(o)
+                elif f.startswith("cyp."):
+                    role, enz = f.split(".", 2)[1:]
+                    want = ("inhibitor", "inducer") if role == "substrate" else ("substrate",)
+                    if any(enz in (co.get(w) or {}) for w in want):
+                        partner.append(o)
+            if partner:
+                item["with"] = ", ".join(sorted(_cap(display_name(o)) for o in partner))
+                now.append(item)
+            else:
+                later.append(item)
+        cls = [p["value"] for p in d.get("props") or [] if p["field"] == "class"]
+        meds.append({"id": r["id"], "status": r["status"], "alias": False, "d": d,
+                     "name": _cap(d.get("display", "")), "cls": cls[0] if cls else "",
+                     "now": now, "later": later, "ref": ref, "gaps": d.get("gaps") or []})
+    return {"matters": matters, "meds": meds,
+            "pending_pairs": db.execute("SELECT COUNT(*) FROM kb_pairs WHERE status='pending'").fetchone()[0]}
+
+
+def approve_draft_row(db, r, prop_idx=None, pair_idx=None):
+    """Approve one draft row (all recommended lines unless indices given)."""
+    d = json.loads(r["draft_json"] or "{}")
+    if d.get("alias_of"):
+        approve_entry(d["alias_of"], None, [d.get("term", ""), d.get("key", "")])
+    else:
+        props = d.get("props") or []
+        chosen = recommended_props(d) if prop_idx is None else \
+            [p for i, p in enumerate(props) if i in prop_idx]
+        approve_entry(d["key"], draft_to_entry(d, chosen), [d.get("term", "")])
+        pairs = d.get("pairs") or []
+        approve_pairs(pairs if pair_idx is None else [p for i, p in enumerate(pairs) if i in pair_idx])
+    db.execute("UPDATE kb_drafts SET status='approved', decided=? WHERE id=?",
+               (datetime.now().isoformat(timespec="minutes"), r["id"]))
+    return d
+
+
+# --------------------------------------------------------------------------
 # Templates
 # --------------------------------------------------------------------------
 
@@ -1128,6 +1512,7 @@ button:hover{opacity:.88}
  <a href="{{ url_for('profile') }}" class="{{ 'on' if nav=='profile' }}">Profile</a>
  <div class="grp">Review</div>
  <a href="{{ url_for('reviews') }}" class="{{ 'on' if nav=='reviews' }}">Review queue</a>
+ <a href="{{ url_for('kb_review') }}" class="{{ 'on' if nav=='kb_review' }}">Your review</a>
  <a href="{{ url_for('knowledge') }}" class="{{ 'on' if nav=='kb' }}">Knowledge base</a>
  <a href="{{ url_for('logout') }}" class="noprint">Sign out</a>
 </nav>
@@ -1177,6 +1562,7 @@ def create_app(db_path=None, secret=None):
     @app.before_request
     def _before():
         g.db_path = app.config["DB_PATH"]
+        reload_overlay()
         if session.get("auth"):
             if session.get("epoch") != setting("auth_epoch", "1"):
                 session.clear()
@@ -1948,6 +2334,203 @@ def create_app(db_path=None, secret=None):
         """
         return page(body, nav="astaken", title="As taken", err=err, v=view, days=days,
                     kbv="%s/%s" % (DRUGS_DOC["_meta"]["version"], RULES_DOC["_meta"]["version"]))
+
+    # ------------------------------------------------ your review (v1.3.0)
+    @app.route("/kb")
+    @login_required
+    def kb_review():
+        db = get_db()
+        v = kb_view()
+        alerts = db.execute("SELECT * FROM kb_alerts WHERE status='new' ORDER BY id").fetchall()
+        row = db.execute("SELECT value FROM kb_meta WHERE key='sources'").fetchone()
+        src = json.loads(row["value"]) if row else {}
+        done = db.execute("SELECT status, COUNT(*) n FROM kb_drafts GROUP BY status").fetchall()
+        body = """
+        <style>
+        .rv-lead{font-size:15px;margin:4px 0 12px;line-height:1.5}
+        .rv-find{border:1px solid var(--rule);border-left:5px solid var(--amber);background:var(--panel);
+          padding:10px 14px;margin:10px 0}
+        .rv-find.RED{border-left-color:var(--red)}
+        .rv-find h3{display:inline;margin:0 0 0 6px;font-size:15px}
+        .rv-find ul{margin:6px 0 0 18px;padding:0}
+        .rv-src{font-size:12px;color:var(--muted);margin-top:6px}
+        .rv-chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+        .rv-chip{font-size:13px;padding:3px 9px;border:1px solid var(--rule);background:var(--paper)}
+        .rv-chip.now{background:var(--amber-bg);color:var(--amber);border-color:transparent}
+        .rv-foot{font-size:12px;color:var(--muted);margin:6px 0 0}
+        details summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:6px}
+        details table{font-size:13px}
+        </style>
+        <h1>Your review</h1>
+        {% if v.meds or v.matters %}
+        <p class="rv-lead">The free sources found <b>{{ v.matters|length }}</b> interaction{{ '' if v.matters|length == 1 else 's' }}
+        with the medicines you take now, and <b>{{ v.meds|length }}</b> medicine{{ '' if v.meds|length == 1 else 's' }}
+        RxGuard can start checking. <b>Accept all recommended</b> adds them to every check; you can
+        still accept or reject one by one below.</p>
+        <form method="post" action="{{ url_for('kb_accept_all') }}"><button>Accept all recommended</button></form>
+
+        <h2>What matters for you</h2>
+        {% for m in v.matters %}
+        <div class="rv-find {{ m.flag }}"><span class="flag {{ m.flag }}">{{ m.flag }}</span><h3>{{ m.title }}</h3>
+          <ul>{% for w in m.why %}<li>{{ w }}</li>{% endfor %}</ul>
+          <div class="rv-src">{{ m.rated }}</div>
+          <details><summary>Source wording</summary>{% for s in m.sources %}
+            <p class="rv-foot">&ldquo;{{ s.quote }}&rdquo; &mdash; {{ s.source }}</p>{% endfor %}</details>
+        </div>
+        {% else %}<p class="muted">The sources found no interaction with your current medicines.</p>{% endfor %}
+
+        <h2>Medicines RxGuard will learn</h2>
+        {% for x in v.meds %}{% set d = x.d %}
+        <div class="card"><form method="post" action="{{ url_for('kb_decide', did=x.id) }}">
+          <strong>{{ x.name }}</strong>{% if d.strength %} <span class="dose">{{ d.strength }}</span>{% endif %}
+          {% if x.cls %}<span class="muted"> &middot; {{ x.cls }}</span>{% endif %}
+          {% if x.status == 'source_changed' %}<p class="rv-foot"><b>Its FDA label changed since you accepted it - check again.</b></p>{% endif %}
+          {% if x.alias %}
+            <p class="rv-foot">Same medicine as <b>{{ d.alias_of.replace('_',' ') }}</b>, which RxGuard already checks. Accept to link the name.</p>
+          {% else %}
+            {% if x.now %}<p class="rv-foot">Bears on what you take now:</p>
+            <div class="rv-chips">{% for it in x.now %}<span class="rv-chip now">{{ it.text }}{% if it.with %} &mdash; with {{ it.with }}{% endif %}</span>{% endfor %}</div>{% endif %}
+            {% if x.later %}<p class="rv-foot">Kept for future checks: {{ x.later|map(attribute='text')|join(' · ') }}</p>{% endif %}
+            {% if not x.now and not x.later %}<p class="rv-foot">The sources give nothing RxGuard can check for this medicine.</p>{% endif %}
+            <details><summary>Choose items / see source wording</summary>
+              <table>{% for p in d.props %}<tr><td><input type="checkbox" name="prop" value="{{ loop.index0 }}" checked></td>
+              <td>{{ p.field }}</td><td class="muted">&ldquo;{{ p.quote }}&rdquo;<br><span class="cat">{{ p.source }}</span></td></tr>{% endfor %}
+              {% for p in d.pairs %}<tr><td><input type="checkbox" name="pair" value="{{ loop.index0 }}" checked></td>
+              <td><span class="flag {{ p.flag }}">{{ p.flag }}</span> + {{ p.b.replace('_',' ') }}</td>
+              <td class="muted">&ldquo;{{ p.quote }}&rdquo;<br><span class="cat">{{ p.source }}</span></td></tr>{% endfor %}</table>
+            </details>
+          {% endif %}
+          <p style="margin:10px 0 0"><button name="action" value="approve">Accept</button>
+          <button name="action" value="reject" class="ghost">Reject</button></p>
+        </form>
+        {% if x.ref or x.gaps %}<p class="rv-foot">Reference only (not scored):
+          {% for it in x.ref %}{{ it.text }}{% if not loop.last %}, {% endif %}{% endfor %}{% if x.ref and x.gaps %}. {% endif %}
+          {% if x.gaps %}Not settled by the sources: {{ x.gaps|join('; ') }}.{% endif %}</p>
+          {% if x.ref %}<details><summary>Reference wording</summary>{% for it in x.ref %}
+            <p class="rv-foot"><b>{{ it.text }}:</b> &ldquo;{{ it.p.quote }}&rdquo; &mdash; {{ it.p.source }}</p>{% endfor %}</details>{% endif %}
+        {% endif %}
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="rv-lead">Nothing waiting. RxGuard now checks every medicine it has been given.
+        <a href="{{ url_for('astaken') }}">See your medicines as taken &rarr;</a></p>
+        {% endif %}
+
+        <details class="rv-foot" style="margin-top:22px"><summary>Sources and alerts{% if alerts %} &middot; <b>{{ alerts|length }} new safety alert{{ '' if alerts|length == 1 else 's' }}</b>{% endif %}</summary>
+        {% if src %}<p class="rv-foot">Last run {{ src.run }}{% if src.stage and src.stage != 'done' %} (in progress: {{ src.stage }}){% endif %} &middot;
+        GutLog {{ src.gutlog }} &middot;
+        FDA CYP table {% if src.fda_cyp and src.fda_cyp.ok %}{{ src.fda_cyp.rows }} rows{% else %}{{ (src.fda_cyp or {}).get('err','-') }}{% endif %} &middot;
+        DDInter {{ (src.ddinter or {}).get('pairs','-') }} pairs{% if (src.ddinter or {}).get('err') %} ({{ src.ddinter.err }}){% endif %} &middot;
+        PvPI {{ src.pvpi }}</p>{% else %}<p class="rv-foot">No sync has run yet.</p>{% endif %}
+        <form method="post" action="{{ url_for('kb_fetch') }}"><button class="ghost">Fetch now</button></form>
+        {% if alerts %}<form method="post" action="{{ url_for('kb_alerts_read') }}"><ul>
+        {% for a in alerts %}<li><a href="{{ a['url'] }}" target="_blank" rel="noopener">{{ a['title'] }}</a></li>{% endfor %}
+        </ul><button class="ghost">Mark read</button></form>{% endif %}
+        <p class="rv-foot">Decided so far: {% for r in done %}{{ r['status'] }} {{ r['n'] }}{% if not loop.last %} &middot; {% endif %}{% endfor %}.
+        Sources: NLM RxNorm/RxClass, openFDA labels, FDA CYP table, DDInter 2.0 (CC BY-NC-SA 4.0, personal non-commercial use), PvPI.</p>
+        </details>
+        """
+        return page(body, nav="kb_review", title="Your review", v=v, alerts=alerts, src=src, done=done)
+
+    @app.route("/kb/accept_all", methods=["POST"])
+    @login_required
+    def kb_accept_all():
+        db = get_db()
+        n = 0
+        for r in db.execute("SELECT * FROM kb_drafts WHERE status IN ('pending','source_changed') "
+                            "ORDER BY id").fetchall():
+            approve_draft_row(db, r)
+            n += 1
+        rows = [dict(r) for r in db.execute("SELECT * FROM kb_pairs WHERE status='pending'").fetchall()]
+        if rows:
+            approve_pairs(rows)
+            for r in rows:
+                db.execute("UPDATE kb_pairs SET status='approved', decided=? WHERE id=?",
+                           (datetime.now().isoformat(timespec="minutes"), r["id"]))
+        db.commit()
+        flash("Accepted %d medicine%s and %d interaction%s. Every check now includes them." % (
+            n, "" if n == 1 else "s", len(rows), "" if len(rows) == 1 else "s"))
+        return redirect(url_for("kb_review"))
+
+    @app.route("/kb/draft/<int:did>", methods=["POST"])
+    @login_required
+    def kb_decide(did):
+        db = get_db()
+        r = db.execute("SELECT * FROM kb_drafts WHERE id=?", (did,)).fetchone()
+        if not r:
+            flash("Draft not found.")
+            return redirect(url_for("kb_review"))
+        action = request.form.get("action")
+        if action == "approve":
+            idx = set(int(i) for i in request.form.getlist("prop") if i.isdigit())
+            pidx = set(int(i) for i in request.form.getlist("pair") if i.isdigit())
+            d = approve_draft_row(db, r, idx, pidx)
+            flash("Accepted: %s. Checks now include it." % d.get("display", ""))
+        elif action == "reject":
+            d = json.loads(r["draft_json"] or "{}")
+            db.execute("UPDATE kb_drafts SET status='rejected', decided=? WHERE id=?",
+                       (datetime.now().isoformat(timespec="minutes"), did))
+            flash("Rejected: %s. It stays not checkable." % d.get("display", ""))
+        db.commit()
+        return redirect(url_for("kb_review"))
+
+    @app.route("/kb/pairs", methods=["POST"])
+    @login_required
+    def kb_pairs_decide():
+        db = get_db()
+        ids = [int(i) for i in request.form.getlist("pid") if i.isdigit()]
+        action = request.form.get("action")
+        rows = [db.execute("SELECT * FROM kb_pairs WHERE id=? AND status='pending'", (i,)).fetchone()
+                for i in ids]
+        rows = [r for r in rows if r]
+        if action == "approve" and rows:
+            approve_pairs([dict(r) for r in rows])
+        for r in rows:
+            db.execute("UPDATE kb_pairs SET status=?, decided=? WHERE id=?",
+                       ("approved" if action == "approve" else "dismissed",
+                        datetime.now().isoformat(timespec="minutes"), r["id"]))
+        db.commit()
+        flash("%d interaction%s %s." % (len(rows), "" if len(rows) == 1 else "s",
+                                          "approved" if action == "approve" else "dismissed"))
+        return redirect(url_for("kb_review"))
+
+    @app.route("/kb/alerts/read", methods=["POST"])
+    @login_required
+    def kb_alerts_read():
+        get_db().execute("UPDATE kb_alerts SET status='read' WHERE status='new'")
+        get_db().commit()
+        return redirect(url_for("kb_review"))
+
+    @app.route("/kb/fetch", methods=["POST"])
+    @login_required
+    def kb_fetch():
+        if os.environ.get("RXGUARD_KB_NOSPAWN") == "1":
+            flash("Fetch requested (test mode: not started).")
+            return redirect(url_for("kb_review"))
+        import subprocess
+        logf = open(os.path.join(BASE_DIR, "kb_sync.log"), "a")
+        subprocess.Popen([sys.executable, os.path.join(BASE_DIR, "kb_sync.py")], cwd=BASE_DIR,
+                         stdout=logf, stderr=logf, start_new_session=True)
+        flash("Fetching in the background. Refresh this page in a minute or two.")
+        return redirect(url_for("kb_review"))
+
+    @app.route("/api/feed/status")
+    def api_feed_status():
+        import hmac
+        try:
+            with open(GUTLOG_TOKEN_FILE, encoding="utf-8") as fh:
+                tok = fh.read().strip()
+        except OSError:
+            tok = ""
+        got = request.headers.get("Authorization", "")
+        got = got[7:].strip() if got.startswith("Bearer ") else ""
+        if not tok or not got or not hmac.compare_digest(tok, got):
+            return Response('{"ok": false}', status=401, mimetype="application/json")
+        c = kb_counts()
+        ast = astaken_summary() or {}
+        c.update(ok=True, red=ast.get("red", 0), amber=ast.get("amber", 0),
+                 not_checkable=ast.get("unknown", 0), url="https://rx.dr-manoj.in/kb")
+        return Response(json.dumps(c), mimetype="application/json")
 
     @app.route("/healthz")
     def healthz():

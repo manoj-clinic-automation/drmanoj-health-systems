@@ -1,7 +1,7 @@
 {
   "_meta": {
     "schema": "medsafe-rules/1",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "reviewed": "2026-07-25",
     "note": "Named rules for effects the generic property engine cannot derive. Property-based logic (CYP substrate/inhibitor matching, additive burden scoring, renal dose checks) is computed in code and is not duplicated here. Every rule carries a source and a reviewed date; the app flags rules past the staleness threshold.",
     "flags": ["RED", "AMBER", "UNKNOWN"],
@@ -292,7 +292,13 @@
       "consequence": "Recurrent ulceration and gastrointestinal haemorrhage.",
       "action": "Avoid NSAIDs; co-prescribe gastroprotection if unavoidable.",
       "source": "Class labelling.", "reviewed": "2026-07-25"
-    }
+    },
+    {"id": "CR010", "condition": "thrombocytopenia", "trigger": {"burden": "bleeding", "min": 1}, "flag": "AMBER", "title": "Bleeding-risk drug with a low platelet count", "consequence": "The drug's bleeding tendency adds to the low platelet count: bruising, gastrointestinal or procedural bleeding.", "action": "Prefer a drug without bleeding burden; for pain, paracetamol within hepatic limits before any NSAID. Check a recent platelet count before starting.", "source": "Class labelling (NSAIDs, SSRIs/SNRIs, antiplatelets, anticoagulants).", "reviewed": "2026-09-11"},
+    {"id": "CR011", "condition": "hyponatraemia", "trigger": {"drugs": ["paroxetine", "sertraline", "escitalopram", "citalopram", "fluoxetine", "venlafaxine", "duloxetine", "hydrochlorothiazide", "chlorthalidone", "indapamide", "amitriptyline", "nortriptyline", "mirtazapine", "carbamazepine", "oxcarbazepine", "desmopressin"]}, "flag": "AMBER", "title": "Sodium-lowering drug with a history of low sodium", "consequence": "Recurrence or worsening of hyponatraemia (SIADH or salt loss): fatigue, confusion, falls.", "monitoring": "Sodium before starting and one to two weeks after.", "source": "Product labelling (SSRIs, SNRIs, thiazides, TCAs, mirtazapine, carbamazepine/oxcarbazepine, desmopressin).", "reviewed": "2026-09-11"},
+    {"id": "CR012", "condition": "hypocalcaemia", "trigger": {"qt_any": true}, "flag": "AMBER", "title": "QT-affecting drug with low calcium", "consequence": "Low calcium prolongs the QT interval on its own and adds to any drug effect.", "action": "Correct calcium, vitamin D and magnesium first where possible; ECG if the drug is a known QT prolonger.", "source": "Established QT risk-factor frameworks (CredibleMeds; product labelling).", "reviewed": "2026-09-11"},
+    {"id": "CR013", "condition": "conduction_disease", "trigger": {"hr": "decrease"}, "flag": "AMBER", "title": "Rate- or AV-slowing drug with conduction disease", "consequence": "Additive slowing of conduction: symptomatic bradycardia or higher-grade AV block, especially with two such drugs together.", "monitoring": "ECG and pulse after starting or combining.", "source": "Class labelling (beta-blockers, verapamil/diltiazem, digoxin, ivabradine).", "reviewed": "2026-09-11"},
+    {"id": "CR014", "condition": "coronary_disease", "trigger": {"drugs": ["diclofenac", "ibuprofen", "naproxen", "etoricoxib", "aceclofenac", "celecoxib", "ketorolac", "indomethacin", "mefenamic_acid", "nimesulide"]}, "flag": "AMBER", "title": "NSAID with coronary artery disease", "consequence": "NSAIDs, COX-2 selective agents included, raise the risk of myocardial infarction and stroke and raise blood pressure.", "action": "Avoid, or the shortest course at the lowest dose; paracetamol first.", "source": "FDA boxed warning: NSAID cardiovascular thrombotic events.", "reviewed": "2026-09-11"},
+    {"id": "CR015", "condition": "diabetes", "trigger": {"drugs": ["prednisolone", "methylprednisolone", "dexamethasone", "hydrocortisone", "deflazacort", "betamethasone"]}, "flag": "AMBER", "title": "Corticosteroid with diabetes", "consequence": "Raised blood sugar during and just after the course.", "monitoring": "Glucose checks during the course, especially afternoon and evening.", "source": "Class labelling (systemic corticosteroids).", "reviewed": "2026-09-11"}
   ],
 
   "burden_thresholds": {

@@ -113,6 +113,22 @@ CREATE TABLE IF NOT EXISTS stock_events (
   qty REAL NOT NULL, at TEXT NOT NULL, note TEXT DEFAULT '', created TEXT);
 CREATE TABLE IF NOT EXISTS stock_meds (
   med_id INTEGER PRIMARY KEY, mode TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS med_salts (
+  med_id INTEGER PRIMARY KEY, strength TEXT DEFAULT '', no_salt INTEGER DEFAULT 0, updated TEXT);
+CREATE TABLE IF NOT EXISTS activities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, atime TEXT, kind TEXT NOT NULL,
+  minutes REAL, intensity TEXT DEFAULT '', notes TEXT DEFAULT '', created TEXT);
+CREATE TABLE IF NOT EXISTS rec_docs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT, kind TEXT, title TEXT, source TEXT,
+  finding TEXT, stored TEXT DEFAULT '', orig TEXT DEFAULT '', sha TEXT UNIQUE, status TEXT DEFAULT 'filed', created TEXT,
+  origin TEXT DEFAULT '', checked INTEGER DEFAULT 1, file_id INTEGER);
+CREATE TABLE IF NOT EXISTS rec_labs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT, test TEXT, section TEXT, value TEXT, num REAL,
+  unit TEXT, ref TEXT, flag INTEGER DEFAULT 0, lab TEXT, created TEXT, origin TEXT DEFAULT '', doc_id INTEGER,
+  UNIQUE(day, test, lab));
+CREATE TABLE IF NOT EXISTS rec_plan (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, pos INTEGER, test TEXT UNIQUE, why TEXT, timing TEXT,
+  status TEXT DEFAULT 'planned', done_day TEXT DEFAULT '', note TEXT DEFAULT '');
 """
 
 ANALYTES = {  # name: (unit, repeat-months or None)
@@ -255,7 +271,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C
+SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -275,6 +291,15 @@ _V330_COLS = [
     ("doses", "dose_text", "TEXT DEFAULT ''"),
     ("episodes", "bristol", "TEXT DEFAULT ''"),
     ("med_schedule", "variants", "TEXT DEFAULT ''"),
+    ("files", "sha", "TEXT DEFAULT ''"),
+    ("files", "ocr_status", "TEXT DEFAULT ''"),
+    ("files", "ocr_note", "TEXT DEFAULT ''"),
+    ("files", "ocr_tries", "INTEGER DEFAULT 0"),
+    ("rec_docs", "origin", "TEXT DEFAULT ''"),
+    ("rec_docs", "checked", "INTEGER DEFAULT 1"),
+    ("rec_docs", "file_id", "INTEGER"),
+    ("rec_labs", "origin", "TEXT DEFAULT ''"),
+    ("rec_labs", "doc_id", "INTEGER"),
 ]
 
 _V330_INDEXES = [
@@ -1082,6 +1107,8 @@ def api_upload():
            [request.form.get("day") or today(), request.form.get("ftype") or "Other",
             (request.form.get("label") or f.filename)[:120], stored,
             secure_filename(f.filename)[:120], size])
+    _after_upload(stored)
+    _spawn_reader()
     return jsonify(ok=True)
 
 @app.route("/file/<int:fid>")
@@ -1095,7 +1122,7 @@ def get_file(fid):
 @login_required
 def api_delete(table, rid):
     if table not in ("doses","foodtests","vitals","episodes","meals","consults",
-                     "labs","courses","files","patches","library"):
+                     "labs","courses","files","patches","library","activities"):
         abort(404)
     if table == "files":
         r = db().execute("SELECT stored FROM files WHERE id=?", (rid,)).fetchone()
@@ -1109,7 +1136,7 @@ def api_delete(table, rid):
 # GUTLOG_V350_PHASE_B -- one day, every stream, in time order; entries can
 # be moved to the time they actually happened. Every move is kept in
 # `edits`, so a changed time is visible rather than silent.
-_TIME_COL = {"doses": "dtime", "episodes": "etime", "vitals": "vtime", "meals": "mtime"}
+_TIME_COL = {"doses": "dtime", "episodes": "etime", "vitals": "vtime", "meals": "mtime", "activities": "atime"}
 
 
 def _valid_hm(s):
@@ -1191,6 +1218,11 @@ def api_dayview():
             sub = (sub + " · " if sub else "") + str(r["protein"]) + " g protein"
         add("meals", r["id"], r["mtime"], "Meal", r["slot"] or "Meal", sub)
 
+    for r in db().execute("SELECT id, atime, kind, minutes, intensity FROM activities WHERE day=?",
+                          (day,)).fetchall():
+        add("activities", r["id"], r["atime"], "Activity",
+            ACT_KINDS.get(r["kind"], r["kind"]) + " " + str(int(round(r["minutes"] or 0))) + " min",
+            (r["intensity"] or "").lower())
     out.sort(key=lambda e: (e["time"] == "", e["time"], e["tbl"], e["id"]))
     return jsonify(day=day, today=today(), entries=out)
 
@@ -1572,15 +1604,18 @@ def api_feed_stack():
     since = (date.today() - timedelta(days=days - 1)).isoformat()
     tday = today()
     regimen = [dict(r) for r in db().execute(
-        "SELECT p.id AS med_id, p.name, p.molecule, s.slot, s.dose_text, s.variants "
-        "FROM med_schedule s JOIN prnmeds p ON p.id=s.med_id WHERE s.valid_from<=? "
+        "SELECT p.id AS med_id, p.name, p.molecule, COALESCE(ms.strength,'') AS strength, "
+        "s.slot, s.dose_text, s.variants "
+        "FROM med_schedule s JOIN prnmeds p ON p.id=s.med_id "
+        "LEFT JOIN med_salts ms ON ms.med_id=p.id WHERE s.valid_from<=? "
         "AND (s.valid_to='' OR s.valid_to IS NULL OR s.valid_to>=?) ORDER BY p.sort, p.id",
         (tday, tday)).fetchall()]
     taken = {}
     for e in _feed_events(since):
         k = e["med_id"] or e["name"]
         t = taken.setdefault(k, {"med_id": e["med_id"], "name": e["name"],
-                                 "molecule": e["molecule"], "doses": 0, "days": set(),
+                                 "molecule": e["molecule"], "strength": _salt_strength(e["med_id"]),
+                                 "doses": 0, "days": set(),
                                  "last_day": "", "scheduled": False})
         t["doses"] += 1
         t["days"].add(e["day"])
@@ -1593,6 +1628,532 @@ def api_feed_stack():
     out.sort(key=lambda t: (-t["days"], t["name"]))
     return jsonify(ok=True, app="gutlog", since=since, days=days, today=tday,
                    regimen=regimen, taken=out)
+
+
+# ------------------------------------------------------------------ salts, status, activity
+# GUTLOG_V370_SALTS_ACTIVITY
+import re
+RXGUARD_URL = os.environ.get("GUTLOG_RXGUARD_URL", "http://127.0.0.1:8031")
+FITLOG_URL = os.environ.get("GUTLOG_FITLOG_URL", "http://127.0.0.1:8040")
+RXNAV_URL = os.environ.get("GUTLOG_RXNAV_URL", "https://rxnav.nlm.nih.gov")
+_LINK_CACHE = {}
+
+
+def _links_enabled():
+    """Outward calls only from the live database; a scratch database (every
+    test suite) never reaches out. GUTLOG_LINKS=1/0 overrides."""
+    v = os.environ.get("GUTLOG_LINKS", "")
+    if v in ("0", "1"):
+        return v == "1"
+    return os.path.dirname(os.path.abspath(DB_PATH)) == BASE
+
+
+def _link_get(url, ttl=300, timeout=3, token=True):
+    """JSON from a companion app (with the feed token) or NLM (without).
+    Cached; never raises; None on any failure."""
+    import time as _t
+    import urllib.request
+    if not _links_enabled():
+        return None
+    hit = _LINK_CACHE.get(url)
+    if hit and _t.time() - hit[0] < ttl:
+        return hit[1]
+    res = None
+    try:
+        hdr = {"Authorization": "Bearer " + _FEED_TOKEN} if (token and _FEED_TOKEN) else {}
+        local = url.startswith("http://127.")
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({})) if local \
+            else urllib.request.build_opener()
+        with op.open(urllib.request.Request(url, headers=hdr), timeout=timeout) as r:
+            res = json.loads(r.read().decode("utf-8"))
+    except Exception:
+        res = None
+    _LINK_CACHE[url] = (_t.time(), res)
+    return res
+
+
+def _salt_rows():
+    return db().execute(
+        "SELECT p.id, p.name, COALESCE(p.molecule,'') AS molecule, "
+        "COALESCE(ms.strength,'') AS strength, COALESCE(ms.no_salt,0) AS no_salt, "
+        "COALESCE(p.scheduled,0) AS scheduled FROM prnmeds p "
+        "LEFT JOIN med_salts ms ON ms.med_id=p.id WHERE p.active=1 ORDER BY p.sort, p.id").fetchall()
+
+
+def _salt_strength(mid):
+    if not mid:
+        return ""
+    r = db().execute("SELECT strength FROM med_salts WHERE med_id=?", (mid,)).fetchone()
+    return (r["strength"] or "") if r else ""
+
+
+@app.route("/api/salts")
+@login_required
+def api_salts():
+    out = []
+    for r in _salt_rows():
+        d = dict(r)
+        d["needs"] = (not d["molecule"].strip()) and not d["no_salt"]
+        out.append(d)
+    out.sort(key=lambda d: (not d["needs"], not d["scheduled"]))
+    return jsonify(meds=out, need=sum(1 for d in out if d["needs"]))
+
+
+_SALT_OK = re.compile(r"^[a-z0-9 ,+().\-/']*$")
+
+
+@app.route("/api/salt", methods=["POST"])
+@login_required
+def api_salt():
+    d = J()
+    try:
+        mid = int(d.get("med_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, err="Bad medicine."), 400
+    if not db().execute("SELECT 1 FROM prnmeds WHERE id=?", (mid,)).fetchone():
+        return jsonify(ok=False, err="Unknown medicine."), 400
+    mol = re.sub(r"\s+", " ", (d.get("molecule") or "").strip().lower())
+    mol = re.sub(r"\s*\+\s*", " + ", mol)
+    strength = re.sub(r"\s+", " ", (d.get("strength") or "").strip())[:40]
+    no_salt = 1 if d.get("no_salt") else 0
+    if len(mol) > 120 or not _SALT_OK.match(mol):
+        return jsonify(ok=False, err="Salt: letters, numbers and + only."), 400
+    if no_salt:
+        mol = ""
+    db().execute("UPDATE prnmeds SET molecule=? WHERE id=?", (mol, mid))
+    db().execute("INSERT INTO med_salts(med_id, strength, no_salt, updated) VALUES(?,?,?,?) "
+                 "ON CONFLICT(med_id) DO UPDATE SET strength=excluded.strength, "
+                 "no_salt=excluded.no_salt, updated=excluded.updated",
+                 (mid, strength, no_salt, now_s()))
+    db().commit()
+    return jsonify(ok=True, molecule=mol)
+
+
+@app.route("/api/salt/suggest")
+@login_required
+def api_salt_suggest():
+    import urllib.parse
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 3 or not _SALT_OK.match(q.lower()):
+        return jsonify(suggestions=[])
+    j = _link_get(RXNAV_URL + "/REST/spellingsuggestions.json?name=" + urllib.parse.quote(q),
+                  ttl=86400, timeout=4, token=False)
+    sug = (((j or {}).get("suggestionGroup") or {}).get("suggestionList") or {}).get("suggestion") or []
+    return jsonify(suggestions=[s.lower() for s in sug[:8]])
+
+
+@app.route("/api/medstatus")
+@login_required
+def api_medstatus():
+    need = sum(1 for r in _salt_rows() if not r["molecule"].strip() and not r["no_salt"])
+    rx = _link_get(RXGUARD_URL + "/api/feed/status", ttl=300)
+    return jsonify(need_salt=need, rx=rx if (rx or {}).get("ok") else None)
+
+
+ACT_KINDS = {"walk": "Walk", "treadmill": "Treadmill", "cycle_road": "Cycling (road)",
+             "cycle_static": "Cycling (static)", "meditation": "Meditation"}
+
+
+@app.route("/api/activity", methods=["POST"])
+@login_required
+def api_activity_add():
+    d = J()
+    kind = d.get("kind")
+    if kind not in ACT_KINDS:
+        return jsonify(ok=False, err="Pick an activity."), 400
+    try:
+        minutes = float(d.get("minutes"))
+    except (TypeError, ValueError):
+        minutes = 0
+    if not 1 <= minutes <= 600:
+        return jsonify(ok=False, err="Minutes must be 1 to 600."), 400
+    day = d.get("day") or today()
+    atime = d.get("atime") or now_hm()
+    if not _valid_day(day):
+        return jsonify(ok=False, err="Pick a real date, not in the future."), 400
+    if not _valid_hm(atime):
+        return jsonify(ok=False, err="Time must be HH:MM."), 400
+    if day == today() and atime > now_hm():
+        return jsonify(ok=False, err="That time has not come yet today."), 400
+    intensity = d.get("intensity") if d.get("intensity") in ("Easy", "Moderate", "Hard") else ""
+    db().execute("INSERT INTO activities(day, atime, kind, minutes, intensity, notes, created) "
+                 "VALUES(?,?,?,?,?,?,?)", (day, atime, kind, minutes, intensity, note(d), now_s()))
+    db().commit()
+    rid = db().execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
+    return jsonify(ok=True, id=rid)
+
+
+@app.route("/api/activity/undo/<int:aid>", methods=["POST"])
+@login_required
+def api_activity_undo(aid):
+    db().execute("DELETE FROM activities WHERE id=?", (aid,))
+    db().commit()
+    return jsonify(ok=True)
+
+
+def _hm(s):
+    m = re.search(r"(\d{1,2}):(\d{2})", s or "")
+    return int(m.group(1)) * 60 + int(m.group(2)) if m else None
+
+
+def _wtime(ts):
+    m = re.search(r"\d{4}-\d{2}-\d{2}[ T](\d{2}:\d{2})", ts or "")
+    return m.group(1) if m else ""
+
+
+def merge_activity(manual, watch):
+    """One list: watch workouts (confirming a tapped entry of the same kind
+    within 30 minutes of the session) + remaining tapped entries."""
+    items, used = [], set()
+    for w in (watch or {}).get("workouts") or []:
+        k = w.get("kind") or "other"
+        st, en = _wtime(w.get("start")), _wtime(w.get("end"))
+        s0, e0 = _hm(st), _hm(en) if en else None
+        match = None
+        for m in manual:
+            if m["id"] in used or m["kind"] != k or s0 is None:
+                continue
+            t = _hm(m["atime"])
+            hi = (e0 if e0 is not None else s0) + 30
+            if t is not None and s0 - 30 <= t <= hi:
+                match = m
+                break
+        if match:
+            used.add(match["id"])
+        items.append({"time": st or (match or {}).get("atime", ""), "kind": k,
+                      "label": ACT_KINDS.get(k, w.get("wtype") or "Workout"),
+                      "minutes": int(round(w.get("minutes") or 0)),
+                      "distance_km": w.get("distance_km"),
+                      "intensity": (match or {}).get("intensity", ""), "source": "watch",
+                      "confirmed": bool(match), "id": (match or {}).get("id")})
+    for m in manual:
+        if m["id"] in used:
+            continue
+        items.append({"time": m["atime"] or "", "kind": m["kind"], "label": ACT_KINDS.get(m["kind"], m["kind"]),
+                      "minutes": int(round(m["minutes"] or 0)), "distance_km": None,
+                      "intensity": m["intensity"] or "", "source": "manual", "confirmed": False,
+                      "id": m["id"]})
+    mm = (watch or {}).get("mindful_min")
+    if mm and not any(i["kind"] == "meditation" for i in items):
+        items.append({"time": "", "kind": "meditation", "label": "Mindful minutes",
+                      "minutes": int(round(mm)), "distance_km": None, "intensity": "",
+                      "source": "watch", "confirmed": False, "id": None})
+    items.sort(key=lambda i: (i["time"] == "", i["time"]))
+    return items
+
+
+@app.route("/api/activity")
+@login_required
+def api_activity():
+    day = _valid_day(request.args.get("day")) or today()
+    manual = [dict(r) for r in db().execute(
+        "SELECT id, day, atime, kind, minutes, intensity FROM activities WHERE day=? "
+        "ORDER BY atime, id", (day,)).fetchall()]
+    watch = _link_get(FITLOG_URL + "/api/feed/activity?day=" + day, ttl=60)
+    items = merge_activity(manual, watch if (watch or {}).get("ok") else None)
+    steps = int((watch or {}).get("steps") or 0) if (watch or {}).get("ok") else 0
+    return jsonify(day=day, items=items,
+                   watch=({"ok": bool((watch or {}).get("ok"))} if _links_enabled() else None),
+                   summary={"minutes": sum(i["minutes"] for i in items), "steps": steps})
+
+
+@app.route("/api/feed/activities")
+@feed_required
+def api_feed_activities():
+    since = _feed_since(14)
+    rows = [dict(r) for r in db().execute(
+        "SELECT day, atime, kind, minutes, intensity FROM activities WHERE day>=? "
+        "ORDER BY day, atime", (since,)).fetchall()]
+    return jsonify(ok=True, app="gutlog", since=since, activities=rows)
+
+
+# ------------------------------------------------------------------ records
+# GUTLOG_V380_RECORDS -- the health record inside GutLog: documents, lab
+# trends, a readable summary and the investigation plan. Clinical content
+# (records_profile.local.json, the imported documents and values) lives only
+# on this server; the code carries none of it.
+PROFILE_FILE = os.path.join(BASE, "records_profile.local.json")
+REC_KEY_TESTS = ["ESR (Erythrocyte Sedimentation Rate)", "C-Reactive Protein (Quantitative)",
+                 "FAECAL CALPROTECTIN (stool)", "Haemoglobin", "Platelet Count", "MPV", "Serum Sodium",
+                 "Serum Ionic Calcium", "HbA1c (Glycosylated Haemoglobin)", "Serum Creatinine",
+                 "SGOT (AST)", "SGPT (ALT)", "Total Cholesterol", "LDL Cholesterol", "Triglycerides",
+                 "25-Hydroxy Vitamin D", "Vitamin B12 (Total)", "TSH (ultrasensitive)"]
+
+
+def rec_profile():
+    try:
+        with open(PROFILE_FILE, "r", encoding="utf-8") as fh:
+            p = json.load(fh)
+        return p if isinstance(p, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+@app.route("/api/records/docs")
+@login_required
+def api_rec_docs():
+    rows = [dict(r) for r in db().execute(
+        "SELECT id, day, kind, title, source, finding, status, (stored<>'') AS has_file, "
+        "COALESCE(origin,'') AS origin, COALESCE(checked,1) AS checked "
+        "FROM rec_docs ORDER BY day DESC, id DESC").fetchall()]
+    ups = [{"id": r["id"], "day": r["day"], "kind": "Uploaded", "title": r["label"],
+            "source": r["ftype"], "finding": _upload_note(r),
+            "status": "inbox", "has_file": 1, "vault": True, "ocr": r["ocr_status"] or ""}
+           for r in db().execute("SELECT id, day, ftype, label, ocr_status, ocr_note FROM files WHERE COALESCE(sha,'')='' OR sha NOT IN "
+                             "(SELECT sha FROM rec_docs WHERE sha IS NOT NULL) ORDER BY day DESC, id DESC").fetchall()]
+    return jsonify(docs=rows, uploads=ups)
+
+
+@app.route("/rec/doc/<int:did>")
+@login_required
+def rec_doc_file(did):
+    r = db().execute("SELECT stored, orig FROM rec_docs WHERE id=?", (did,)).fetchone()
+    if not r or not r["stored"]:
+        abort(404)
+    return send_from_directory(UPLOAD_DIR, r["stored"], download_name=r["orig"] or r["stored"])
+
+
+def _rec_series(test):
+    return [dict(r) for r in db().execute(
+        "SELECT day, value, num, unit, ref, flag, lab, COALESCE(origin,'') AS origin FROM rec_labs "
+        "WHERE test=? ORDER BY day, id",
+        (test,)).fetchall()]
+
+
+@app.route("/api/records/labs")
+@login_required
+def api_rec_labs():
+    t = request.args.get("test")
+    if t:
+        return jsonify(test=t, series=_rec_series(t))
+    key = rec_profile().get("key_tests") or REC_KEY_TESTS
+    out = []
+    for r in db().execute(
+            "SELECT test, section, COUNT(*) AS n, MAX(day) AS last FROM rec_labs "
+            "GROUP BY test ORDER BY section, test").fetchall():
+        s = _rec_series(r["test"])
+        last = s[-1] if s else {}
+        out.append({"test": r["test"], "section": r["section"], "n": r["n"], "key": r["test"] in key,
+                    "last_day": last.get("day"), "last_value": last.get("value"), "last_flag": last.get("flag"),
+                    "unit": last.get("unit"), "ref": last.get("ref"),
+                    "points": [[x["day"], x["num"], x["flag"]] for x in s if x["num"] is not None]})
+    out.sort(key=lambda x: (not x["key"], key.index(x["test"]) if x["key"] else 0, x["section"], x["test"]))
+    return jsonify(tests=out)
+
+
+@app.route("/api/records/summary")
+@login_required
+def api_rec_summary():
+    p = rec_profile()
+    tday = today()
+    meds = [dict(r) for r in db().execute(
+        "SELECT p.name, COALESCE(p.molecule,'') AS molecule, COALESCE(ms.strength,'') AS strength, "
+        "s.slot, s.dose_text FROM med_schedule s JOIN prnmeds p ON p.id=s.med_id "
+        "LEFT JOIN med_salts ms ON ms.med_id=p.id WHERE s.valid_from<=? "
+        "AND (s.valid_to='' OR s.valid_to IS NULL OR s.valid_to>=?) ORDER BY p.sort, p.id",
+        (tday, tday)).fetchall()]
+    since = (date.today() - timedelta(days=30)).isoformat()
+    prn = [dict(r) for r in db().execute(
+        "SELECT medicine AS name, COUNT(*) AS n FROM doses WHERE day>=? AND status='EXTRA' "
+        "GROUP BY medicine ORDER BY n DESC", (since,)).fetchall()]
+    vit = [dict(r) for r in db().execute(
+        "SELECT day, vtime, sys, dia, pulse, weight, temp FROM vitals ORDER BY day DESC, vtime DESC "
+        "LIMIT 6").fetchall()]
+    key = p.get("key_tests") or REC_KEY_TESTS
+    labs = []
+    for t in key:
+        s = _rec_series(t)
+        if s:
+            labs.append({"test": t, "day": s[-1]["day"], "value": s[-1]["value"], "flag": s[-1]["flag"],
+                         "unit": s[-1]["unit"], "ref": s[-1]["ref"]})
+    plan = [dict(r) for r in db().execute("SELECT status FROM rec_plan").fetchall()]
+    ndocs = db().execute("SELECT COUNT(*) AS n FROM rec_docs").fetchone()["n"]
+    master = db().execute("SELECT id, title FROM rec_docs WHERE kind='Summary' ORDER BY day DESC, id DESC "
+                          "LIMIT 3").fetchall()
+    return jsonify(profile={k: p.get(k) for k in ("updated", "problems", "resolved", "precautions",
+                                                  "missing", "note")},
+                   meds=meds, prn=prn, vitals=vit, labs=labs, docs=ndocs,
+                   plan={"total": len(plan), "done": sum(1 for x in plan if x["status"] == "done")},
+                   unchecked=db().execute("SELECT COUNT(*) AS n FROM rec_docs WHERE "
+                                          "origin='auto' AND checked=0").fetchone()["n"],
+                   master=[dict(r) for r in master])
+
+
+@app.route("/api/records/plan")
+@login_required
+def api_rec_plan():
+    return jsonify(items=[dict(r) for r in db().execute(
+        "SELECT id, pos, test, why, timing, status, done_day, note FROM rec_plan ORDER BY pos, id").fetchall()])
+
+
+@app.route("/api/records/plan/<int:pid>", methods=["POST"])
+@login_required
+def api_rec_plan_set(pid):
+    d = J()
+    st = d.get("status")
+    if st not in ("planned", "done"):
+        return jsonify(ok=False, err="Bad status."), 400
+    day = _valid_day(d.get("done_day") or today()) if st == "done" else ""
+    if st == "done" and not day:
+        return jsonify(ok=False, err="Pick a real date, not in the future."), 400
+    note = (d.get("note") or "")[:300]
+    cur = db().execute("UPDATE rec_plan SET status=?, done_day=?, note=? WHERE id=?", (st, day or "", note, pid))
+    db().commit()
+    if not cur.rowcount:
+        return jsonify(ok=False, err="Not found."), 404
+    return jsonify(ok=True)
+
+
+@app.route("/api/feed/profile")
+@feed_required
+def api_feed_profile():
+    """Condition codes only - never text - for RxGuard's checks."""
+    codes = [c for c in (rec_profile().get("conditions") or []) if isinstance(c, str) and
+             re.match(r"^[a-z_]{3,40}$", c)]
+    return jsonify(ok=True, app="gutlog", conditions=codes)
+
+
+# ------------------------------------------------------------------ scanner
+# GUTLOG_V390_SCAN -- the clinic's document scanner (scanner_widget v2.3, the
+# same file the Asset Register and finance screens use) inside GutLog. Every
+# upload, scanned or chosen, also lands in uploads/inbox/ under a readable
+# name, so a batch can be taken to the PC for processing in one drag.
+import hashlib
+import shutil
+SCANNER_JS = os.path.join(BASE, "scanner_widget.js")
+INBOX_DIR = os.path.join(UPLOAD_DIR, "inbox")
+
+
+def _sha_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _after_upload(stored):
+    """Fingerprint the new file and drop a readable copy into the inbox.
+    Never fails the upload."""
+    try:
+        r = db().execute("SELECT id, day, label FROM files WHERE stored=?", (stored,)).fetchone()
+        if not r:
+            return
+        src = os.path.join(UPLOAD_DIR, stored)
+        db().execute("UPDATE files SET sha=? WHERE id=?", (_sha_file(src), r["id"]))
+        db().commit()
+        os.makedirs(INBOX_DIR, exist_ok=True)
+        base = secure_filename(os.path.splitext(r["label"] or "")[0])[:60] or "report"
+        shutil.copy2(src, os.path.join(INBOX_DIR, "%s_%s_%d%s" % (r["day"], base, r["id"],
+                                                                   os.path.splitext(stored)[1])))
+    except Exception:
+        pass
+
+
+@app.route("/scanner_widget.js")
+@login_required
+def scanner_widget_js():
+    if not os.path.exists(SCANNER_JS):
+        abort(404)
+    with open(SCANNER_JS, "rb") as fh:
+        body = fh.read()
+    return Response(body, mimetype="application/javascript", headers={"Cache-Control": "no-cache"})
+
+
+SCAN_PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Scan a report - GutLog</title>
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;margin:0;background:#F3F6F5;color:#1B2B28}
+header{background:#0F6B5C;color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:9}
+header a{color:#fff;text-decoration:none;font-weight:700;padding:6px 10px;border:1.5px solid rgba(255,255,255,.7);border-radius:9px}
+main{padding:12px 16px;max-width:720px;margin:0 auto}
+.card{background:#fff;border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+label.f{flex:1;min-width:140px;font-size:13px;color:#5B6B67;font-weight:700}
+label.f select,label.f input{display:block;width:100%;margin-top:4px;font-size:16px;padding:10px;border:1px solid #CFD8D5;border-radius:10px;box-sizing:border-box;background:#fff;color:#1B2B28}
+#scanroot .btn,#scanroot button{background:#0F6B5C;color:#fff;border:0}
+.muted{color:#6A7773;font-size:13px}
+</style></head><body>
+<header><b>Scan a report</b><a href="/?open=records">Done</a></header>
+<main>
+<div class="card"><div class="row">
+<label class="f">Type<select id="s_type"><option>Lab report</option><option>Imaging report</option>
+<option>Prescription</option><option>Consultation note</option><option>Discharge summary</option><option>Other</option></select></label>
+<label class="f">Report date<input type="date" id="s_day" value="__DAY__" max="__DAY__"></label>
+</div><p class="muted">Each saved PDF goes to Records, Reports, where it waits to be processed into your record.
+Batch mode saves every page as its own file.</p></div>
+<div class="card"><div id="scanroot"></div></div>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+window.SCANNER_CONFIG = {title: "Scan a report", uploadUrl: "/api/upload", fileField: "file",
+  uploadFields: {ftype: "Lab report", day: "__DAY__"}, nameBase: "Lab_report", backUrl: "/?open=records",
+  allowIdCard: false, allowBatch: true};
+(function () {
+  var C = window.SCANNER_CONFIG;
+  document.getElementById("s_type").onchange = function () {
+    C.uploadFields.ftype = this.value; C.nameBase = this.value.replace(/\s+/g, "_");
+  };
+  document.getElementById("s_day").onchange = function () { C.uploadFields.day = this.value || "__DAY__"; };
+})();
+</script>
+<script src="/scanner_widget.js?v=__V__"></script>
+</body></html>
+"""
+
+
+@app.route("/scan")
+@login_required
+def scan_page():
+    try:
+        v = str(int(os.path.getmtime(SCANNER_JS)))
+    except OSError:
+        v = "0"
+    html = SCAN_PAGE.replace("__DAY__", today()).replace("__V__", v)
+    return Response(html, mimetype="text/html")
+
+
+# ------------------------------------------------------------------ auto-read
+# GUTLOG_V3100_AUTOREAD -- start the report reader the moment a file lands.
+import subprocess
+import sys as _sys
+WORKER = os.path.join(BASE, "records_worker.py")
+
+
+def _spawn_reader():
+    """Start records_worker.py in the background. Live database only (tests
+    and scratch copies never reach out); GUTLOG_NOSPAWN=1 disables."""
+    if os.environ.get("GUTLOG_NOSPAWN") == "1" or not _links_enabled() or not os.path.exists(WORKER):
+        return False
+    try:
+        logf = open(os.path.join(BASE, "records_worker.log"), "a")
+        subprocess.Popen([_sys.executable, WORKER], cwd=BASE, stdout=logf, stderr=logf, start_new_session=True)
+        return True
+    except Exception:
+        return False
+
+
+def _upload_note(r):
+    st, note = (r["ocr_status"] or ""), (r["ocr_note"] or "")
+    if st in ("", "reading"):
+        return "Being read automatically - it joins your record in a minute or two."
+    if st == "retry":
+        return "Could not be read yet (%s) - trying again shortly." % note
+    if st == "failed":
+        return "Could not be read automatically (%s). It stays here as a file." % note
+    if st == "skipped":
+        return "Kept as a file (%s)." % note
+    return "Uploaded by you."
+
+
+@app.route("/api/records/doc/<int:did>/checked", methods=["POST"])
+@login_required
+def api_rec_checked(did):
+    cur = db().execute("UPDATE rec_docs SET checked=1 WHERE id=?", (did,))
+    db().commit()
+    if not cur.rowcount:
+        return jsonify(ok=False, err="Not found."), 404
+    return jsonify(ok=True)
 
 
 # ------------------------------------------------------------------ review
@@ -2127,6 +2688,64 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 .vtwrap{overflow-x:auto;margin-top:8px}
 .vtwrap table{font-size:13.5px}
 #vitalsLog .tot{margin:4px 2px}
+/* GUTLOG_V370_SALTS_ACTIVITY */
+#actTiles .ptile.open .pscore{display:block}
+#actTiles .pscore .chips{margin-bottom:8px}
+#actTiles .pscore .btn.primary{margin-top:4px}
+.stockalert.medstat{flex-wrap:wrap}
+.stockalert .ml{display:flex;flex-wrap:wrap;gap:6px 12px}
+.stockalert .mlink{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer;text-align:left}
+#saltList .vtm .st{flex:0 0 34% }
+.tag.k-act{background:#E6F4EA;color:#2E7D32}
+/* GUTLOG_V380_RECORDS */
+.seg[data-seg="files"]+.seg[data-seg="files"]{margin-top:-6px}
+.rs-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.rs-card .q{margin-bottom:6px}
+.rs-row{display:flex;flex-direction:column;padding:6px 0;border-bottom:1px solid var(--line,#E4E7E5)}
+.rs-row:last-child{border-bottom:0}
+.rs-meta{color:var(--muted);font-size:13px;margin:2px 0 0}
+.rs-prec{padding:7px 0;border-bottom:1px solid var(--line,#E4E7E5)}
+.rs-prec:last-child{border-bottom:0}
+.rs-flag{display:inline-block;font-size:11px;font-weight:800;padding:1px 6px;border-radius:6px;margin-right:6px}
+.rs-flag.RED{background:#FBEDEC;color:#B3372A}.rs-flag.AMBER{background:#FFF3DC;color:#8A5A00}
+.rs-tab{width:100%;border-collapse:collapse;font-size:13.5px}
+.rs-tab td{padding:5px 4px;border-bottom:1px solid var(--line,#E4E7E5);vertical-align:top}
+.rs-hi{color:#B3372A;font-weight:700}
+.rs-link{display:inline-block;margin-top:6px;font-weight:700;color:var(--teal)}
+.rd-year{font-weight:800;color:var(--muted);margin:14px 2px 6px;font-size:13px;letter-spacing:.04em}
+.rd-row{background:#fff;border-radius:12px;padding:10px 12px;margin-bottom:8px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.rd-row.inbox{border-left:4px solid #C08A00}
+.rd-top{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--muted)}
+.rd-kind{background:var(--chip);border-radius:6px;padding:1px 6px;font-weight:700}
+.rd-title{display:block;margin:3px 0 1px}
+.rd-find{font-size:13.5px;margin:4px 0 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.rd-find.open{display:block}
+.rt-row{background:#fff;border-radius:12px;margin-bottom:8px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.rt-head{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer}
+.rt-name{flex:1;min-width:0;display:flex;flex-direction:column}
+.rt-spark{width:92px;height:30px;flex:0 0 auto}
+.rt-last{min-width:64px;text-align:right;font-weight:700;font-size:13.5px}
+.rt-det{padding:0 12px 10px}
+.rp-head{display:flex;gap:8px;align-items:baseline}
+.rp-n{font-weight:800;color:var(--teal)}
+.rp-when{font-size:13px;margin:4px 0 8px}
+.rp-row.done{opacity:.7}
+#tab-files .rs-card .btn.tiny,#tab-files .rp-row .btn.tiny,#rsPrint{border:1.5px solid var(--teal);color:var(--teal);background:#fff}
+#tab-files .rp-row .btn.tiny:not(.ghost){background:var(--teal);color:#fff}
+@media print{
+  header,#nav,.save,.seg,.toast,#rsPrint{display:none!important}
+  .tab{display:none!important}#tab-files{display:block!important}
+  #tab-files .sub{display:none!important}#files-summary{display:block!important}
+  .card{box-shadow:none;border:1px solid #ccc;break-inside:avoid}
+  body{background:#fff}
+}
+/* GUTLOG_V390_SCAN */
+.scanbtn{display:block;text-align:center;background:var(--teal);color:#fff;font-weight:800;font-size:16px;
+  padding:14px 12px;border-radius:13px;text-decoration:none;margin:0 0 10px;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+/* GUTLOG_V3100_AUTOREAD */
+.rd-auto{background:#FFF3DC;color:#8A5A00;border-radius:6px;padding:1px 6px;font-weight:700}
+#tab-files .rd-ok{margin-top:8px;margin-right:10px;border:1.5px solid var(--teal);color:var(--teal);background:#fff}
+.rs-auto{background:#FFF8EA;border-radius:10px;padding:8px 10px;margin:0 0 10px}
 @media (prefers-reduced-motion:reduce){.toast,.pbar i,.chip{transition:none}}
 </style></head><body>
 <div style="display:flex;gap:8px;padding:8px 12px 4px;font-size:13.5px">
@@ -2144,6 +2763,7 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 <!-- ============ NOW ============ -->
 <section class="tab sel" id="tab-now">
   <div id="nowStock"></div>
+  <div id="nowMedStatus"></div>
   <div class="card" id="nowBP">
     <p class="q">Blood pressure</p>
     <div class="row3">
@@ -2174,6 +2794,17 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
         <button type="button" class="btn ghost" id="nowAddMed">Add medicine</button>
       </div>
       <p class="hint" style="margin:10px 0 0">One tap logs it at the current time.</p>
+    </div>
+  </div>
+
+  <div class="card fold" id="nowAct">
+    <button type="button" class="fold-h">
+      <span class="ft">Activity</span><span class="fs" id="actSum"></span><span class="fc"></span>
+    </button>
+    <div class="cbody">
+      <div id="actTiles"></div>
+      <div id="actList"></div>
+      <p class="hint" id="actWatch" style="margin:8px 2px 0"></p>
     </div>
   </div>
 
@@ -2331,7 +2962,7 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 <!-- ============ MEDS ============ -->
 <section class="tab" id="tab-meds">
   <div class="seg" data-seg="meds">
-    <button data-s="prn" class="sel">PRN dose</button><button data-s="course">Courses</button><button data-s="sched">Schedule</button><button data-s="stock">Stock</button>
+    <button data-s="prn" class="sel">PRN dose</button><button data-s="course">Courses</button><button data-s="sched">Schedule</button><button data-s="stock">Stock</button><button data-s="salts">Salts</button>
   </div>
 
   <div class="sub sel" id="meds-prn">
@@ -2369,6 +3000,13 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
     </div>
   </div>
 
+  <div class="sub" id="meds-salts">
+    <p class="hint">The salt and strength of each medicine let RxGuard check it. Suggestions come from the US
+      National Library of Medicine. Mark mixtures and supplements as "Not a single drug".</p>
+    <div id="saltList"></div>
+    <datalist id="saltSug"></datalist>
+  </div>
+
   <div class="sub" id="meds-stock">
     <div class="card" id="stPill">
       <p class="q">Pillbox</p>
@@ -2396,11 +3034,39 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 <!-- ============ FILES ============ -->
 <section class="tab" id="tab-files">
   <div class="seg" data-seg="files">
-    <button data-s="vault" class="sel">Vault</button><button data-s="labs">Labs</button><button data-s="consults">Consults</button>
+    <button data-s="summary" class="sel">Summary</button><button data-s="reports">Reports</button><button data-s="trends">Trends</button><button data-s="plan">Plan</button>
+  </div>
+  <div class="seg" data-seg="files">
+    <button data-s="vault">Upload</button><button data-s="labs">Labs</button><button data-s="consults">Consults</button>
   </div>
 
-  <div class="sub sel" id="files-vault">
-    <p class="hint">Reports, prescriptions, scan photos. PDF / JPG / PNG, up to 12 MB.</p>
+  <div class="sub sel" id="files-summary">
+    <div class="card"><div class="rs-head"><p class="q" style="margin:0">Health summary</p>
+      <button type="button" class="btn tiny ghost" id="rsPrint">Print / PDF</button></div>
+      <p class="hint" id="rsUpd" style="margin:4px 0 0"></p></div>
+    <div id="rsBody"></div>
+  </div>
+
+  <div class="sub" id="files-reports">
+    <a class="scanbtn" href="/scan">&#128247; Scan a report</a>
+    <div class="chips" id="rdKinds"></div>
+    <div id="rdList"></div>
+  </div>
+
+  <div class="sub" id="files-trends">
+    <p class="hint">Values exactly as printed. A red dot is a value the laboratory flagged. Tap a test for every result.</p>
+    <div id="rtList"></div>
+  </div>
+
+  <div class="sub" id="files-plan">
+    <p class="hint">Investigations chosen for the way forward. Mark each one done when the report is in.</p>
+    <div id="rpList"></div>
+  </div>
+
+  <div class="sub" id="files-vault">
+        <a class="scanbtn" href="/scan">&#128247; Scan a report with the camera</a>
+    <p class="hint" style="margin-top:0">Autocrop, flattening and multi-page PDF, the same scanner the clinic uses.</p>
+<p class="hint">New reports, prescriptions, scan photos. PDF / JPG / PNG, up to 12 MB. They appear under Reports and are processed into your record.</p>
     <div class="card"><p class="q">Upload</p>
       <div class="row2"><div><p class="lbl">Date</p><input type="date" id="u_day"></div>
         <div><p class="lbl">Type</p><select id="u_ftype">
@@ -2483,7 +3149,7 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
   <button data-t="log"><i>&#9998;</i>Log</button>
   <button data-t="meals"><i>&#127860;</i>Meals</button>
   <button data-t="meds"><i>&#128138;</i>Meds</button>
-  <button data-t="files"><i>&#128194;</i>Files</button>
+  <button data-t="files"><i>&#128194;</i>Records</button>
   <button data-t="review"><i>&#128202;</i>Review</button>
 </nav>
 
@@ -2499,7 +3165,7 @@ const nowHM=()=>new Date().toTimeString().slice(0,5);
 const S={log:{},episode:{},vitals:{},meal:{},test:{},prn:{}};
 const FMAP={L:0,'L-M':0.5,M:1,'M-H':1.5,H:2};
 const FMCOL={L:'var(--fmL)','L-M':'var(--fmLM)',M:'var(--fmM)','M-H':'var(--fmMH)',H:'var(--fmH)'};
-let tab='now'; const seg={log:'day',meals:'meal',meds:'prn',files:'vault'};
+let tab='now'; const seg={log:'day',meals:'meal',meds:'prn',files:'summary'};
 let LIB=[], PRN=[], basket=[], libFilter='all', dayProtein=0;
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1700);}
 async function jget(u){const r=await fetch(u);return r.json();}
@@ -2880,6 +3546,261 @@ function svgBars(data,key,col,h=110){
     s+=`<rect x="${x.toFixed(1)}" y="${(h-P-bh).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${col}"/>`;});
   s+=`<text x="${P}" y="10" font-size="9" fill="#5B7370">max ${max}</text></svg>`;return s;
 }
+/* ---------- RECORDS (GUTLOG_V380_RECORDS) ---------- */
+function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
+function fmtDay(d){if(!d)return '';const p=d.split('-');const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return p.length===3?(p[2]+'-'+M[+p[1]-1]+'-'+p[0]):d;}
+function spark(points,w,h){
+  const nums=points.filter(p=>p[1]!==null&&p[1]!==undefined);
+  if(nums.length<2)return null;
+  const xs=nums.map(p=>Date.parse(p[0])),ys=nums.map(p=>p[1]);
+  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+  const X=v=>4+(x1===x0?0:(v-x0)/(x1-x0))*(w-8),Y=v=>h-4-(y1===y0?0.5:(v-y0)/(y1-y0))*(h-8);
+  const ns='http://www.w3.org/2000/svg';const svg=document.createElementNS(ns,'svg');
+  svg.setAttribute('viewBox','0 0 '+w+' '+h);svg.setAttribute('class','rt-spark');
+  const pl=document.createElementNS(ns,'polyline');
+  pl.setAttribute('points',nums.map((p,i)=>X(xs[i]).toFixed(1)+','+Y(ys[i]).toFixed(1)).join(' '));
+  pl.setAttribute('fill','none');pl.setAttribute('stroke','#0F6B5C');pl.setAttribute('stroke-width','1.6');svg.appendChild(pl);
+  nums.forEach((p,i)=>{const c=document.createElementNS(ns,'circle');c.setAttribute('cx',X(xs[i]).toFixed(1));
+    c.setAttribute('cy',Y(ys[i]).toFixed(1));c.setAttribute('r',p[2]?'3':'2');c.setAttribute('fill',p[2]?'#B3372A':'#0F6B5C');svg.appendChild(c);});
+  return svg;
+}
+async function loadRecSummary(){
+  const j=await jget('/api/records/summary');const box=$('#rsBody');box.innerHTML='';
+  const P=j.profile||{};
+  $('#rsUpd').textContent=(P.updated?('Record reviewed '+fmtDay(P.updated)+' · '):'')+j.docs+' reports on file · medicines and vitals are live from GutLog';
+  if(j.unchecked)box.appendChild(el('p','hint rs-auto',j.unchecked+' report'+(j.unchecked>1?'s were':' was')+' read automatically - a glance under Reports confirms '+(j.unchecked>1?'them.':'it.')));
+  function card(title){const c=el('div','card rs-card');c.appendChild(el('p','q',title));box.appendChild(c);return c;}
+  const m=card('Medicines now');
+  if(!j.meds.length)m.appendChild(el('p','hint','No scheduled medicines.'));
+  j.meds.forEach(x=>{const r=el('div','rs-row');r.appendChild(el('b',null,x.name));
+    r.appendChild(el('span','rs-meta',[x.molecule,x.strength,x.dose_text,x.slot.toLowerCase()].filter(Boolean).join(' · ')));m.appendChild(r);});
+  if(j.prn.length)m.appendChild(el('p','hint','As needed, last 30 days: '+j.prn.map(x=>x.name+' ×'+x.n).join(', ')));
+  if((P.precautions||[]).length){const c=card('Precautions that apply to you');
+    P.precautions.forEach(x=>{const r=el('div','rs-prec '+(x.flag||''));
+      if(x.flag)r.appendChild(el('span','rs-flag '+x.flag,x.flag));r.appendChild(el('b',null,x.title));
+      r.appendChild(el('p','rs-meta',x.text));c.appendChild(r);});}
+  if(j.vitals.length){const c=card('Recent vitals');const t=el('table','rs-tab');
+    j.vitals.forEach(v=>{const tr=el('tr');[fmtDay(v.day)+' '+(v.vtime||''),(v.sys?v.sys+'/'+v.dia:''),(v.pulse?'pulse '+v.pulse:''),
+      (v.temp?v.temp+'°':''),(v.weight?v.weight+' kg':'')].forEach(s=>tr.appendChild(el('td',null,s)));t.appendChild(tr);});c.appendChild(t);}
+  if(j.labs.length){const c=card('Latest key results');const t=el('table','rs-tab');
+    j.labs.forEach(x=>{const tr=el('tr'+'');const a=el('td',null,x.test);const b=el('td',x.flag?'rs-hi':null,x.value+(x.unit?' '+x.unit:''));
+      const d=el('td','rs-meta',fmtDay(x.day));tr.appendChild(a);tr.appendChild(b);tr.appendChild(d);t.appendChild(tr);});
+    c.appendChild(t);c.appendChild(el('p','hint','Red = flagged by the laboratory. Full series under Trends.'));}
+  if((P.problems||[]).length){const c=card('Active problems');
+    P.problems.forEach(x=>{const r=el('div','rs-row');r.appendChild(el('b',null,x.name));
+      r.appendChild(el('span','rs-meta',[x.since,x.status].filter(Boolean).join(' · ')));c.appendChild(r);});}
+  if((P.resolved||[]).length){const c=card('Resolved or excluded');
+    P.resolved.forEach(x=>{const r=el('div','rs-row');r.appendChild(el('b',null,x.name));r.appendChild(el('span','rs-meta',x.status||''));c.appendChild(r);});}
+  const pc=card('Investigation plan');pc.appendChild(el('p',null,j.plan.done+' of '+j.plan.total+' done.'));
+  const pb=el('button','btn tiny ghost','Open the plan');pb.type='button';pb.onclick=()=>setSeg('files','plan');pc.appendChild(pb);
+  if((P.missing||[]).length){const c=card('Documents still missing');c.appendChild(el('p','rs-meta',P.missing.join(' · ')));}
+  if(j.master.length){const c=card('Full narrative record');j.master.forEach(x=>{const a=el('a','rs-link',x.title);
+    a.href='/rec/doc/'+x.id;a.target='_blank';c.appendChild(a);});}
+  if(P.note)box.appendChild(el('p','hint',P.note));
+}
+let recKind='All';
+async function loadRecDocs(){
+  const j=await jget('/api/records/docs');const all=j.uploads.concat(j.docs);
+  const kinds=['All'];all.forEach(d=>{if(kinds.indexOf(d.kind)<0)kinds.push(d.kind);});
+  const kb=$('#rdKinds');kb.innerHTML='';
+  kinds.forEach(k=>{const c=el('div','chip'+(k===recKind?' sel':''),k);c.onclick=()=>{recKind=k;loadRecDocs();};kb.appendChild(c);});
+  const box=$('#rdList');box.innerHTML='';let year='';
+  const list=all.filter(d=>recKind==='All'||d.kind===recKind).sort((a,b)=>(b.day||'').localeCompare(a.day||''));
+  if(!list.length){box.appendChild(el('p','hint','Nothing here yet.'));return;}
+  list.forEach(d=>{const y=(d.day||'').slice(0,4);
+    if(y!==year){year=y;box.appendChild(el('p','rd-year',y||'Undated'));}
+    const r=el('div','rd-row'+(d.status==='inbox'?' inbox':''));
+    const top=el('div','rd-top');top.appendChild(el('span','rd-day',fmtDay(d.day)));top.appendChild(el('span','rd-kind',d.kind));
+    r.appendChild(top);r.appendChild(el('b','rd-title',d.title));
+    if(d.source)r.appendChild(el('span','rs-meta',d.source));
+    if(d.finding){const f=el('p','rd-find',d.finding);f.onclick=()=>f.classList.toggle('open');r.appendChild(f);}
+    if(d.origin==='auto'&&!d.checked){top.appendChild(el('span','rd-auto','machine-read'));
+      const ok=el('button','btn tiny rd-ok','Looks right');ok.type='button';
+      ok.onclick=async()=>{try{await post('/api/records/doc/'+d.id+'/checked',{});loadRecDocs();}catch(e){toast(e.message);} };
+      r.appendChild(ok);}
+    if(d.has_file){const a=el('a','rs-link','Open report');a.href=d.vault?('/file/'+d.id):('/rec/doc/'+d.id);a.target='_blank';r.appendChild(a);}
+    box.appendChild(r);});
+}
+async function loadRecTrends(){
+  const j=await jget('/api/records/labs');const box=$('#rtList');box.innerHTML='';
+  if(!j.tests.length){box.appendChild(el('p','hint','No results imported yet.'));return;}
+  let sec='';let keyDone=false;
+  j.tests.forEach(t=>{
+    const label=t.key?'Key results':t.section;
+    if(label!==sec){sec=label;box.appendChild(el('p','rd-year',label));}
+    const r=el('div','rt-row');const head=el('div','rt-head');
+    const nm=el('div','rt-name');nm.appendChild(el('b',null,t.test));
+    nm.appendChild(el('span','rs-meta',t.n+' result'+(t.n>1?'s':'')+' · last '+fmtDay(t.last_day)));
+    head.appendChild(nm);const sv=spark(t.points,92,30);if(sv)head.appendChild(sv);
+    head.appendChild(el('span','rt-last'+(t.last_flag?' rs-hi':''),t.last_value));
+    r.appendChild(head);
+    const det=el('div','rt-det');det.hidden=true;r.appendChild(det);
+    head.onclick=async()=>{if(!det.hidden){det.hidden=true;return;}
+      const s=await jget('/api/records/labs?test='+encodeURIComponent(t.test));det.innerHTML='';
+      const tb=el('table','rs-tab');s.series.slice().reverse().forEach(x=>{const tr=el('tr');
+        tr.appendChild(el('td',null,fmtDay(x.day)));tr.appendChild(el('td',x.flag?'rs-hi':null,x.value));
+        tr.appendChild(el('td','rs-meta',(x.lab||'')+(x.origin==='auto'?' · auto':'')));tb.appendChild(tr);});
+      det.appendChild(tb);if(t.ref||t.unit)det.appendChild(el('p','hint',[t.unit,t.ref?('ref '+t.ref):''].filter(Boolean).join(' · ')));
+      det.hidden=false;};
+    box.appendChild(r);});
+}
+async function loadRecPlan(){
+  const j=await jget('/api/records/plan');const box=$('#rpList');box.innerHTML='';
+  if(!j.items.length){box.appendChild(el('p','hint','No plan loaded yet.'));return;}
+  j.items.forEach(x=>{const r=el('div','card rp-row'+(x.status==='done'?' done':''));
+    const h=el('div','rp-head');h.appendChild(el('span','rp-n',String(x.pos)));h.appendChild(el('b',null,x.test));r.appendChild(h);
+    if(x.why)r.appendChild(el('p','rs-meta',x.why));
+    if(x.timing)r.appendChild(el('p','rp-when',x.timing));
+    const b=el('button','btn tiny'+(x.status==='done'?' ghost':''),x.status==='done'?('Done '+fmtDay(x.done_day)+' · undo'):'Mark done');b.type='button';
+    b.onclick=async()=>{try{await post('/api/records/plan/'+x.id,{status:x.status==='done'?'planned':'done',done_day:todayISO});
+      loadRecPlan();}catch(e){toast(e.message);} };
+    r.appendChild(b);box.appendChild(r);});
+}
+function loadRecords(s){
+  if(s==='summary')loadRecSummary();
+  if(s==='reports')loadRecDocs();
+  if(s==='trends')loadRecTrends();
+  if(s==='plan')loadRecPlan();
+}
+$('#rsPrint').onclick=()=>window.print();
+
+/* ---------- SALTS, MEDICINE STATUS, ACTIVITY (GUTLOG_V370) ---------- */
+async function loadMedStatus(){
+  const box=$('#nowMedStatus');if(!box)return;
+  try{
+    const j=await jget('/api/medstatus');
+    box.innerHTML='';
+    const parts=[];
+    if(j.need_salt)parts.push([j.need_salt+(j.need_salt>1?' medicines need':' medicine needs')+' a salt',()=>{switchTab('meds');setSeg('meds','salts');}]);
+    if(j.rx&&j.rx.drafts)parts.push([j.rx.drafts+' waiting for your review in RxGuard',()=>window.open('https://rx.dr-manoj.in/kb','_blank')]);
+    if(j.rx&&j.rx.pairs)parts.push([j.rx.pairs+' interaction'+(j.rx.pairs>1?'s':'')+' to review in RxGuard',()=>window.open('https://rx.dr-manoj.in/kb','_blank')]);
+    if(j.rx&&j.rx.red)parts.push(['RxGuard shows '+j.rx.red+' RED',()=>window.open('https://rx.dr-manoj.in/astaken','_blank')]);
+    if(!parts.length)return;
+    const d=document.createElement('div');
+    d.className='stockalert medstat '+(j.rx&&j.rx.red?'red':'amber');
+    d.innerHTML='<b>Medicines</b><span class="ml"></span>';
+    const ml=d.querySelector('.ml');
+    parts.forEach(p=>{const a=document.createElement('button');a.type='button';a.className='mlink';
+      a.textContent=p[0];a.onclick=p[1];ml.appendChild(a);});
+    box.appendChild(d);
+  }catch(e){}
+}
+function saltGuess(name){
+  /* "Brand (salt 135)" -> salt, 135 mg;  "Salt 20" -> salt, 20 mg. A guess only: shown, never saved unasked. */
+  let m=/\(([a-z][a-z \-]+?)\s*([0-9.\/]+)?\s*(mg|mcg|g)?\)/i.exec(name);
+  if(!m)m=/^([a-z][a-z\-]+)\s+([0-9.\/]+)\s*(mg|mcg|g)?$/i.exec(name.trim());
+  if(!m)return ['',''];
+  return [m[1].trim().toLowerCase(), m[2]?(m[2]+' '+(m[3]||'mg')):''];
+}
+async function loadSalts(){
+  const j=await jget('/api/salts');
+  const box=$('#saltList');box.innerHTML='';
+  j.meds.forEach(m=>{
+    const w=document.createElement('div');w.className='strow'+(m.needs?' lv-amber':'');
+    w.innerHTML='<div class="sh"><b></b><span class="sq"></span></div>'+
+      '<div class="vtm"><input class="sm" placeholder="salt, e.g. loratadine" list="saltSug" autocomplete="off">'+
+      '<input class="st" placeholder="strength"></div>'+
+      '<div class="sb"><button type="button" class="btn tiny go">Save</button>'+
+      '<button type="button" class="btn tiny ghost ns"></button></div>';
+    w.querySelector('.sh b').textContent=m.name;
+    w.querySelector('.sq').textContent=m.no_salt?'not a single drug':(m.needs?'needs a salt':'');
+    const sm=w.querySelector('.sm'),st=w.querySelector('.st');
+    sm.value=m.molecule||'';st.value=m.strength||'';
+    if(m.needs&&!m.molecule){const g=saltGuess(m.name);if(g[0]){sm.value=g[0];if(!st.value)st.value=g[1];
+      w.querySelector('.sq').textContent='check the guess, then Save';} }
+    let tmr=null;
+    sm.oninput=()=>{
+      clearTimeout(tmr);const q=sm.value.split('+').pop().trim();if(q.length<3)return;
+      tmr=setTimeout(async()=>{
+        try{const s=await jget('/api/salt/suggest?q='+encodeURIComponent(q));
+          const dl=$('#saltSug');dl.innerHTML='';
+          (s.suggestions||[]).forEach(x=>{const o=document.createElement('option');o.value=x;dl.appendChild(o);});
+        }catch(e){}
+      },350);
+    };
+    const ns=w.querySelector('.ns');ns.textContent=m.no_salt?'It is a single drug':'Not a single drug';
+    w.querySelector('.go').onclick=async()=>{
+      try{await post('/api/salt',{med_id:m.id,molecule:sm.value,strength:st.value,no_salt:0});
+        toast('Saved '+m.name);loadSalts();loadMedStatus();}
+      catch(err){toast(err.message);}
+    };
+    ns.onclick=async()=>{
+      try{await post('/api/salt',{med_id:m.id,molecule:sm.value,strength:st.value,no_salt:m.no_salt?0:1});
+        loadSalts();loadMedStatus();}
+      catch(err){toast(err.message);}
+    };
+    box.appendChild(w);
+  });
+}
+const ACT=[['walk','Walk'],['treadmill','Treadmill'],['cycle_road','Cycling (road)'],
+           ['cycle_static','Cycling (static)'],['meditation','Meditation']];
+function buildActTiles(){
+  const box=$('#actTiles');if(!box||box.dataset.built)return;box.dataset.built='1';
+  ACT.forEach(a=>{
+    const k=a[0],label=a[1];
+    const w=document.createElement('div');w.className='ptile act';w.dataset.k=k;
+    w.innerHTML='<button type="button" class="ph"><span class="pn"></span><span class="pv"></span></button>'+
+      '<div class="pscore"><div class="chips am"></div><div class="chips ai"></div>'+
+      '<button type="button" class="btn primary as">Save</button></div>';
+    w.querySelector('.pn').textContent=label;
+    const st={min:null,int:''};
+    const am=w.querySelector('.am'),ai=w.querySelector('.ai');
+    [10,15,20,30,45,60].forEach(v=>{
+      const b=document.createElement('div');b.className='chip num';b.textContent=v;
+      b.onclick=()=>{st.min=v;[...am.children].forEach(c=>c.classList.toggle('sel',c===b));
+        w.querySelector('.pv').textContent=v+' min';};
+      am.appendChild(b);
+    });
+    if(k!=='meditation'){
+      ['Easy','Moderate','Hard'].forEach(v=>{
+        const b=document.createElement('div');b.className='chip';b.textContent=v;
+        b.onclick=()=>{st.int=(st.int===v?'':v);[...ai.children].forEach(c=>c.classList.toggle('sel',c.textContent===st.int));};
+        ai.appendChild(b);
+      });
+    }else ai.remove();
+    w.querySelector('.ph').onclick=()=>w.classList.toggle('open');
+    w.querySelector('.as').onclick=async()=>{
+      if(!st.min){toast('Pick the minutes');return;}
+      try{
+        await post('/api/activity',{kind:k,minutes:st.min,intensity:st.int,day:todayISO});
+        toast('Logged '+label.toLowerCase()+', '+st.min+' min');
+        st.min=null;st.int='';w.classList.remove('open');w.querySelector('.pv').textContent='';
+        w.querySelectorAll('.chip').forEach(c=>c.classList.remove('sel'));
+        loadActivity();
+      }catch(err){toast(err.message);}
+    };
+    box.appendChild(w);
+  });
+}
+async function loadActivity(){
+  buildActTiles();
+  const el=$('#actList');if(!el)return;
+  const j=await jget('/api/activity?day='+todayISO);
+  const s=j.summary||{};
+  $('#actSum').textContent=(s.minutes?(s.minutes+' min'):'none yet')+
+    (s.steps?(' · '+Number(s.steps).toLocaleString('en-IN')+' steps'):'');
+  el.innerHTML='';
+  (j.items||[]).forEach(i=>{
+    const row=document.createElement('div');row.className='exrow';
+    row.innerHTML='<span class="t"></span><span class="m"></span>';
+    row.querySelector('.t').textContent=i.time||'';
+    const bits=[(i.source==='watch'?'⌚ ':'')+i.label+' '+i.minutes+' min'];
+    if(i.distance_km)bits.push((Math.round(i.distance_km*10)/10)+' km');
+    if(i.intensity)bits.push(i.intensity.toLowerCase());
+    if(i.confirmed)bits.push('watch-confirmed');
+    row.querySelector('.m').textContent=bits.join(' · ');
+    if(i.source==='manual'&&i.id){
+      const u=document.createElement('button');u.type='button';u.className='btn tiny u';u.textContent='Undo';
+      u.onclick=async()=>{await post('/api/activity/undo/'+i.id,{});toast('Removed');loadActivity();};
+      row.appendChild(u);
+    }
+    el.appendChild(row);
+  });
+  const wt=$('#actWatch');
+  wt.textContent=j.watch?(j.watch.ok?'Watch data from FitLog is included.':'Watch data not reachable right now.'):'';
+}
+
 /* ---------- STOCK (GUTLOG_V360_PHASE_C) ---------- */
 function fmtQ(v){return String(Math.round(v*10)/10);}
 async function loadStockAlerts(){
@@ -3024,7 +3945,7 @@ function renderVitals(rows){
    entry to move it to the time (or day) it really happened, or delete it.
    Below: that day's scheduled doses never logged, for backfilling. */
 let dvDay=todayISO;
-const DV_TAG={Dose:'dose',Extra:'extra',Skipped:'skip',Symptom:'sym',BP:'bp',Vitals:'bp',Meal:'meal'};
+const DV_TAG={Dose:'dose',Extra:'extra',Skipped:'skip',Symptom:'sym',BP:'bp',Vitals:'bp',Meal:'meal',Activity:'act'};
 function dvShift(n){
   const d=new Date(dvDay+'T12:00:00');d.setDate(d.getDate()+n);
   const s=d.toLocaleDateString('en-CA');
@@ -3244,7 +4165,7 @@ $('#saveBtn').onclick=async()=>{
 /* ---------- tab + segment switching ---------- */
 function saveBtnVisible(){
   const hide=(tab==='review')||(tab==='meals'&&seg.meals==='foods')||
-    (tab==='files'&&(seg.files==='vault'||seg.files==='labs'))||(tab==='meds'&&seg.meds==='stock');
+    (tab==='files'&&seg.files!=='consults')||(tab==='meds'&&(seg.meds==='stock'||seg.meds==='salts'));
   $('.save').style.display=hide?'none':'flex';
   const L={'log:day':'Save day','log:episode':'Save episode','log:vitals':'Save vitals',
     'meals:meal':'Save meal','meals:test':'Save food test','meds:prn':'Log dose',
@@ -3259,17 +4180,20 @@ function switchTab(t){
   $$('.tab').forEach(s=>s.classList.toggle('sel',s.id==='tab-'+t));
   saveBtnVisible();
   if(t==='review')loadReview();
-  if(t==='files'){loadFiles();loadLabs();loadDoctors();}
+  if(t==='files'){loadFiles();loadLabs();loadDoctors();loadRecords(seg.files);}
   if(t==='meals'){loadMealTotals();loadRegistry();renderTestFoods();}
   if(t==='now')loadNow();
   if(t==='meds'){loadPRNToday();loadPatch();loadCourses();}
   if(t==='meds'&&seg.meds==='sched'){loadSchedMeds();loadSchedule();}
   if(t==='meds'&&seg.meds==='stock')loadStock();
+  if(t==='meds'&&seg.meds==='salts')loadSalts();
   window.scrollTo(0,0);
 }
 function setSeg(section,s){
   seg[section]=s;
   if(section==='meds'&&s==='stock')loadStock();
+  if(section==='meds'&&s==='salts')loadSalts();
+  if(section==='files')loadRecords(s);
   if(section==='meds'&&s==='sched'){loadSchedMeds();loadSchedule();}
   $$(`.seg[data-seg="${section}"] button`).forEach(b=>b.classList.toggle('sel',b.dataset.s===s));
   $$(`#tab-${section} .sub`).forEach(el=>el.classList.remove('sel'));
@@ -3428,6 +4352,8 @@ function openVariantPicker(rowEl,r){
 
 async function loadNow(){
   loadStockAlerts();
+  loadMedStatus();
+  loadActivity();
   nowData=await jget('/api/now?day='+todayISO);
   const box=$('#nowSched');box.innerHTML='';
   let done=0,total=0;
@@ -3561,7 +4487,8 @@ function buildNowStatics(){
 
   $('#nowAddMed').onclick=async()=>{
     const n=prompt('Medicine name (include strength)');if(!n)return;
-    try{await post('/api/prnmeds',{name:n});toast('Added');loadNow();loadSchedMeds();}
+    try{await post('/api/prnmeds',{name:n});loadNow();loadSchedMeds();
+      switchTab('meds');setSeg('meds','salts');toast('Added. Now give its salt and strength.');}
     catch(err){toast(err.message);}
   };
   const sa=$('#nowShowAll');
@@ -3617,8 +4544,9 @@ function bindSchedule(){
 function nowDeepLink(){
   const p=new URLSearchParams(location.search).get('open');
   if(!p)return;
+  if(p==='records'){switchTab('files');setSeg('files','reports');return;}
   switchTab('now');
-  const map={bp:'#nowBP',sym:'#nowSym',meds:'#nowSched'};
+  const map={bp:'#nowBP',sym:'#nowSym',meds:'#nowSched',act:'#nowAct'};
   const el=$(map[p]||'#nowSched');
   if(el)setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'start'}),120);
 }

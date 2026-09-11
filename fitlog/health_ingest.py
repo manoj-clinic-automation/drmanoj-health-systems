@@ -85,6 +85,8 @@ METRIC_MAP = {
     "sleep_analysis": "sleep_hours",
     "weight_body_mass": "weight_kg",
     "blood_oxygen_saturation": "spo2_pct",
+    "mindful_minutes": "mindful_min",
+    "mindful_session": "mindful_min",
     # Health Connect / generic aliases
     "steps": "steps",
     "total_calories_burned": "active_energy_kcal",
@@ -246,6 +248,32 @@ def _sleep_hours(point):
 # parsing
 # --------------------------------------------------------------------------
 
+# FITLOG_V120_ACTIVITY -- workout names and kinds
+def _wname(wk):
+    """Workout name; '(indoor)' added when the watch marks it indoor."""
+    name = str(wk.get("name") or wk.get("workoutActivityType") or "unknown").strip()
+    loc = str(wk.get("location") or "").strip().lower()
+    indoor = wk.get("isIndoor") in (True, 1, "true", "True", "1") or loc == "indoor"
+    if indoor and "indoor" not in name.lower():
+        name += " (indoor)"
+    return name
+
+
+def classify_workout(wtype):
+    """walk / treadmill / cycle_road / cycle_static / meditation / other."""
+    w = (wtype or "").lower()
+    indoor = "indoor" in w
+    if "treadmill" in w:
+        return "treadmill"
+    if "cycl" in w or "bik" in w or "cycle" in w:
+        return "cycle_static" if (indoor or "stationary" in w or "spin" in w) else "cycle_road"
+    if "walk" in w or "hik" in w:
+        return "treadmill" if indoor else "walk"
+    if "mind" in w or "meditat" in w or "breath" in w:
+        return "meditation"
+    return "other"
+
+
 def parse_payload(payload):
     """
     Normalise a Health Auto Export style body into metric and workout rows.
@@ -300,7 +328,7 @@ def parse_payload(payload):
             date,
             str(start_raw).strip(),
             str(wk.get("end") or wk.get("endDate") or "").strip() or None,
-            (wk.get("name") or wk.get("workoutActivityType") or "unknown").strip(),
+            _wname(wk),
             _num(wk.get("duration")),
             _num(energy.get("qty") if isinstance(energy, dict) else energy),
             _num(distance.get("qty") if isinstance(distance, dict) else distance),

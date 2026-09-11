@@ -1,0 +1,10 @@
+/var/log/fitlog/access.log {
+    daily
+    rotate 30
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su root root
+}

@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.7.0)
+# GutLog — DOSSIER (v3.10.0)
 
 Single source of truth. Update after every change.
 
@@ -172,6 +172,54 @@ database never reaches out; `GUTLOG_LINKS=1/0` overrides.
 | `POST /api/activity`, `POST /api/activity/undo/<id>`, `GET /api/activity?day=` | Activity card |
 | `GET /api/feed/activities?since=` | Bearer feed for FitLog (day, time, kind, minutes, intensity) |
 
+## Records (the Files tab) — v3.8.0
+
+| Segment | What it shows |
+|---|---|
+| Summary | Medicines now (live regimen with salt and strength), as-needed use in 30 days, precautions, recent vitals, latest key results (lab flags in red), active and resolved problems, plan progress, documents still missing, link to the narrative record. Print / PDF. |
+| Reports | Every report on one timeline by year; filter chips by kind; one-line finding (tap to expand); opens the original. Vault uploads appear as "to be processed". |
+| Trends | Every laboratory value exactly as printed, the laboratory's own flag kept; key tests first; sparkline per test; tap for the full series with laboratory. |
+| Plan | The investigation plan; Mark done / undo. |
+| Upload · Labs · Consults | Unchanged (Vault renamed Upload). |
+
+Content arrives through `import_records.py <folder>`: the folder is the
+owner's medical-records folder with `records_manifest.local.json` in it
+(docs to take, with date/kind/title/source/finding; lab values as printed;
+plan; profile). Reports are copied into `uploads/` as `rec_<sha>.pdf`,
+de-duplicated by content; lab values upserted by (date, test, lab); plan
+status kept on re-import; the profile is written to
+`records_profile.local.json` (mode 600). It prints counts only.
+`/api/feed/profile` (feed token) returns condition codes only, for RxGuard.
+
+## Scanner and inbox — v3.9.0
+
+`/scan` hosts the clinic's shared scanner widget (`scanner_widget.js`, v2.3
+from the clinic repository's S219 kit; the file sits beside app.py and is
+served login-gated as `/scanner_widget.js`). The page sets the type and
+report date, then the widget uploads each PDF to `/api/upload`. Buttons:
+Records → Upload and Records → Reports. Deep link `/?open=records`.
+
+Processing a batch: drag `/root/gutlog/uploads/inbox` to the PC's
+`_PENDING_to_process`, say "process"; the reports are transcribed exactly
+and a small manifest names each by its fingerprint (`sha`), so only the
+manifest travels back. `import_records.py` files them from the inbox and
+removes the inbox copies; the waiting list hides anything already filed.
+
+## Automatic reading — v3.10.0
+
+`records_worker.py` (venv python; started by each upload, and by cron
+`*/15`) reads every waiting upload with Sarvam Document Intelligence
+(`client.doc_ai.extract`, JSON schema: patient name, report date,
+laboratory, document type, title, result rows with value/unit/range/flag,
+impression). Filing rules: date from the report (day-first; future or
+impossible dates fall back to the upload date); kind from the type; test
+names matched through an alias table and the record's existing names;
+flag = the laboratory's mark or a value outside the printed range; plan
+items ticked by keyword; inbox copy removed. rec_docs.origin='auto',
+checked=0 until "Looks right". Patient-name mismatch → status 'check',
+values held back. Failures retry (max 3) with the reason shown under
+Reports. `--probe` reports key and library without calling the API.
+
 ## Schema
 
 | Table | Purpose |
@@ -189,6 +237,9 @@ database never reaches out; `GUTLOG_LINKS=1/0` overrides.
 | `stock_meds` | v3.6.0. Per-medicine stock mode override (`pillbox` / `per_dose`) |
 | `med_salts` | v3.7.0. med_id, strength, no_salt, updated (the salt itself stays in `prnmeds.molecule`) |
 | `activities` | v3.7.0. id, day, atime, kind (walk / treadmill / cycle_road / cycle_static / meditation), minutes, intensity, notes, created |
+| `rec_docs` | v3.8.0. day, kind, title, source, finding, stored, orig, sha (unique), status |
+| `rec_labs` | v3.8.0. day, test, section, value (as printed), num (chart only), unit, ref, flag, lab; unique (day, test, lab) |
+| `rec_plan` | v3.8.0. pos, test (unique), why, timing, status, done_day, note |
 | `edits` | Retime audit (v3.5.0). tbl, rid, old_day, old_time, new_day, new_time, at. Created by `SCHEMA` on first request — no migration step |
 
 ### med_schedule — effective dating
@@ -260,6 +311,17 @@ Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · HTTPS liv
 via OLS reverse proxy.
 
 ## Test evidence
+- `test_phase_f.py` — **8/8 PASS** (v3.9.0): login-gated scan page and
+  widget, fingerprint + inbox copy on upload, waiting list, processing by
+  fingerprint clears the inbox, processed scan leaves the waiting list and
+  opens as a record, buttons and deep link, missing widget file → 404.
+- `test_phase_e.py` — **13/13 PASS** (2026-09-11, v3.8.0): import (duplicate
+  content once, missing reported, profile mode 600), idempotent re-import
+  keeping plan status, counts-only output, reports list with uploads as
+  inbox, file serving behind login, trends (key first, printed values and
+  flags kept), summary (live medicines, vitals, key results, problems,
+  plan, narrative), plan guards, profile feed codes-only, page, no-profile
+  and no-manifest cases, login on every records endpoint.
 - `test_phase_d.py` — **18/18 PASS** (2026-09-11, v3.7.0): tables and the
   no-outward-call rule, salts list and banner count, save/normalise, 4 guard
   cases, Not a single drug, strength in the stack feed, 7 activity guards,
@@ -365,6 +427,13 @@ rediscovered the expensive way.
 - Record a molecule for every single-molecule medicine (gap 5).
 
 ## Changelog
+- **2026-09-11 v3.10.0 — reports read automatically** (Sarvam), filed with a
+  machine-read mark. `patch_gutlog_v3100.py`, 14 anchors.
+- **2026-09-11 v3.9.0 — the clinic scanner** at /scan, inbox for processing.
+  `patch_gutlog_v390.py`, 9 anchors.
+- **2026-09-11 v3.8.0 — Records.** Summary, Reports, Trends, Plan; import
+  from a manifest kept outside the repo; profile feed for RxGuard.
+  `patch_gutlog_v380.py`, 12 anchors.
 - **2026-09-11 v3.7.0 — Phase D (GutLog side).** Salts segment, medicine
   status banner, Activity card with watch merge, strength in the stack feed,
   activities feed. `patch_gutlog_v370.py`, 22 anchors.

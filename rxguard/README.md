@@ -1,4 +1,4 @@
-# RxGuard v1.3.0
+# RxGuard v1.4.0
 
 `rx.dr-manoj.in` · service `rxguard` · port 8031 · `/root/rxguard`
 
@@ -130,6 +130,21 @@ decisions, curated wins, status feed, label re-verify, all sources down,
 Fetch now, login, names only, smoke untouched, terminal report (a negated
 "not a substrate of CYP" is not read as a role), a trickling server cut
 off at the deadline, DDInter resume + draft rebuild, connectivity check.
+
+## Conditions from the health record — v1.4.0
+
+Five more conditions — low platelet count, low sodium, low ionic calcium,
+conduction disease, coronary artery disease — and six sourced rules in
+`knowledge/rules.json` (1.1.0): CR010 bleeding-risk drug + low platelets,
+CR011 sodium-lowering drug + low sodium, CR012 QT drug + low calcium, CR013
+rate/AV-slowing drug + conduction disease, CR014 NSAID + coronary disease,
+CR015 corticosteroid + diabetes. A condition rule may now name its drugs.
+
+GutLog's health record holds the condition list; `kb_sync.py` reads its
+`/api/feed/profile` (codes only) every 30 minutes and ticks them. A code is
+unticked only if GutLog set it and no longer lists it; conditions ticked by
+hand on the Profile page are never touched. `python3 kb_sync.py --conditions`
+runs that step alone. Tests: `test_conditions.py` **10/10**.
 
 ## Layout
 

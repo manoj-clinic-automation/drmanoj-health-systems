@@ -3,6 +3,58 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-11 — Phase G: reports read automatically (GutLog v3.10.0)
+
+- Every scan or upload starts `records_worker.py` at once (cron every 15
+  minutes as a safety net). Sarvam Document Intelligence (`sarvamai`, the
+  clinic's existing key read in place from `/root/wa/.env`) extracts date,
+  laboratory, type, every result row and the impression; the report is
+  filed into Reports and Trends, printed test names matched to the record's
+  own (Hb → Haemoglobin, ESR (Westergren) → ESR …), lab flags and
+  out-of-range values flagged, plan items ticked, the inbox copy removed.
+- Honesty kept: machine-read reports carry a "machine-read" mark and a
+  "Looks right" button; Trends marks their values "auto"; a report whose
+  printed patient name is not the owner's is filed as a document only with
+  its values held back; unreadable files say why and retry up to 3 times.
+- **Privacy decision (owner, 11-Sep-2026):** report files are sent to
+  Sarvam for reading, as the clinic's bills already are.
+- `patch_gutlog_v3100.py` (14 anchors), `test_phase_g.py` 12/12 (fake
+  reader; nothing leaves the machine), UI test +3.
+
+## 2026-09-11 — Phase F: the health record inside the system (GutLog v3.8.0 + v3.9.0, RxGuard v1.4.0)
+
+- GutLog v3.9.0 — **the clinic scanner** (`scanner_widget.js` v2.3, the same
+  file as the Asset Register and finance scan screens, vendored beside
+  app.py) at `/scan`: type and report date, live camera, autocrop,
+  flattening, multi-page PDF or batch. Scans land in Records → Reports as
+  waiting. Every upload is fingerprinted (`files.sha`) and copied readably
+  to `uploads/inbox/`; `import_records.py` can file a report named by its
+  fingerprint and clears processed inbox copies. `patch_gutlog_v390.py`
+  (9 anchors), `test_phase_f.py` 8/8, UI test drives a real scan end to end.
+
+
+**Added**
+- GutLog v3.8.0 — the Files tab becomes **Records**: Summary (medicines and
+  vitals live, latest key results, problems, precautions, missing documents,
+  Print/PDF), Reports (every report on one timeline, filter by kind, opens
+  the original), Trends (every lab value exactly as printed with the lab's
+  flag, a chart per test), Plan (investigations, marked done when in).
+  Uploads wait under Reports as "to be processed". `/api/feed/profile`
+  gives RxGuard condition codes only. `patch_gutlog_v380.py` (12 anchors),
+  `import_records.py` (one-off/re-runnable import from a manifest kept
+  outside the repo), `test_phase_e.py` 13/13, `test_ui_now.py` 60 checks.
+- RxGuard v1.4.0 — five conditions (low platelets, low sodium, low ionic
+  calcium, conduction disease, coronary disease) and six sourced condition
+  rules CR010–CR015 (rules.json 1.1.0); a rule may name its drugs. kb_sync
+  ticks conditions from GutLog's profile feed every 30 minutes (only its own
+  codes are ever unticked; `--conditions` runs that step alone).
+  `patch_rxguard_v140.py`, `test_conditions.py` 10/10.
+- `gutlog/verify_phase_f.py` — live check, counts only.
+
+**Rule kept**: the clinical content (`records_manifest.local.json`,
+`records_profile.local.json`, the reports themselves) lives only on the
+server and the owner's PC. The repository carries code and synthetic tests.
+
 ## 2026-09-11 — RxGuard v1.3.0: "Your review"
 
 The Sources review page listed every property from every source with equal
