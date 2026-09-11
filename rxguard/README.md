@@ -1,4 +1,4 @@
-# RxGuard v1.2.0
+# RxGuard v1.2.2
 
 `rx.dr-manoj.in` · service `rxguard` · port 8031 · `/root/rxguard`
 
@@ -92,7 +92,15 @@ builds a **draft** for each molecule RxGuard does not know (a brand already
 known under its ingredient becomes an alias), lists DDInter pairs between
 known medicines that no curated rule covers, collects PvPI alerts, and once a
 day marks approved entries whose FDA label changed as *re-review*.
-`python3 kb_sync.py --report` prints what the sources produced.
+`python3 kb_sync.py --report` prints what the sources produced (and how far
+the last run got); `python3 kb_sync.py --diag` checks that each source
+answers from the server. v1.2.1: every download has a whole-transfer
+deadline, and the 14 DDInter files are fetched within a time budget per run
+and kept one by one, so a slow server is finished over several runs; drafts
+built before DDInter was complete are rebuilt once it is. v1.2.2: a
+medicine's own ATC class is preferred over a fixed-combination class, label
+bullets are split into single statements, pending drafts from an older
+builder are rebuilt, and strengths edited in GutLog reach pending drafts.
 
 **Sources review** (`/kb`): tick the properties and pairs to keep → they are
 written to `knowledge/drugs.local.json` / `rules.local.json` (never
@@ -103,13 +111,14 @@ its banner counts. Only molecule names ever leave the server. Paid and
 licensed sources (e.g. CDSCO-backed Indian compendia, commercial checkers)
 are deliberately not used.
 
-Tests: `test_kb.py` **25/25** — a fake server replaying the real formats:
+Tests: `test_kb.py` **29/29** — a fake server replaying the real formats:
 FDA table parser and outage fallback, DDInter index, RxNorm identity, label
 choice, draft properties and pairs, FDA table over label, sync + idempotency,
 review page, partial approval reaching the engine, reject, alias, pair
 decisions, curated wins, status feed, label re-verify, all sources down,
 Fetch now, login, names only, smoke untouched, terminal report (a negated
-"not a substrate of CYP" is not read as a role).
+"not a substrate of CYP" is not read as a role), a trickling server cut
+off at the deadline, DDInter resume + draft rebuild, connectivity check.
 
 ## Layout
 
@@ -125,7 +134,7 @@ rxguard.service           systemd unit (port 8031)
 backup.sh                 nightly backup, GutLog cron pattern
 kb_sources.py             v1.2.0: fetchers and draft builder (free sources)
 kb_sync.py                v1.2.0: cron / Fetch now sync; --report
-test_kb.py                v1.2.0: 25 checks against a fake source server
+test_kb.py                v1.2.2: 29 checks against a fake source server
 knowledge/cache/          downloaded source data (gitignored, rebuilt)
 ```
 

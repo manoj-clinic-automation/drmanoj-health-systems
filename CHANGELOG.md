@@ -3,6 +3,24 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-11 — RxGuard v1.2.2: draft quality after the first live run
+
+First live sync: all five sources reachable; FDA table 244 rows, DDInter
+191,709 pairs (12/14 files), PvPI 12 links; 4 drafts. Fixed from what it
+showed: a combination ATC class chosen over the ingredient's own class;
+label bullet lists quoted as one run-on sentence; drafts made before the
+Salts page was filled carried no strength. Pending drafts rebuild on the
+next run. `test_kb.py` 29/29.
+
+## 2026-09-11 — RxGuard v1.2.1: source sync that cannot hang
+
+The first live sync ran past its 10-minute limit without saving anything: a
+socket timeout only bounds each wait for bytes, so a slow download never
+ends. Now every download has a whole-transfer deadline; DDInter's 14 files
+are fetched within a per-run budget and cached one by one; progress is saved
+stage by stage; drafts built on a partial DDInter are rebuilt when it
+completes. `kb_sync.py --diag` added. `test_kb.py` 28/28.
+
 ## 2026-09-11 — Phase D: free medicine sources + Activity card (GutLog v3.7.0, RxGuard v1.2.0, FitLog v1.2.0)
 
 **Added**
