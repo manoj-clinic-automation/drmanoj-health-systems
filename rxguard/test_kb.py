@@ -9,7 +9,7 @@ table layout). The label text and pairs below are SYNTHETIC -- written to
 exercise the parser, not quoted from any real label. Scratch database,
 scratch knowledge folder; nothing live is touched. Python 3.9.
 
-  python3 test_kb.py        -> must print 25/25 passed
+  python3 test_kb.py        -> must print 29/29 passed
 """
 import json
 import os
@@ -19,7 +19,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer as HTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -62,9 +62,9 @@ DDI_ROWS = {
 DDI_ROWS["C"] += "".join("DDInter9%04d,Fill%04d,DDInter8%04d,Fillb%04d,Moderate\n" % (i, i, i, i) for i in range(1100))
 
 LABELS = {
-    "ramelteon": [{"set_id": "set-zol-old", "effective_time": "20200101", "openfda": {"generic_name": ["RAMELTEON TARTRATE"], "brand_name": ["OldZ"]},
+    "ramelteon": [{"set_id": "set-ram-old", "effective_time": "20200101", "openfda": {"generic_name": ["RAMELTEON TARTRATE"], "brand_name": ["OldZ"]},
                   "warnings": ["Old text."]},
-                 {"set_id": "set-zol", "effective_time": "20250301", "openfda": {"generic_name": ["RAMELTEON TARTRATE"], "brand_name": ["SynthZ"]},
+                 {"set_id": "set-ram", "effective_time": "20250301", "openfda": {"generic_name": ["RAMELTEON TARTRATE"], "brand_name": ["SynthZ"]},
                   "boxed_warning": ["WARNING: COMPLEX SLEEP BEHAVIORS. Complex sleep behaviors may occur."],
                   "warnings_and_cautions": ["CNS Depressant Effects and Next-Day Impairment: This drug is a central nervous system (CNS) depressant and can impair daytime function. Hypotension has not been reported."],
                   "drug_interactions": ["Coadministration with diltiazem increased exposure in a study. Concomitant use with alprazolam is contraindicated in this synthetic example."],
@@ -84,9 +84,11 @@ RX = {
     "ramelteon": ("39993", "ramelteon", "IN", [("N05CF", "Benzodiazepine related drugs")]),
     "lubiprostone": ("1307404", "lubiprostone", "IN", [("A06AX", "Other drugs for constipation")]),
     "propranolol": ("31555", "propranolol", "IN", [("C07AB", "Beta blocking agents, selective")]),
+    "comboolol": ("99001", "comboolol", "IN", [("C09DX", "Angiotensin II receptor blockers (ARBs), other combinations"),
+                                              ("C07AB", "Beta blocking agents, selective")]),
     "tylenolx": ("202433", "Tylenol", "BN", []),
 }
-STATE = {"down": False, "fda_calls": 0, "label_newer": False}
+STATE = {"down": False, "fda_calls": 0, "label_newer": False, "ddi_fail": set()}
 
 
 class Fake(BaseHTTPRequestHandler):
@@ -140,7 +142,7 @@ class Fake(BaseHTTPRequestHandler):
             res = [dict(r) for r in LABELS.get(name, [])]
             if STATE["label_newer"] and name == "ramelteon":
                 for r in res:
-                    if r["set_id"] == "set-zol":
+                    if r["set_id"] == "set-ram":
                         r["effective_time"] = "20261001"
             if res:
                 self.send(200, json.dumps({"results": res}))
@@ -149,8 +151,23 @@ class Fake(BaseHTTPRequestHandler):
         elif p == "/fda-cyp":
             STATE["fda_calls"] += 1
             self.send(200, FDA_HTML, "text/html")
+        elif p == "/slow":
+            import time as _t
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            try:
+                for _ in range(15):
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
+                    _t.sleep(0.2)
+            except OSError:
+                pass
         elif p.startswith("/static/media/download/ddinter_downloads_code_"):
             c = p[-5]
+            if c in STATE["ddi_fail"]:
+                self.send(503, "")
+                return
             self.send(200, DDI_HEAD + DDI_ROWS.get(c, ""), "text/csv")
         elif p == "/pvpi":
             self.send(200, '<a href="/x?id=1:drug-alerts-2026">Drug Alerts 2026</a> '
@@ -256,7 +273,7 @@ def main():
 
     def t04_openfda():
         lab = ks.openfda_label("ramelteon")
-        assert lab["ok"] and lab["set_id"] == "set-zol", "newest single-ingredient label not chosen: " + lab["set_id"]
+        assert lab["ok"] and lab["set_id"] == "set-ram", "newest single-ingredient label not chosen: " + lab["set_id"]
         assert "alprazolam" in lab["sections"]["drug_interactions"]
         miss = ks.openfda_label("unknownium")
         assert not miss["ok"] and "no US label" in miss["err"], str(miss)
@@ -446,6 +463,66 @@ def main():
         assert lub and "cyp." not in lub[0], "negated label CYP sentence was read as a role: " + str(lub)
         return "terminal report lists sources, drafts and pairs; 'not a substrate of CYP' is not a role"
 
+    def t25_trickle():
+        import time as _t
+        t0 = _t.monotonic()
+        code, body = ks._get(base + "/slow", timeout=2, deadline=1)
+        took = _t.monotonic() - t0
+        assert code == 0 and took < 2.5, "a trickling server held the call %.1f s (code %s)" % (took, code)
+        return "a server that trickles bytes is cut off at the deadline (%.1f s)" % took
+
+    def t26_ddinter_resume_and_rebuild():
+        cdir = os.environ["RXGUARD_KB_CACHE"]
+        for c in "ABCDGHJLMNPRSV":
+            f = os.path.join(cdir, "ddinter_" + c + ".csv")
+            if os.path.exists(f):
+                os.remove(f)
+        STATE["ddi_fail"] = set("NPRSV")
+        path, meta = ks.ddinter_db()
+        assert not meta["ok"] and meta["failed"] == list("NPRSV") and "files so far" in meta["err"], str(meta)
+        assert not ks.ddinter_level(path, "ramelteon", "alprazolam"), "a missing file's pairs appeared"
+        feed3 = dict(feed)
+        feed3["taken"] = feed["taken"] + [{"name": "Later", "molecule": "laterolx", "strength": ""}]
+        st = kb_sync.run(con, data=feed3, now="2026-09-12 04:00")
+        assert st["drafts_made"] == 1 and st["stage"] == "done", str(st)
+        d = json.loads(con.execute("SELECT draft_json FROM kb_drafts WHERE term='laterolx'").fetchone()[0])
+        assert d["ddi_complete"] is False, "partial DDInter not recorded on the draft"
+        STATE["ddi_fail"] = set()
+        path, meta = ks.ddinter_db()
+        assert meta["ok"] and not meta["failed"], "later run did not finish the download: " + str(meta)
+        assert ks.ddinter_level(path, "ramelteon", "alprazolam") == "Moderate"
+        st = kb_sync.run(con, data=feed3, now="2026-09-12 04:30")
+        d = json.loads(con.execute("SELECT draft_json FROM kb_drafts WHERE term='laterolx'").fetchone()[0])
+        assert st["drafts_rebuilt"] >= 1 and d["ddi_complete"] is True, str(st)
+        return "5 files fail -> partial index, draft marked; next run finishes the files and rebuilds the draft"
+
+    def t27_diag():
+        rows = ks.diagnose()
+        assert len(rows) == 5 and all(len(r) == 4 for r in rows), str(rows)
+        return "connectivity check covers all 5 sources"
+
+    def t28_quality_fixes():
+        d = ks.build_draft("comboolol", "", [], {}, ctx["ddi"])
+        cls = [p["value"] for p in d["props"] if p["field"] == "class"]
+        assert cls == ["beta blocking agents, selective"], "combination class chosen: " + str(cls)
+        ss = ks.sentences("Warnings \u2022 Withdrawal effects: symptoms may occur on stopping (5.6) \u2022 Elderly: use a lower dose")
+        assert any(x.startswith("Withdrawal effects") and "Elderly" not in x for x in ss), str(ss)
+        row = con.execute("SELECT id, draft_json FROM kb_drafts WHERE term='propranolol'").fetchone()
+        dj = json.loads(row[1])
+        dj["builder"] = 1
+        con.execute("UPDATE kb_drafts SET status='pending', draft_json=? WHERE id=?", (json.dumps(dj), row[0]))
+        con.commit()
+        feed4 = json.loads(json.dumps(feed))
+        for r in feed4["regimen"]:
+            if r["molecule"] == "propranolol":
+                r["strength"] = "2.5 mg"
+        st = kb_sync.run(con, data=feed4, now="2026-09-12 05:00")
+        r2 = con.execute("SELECT strength, draft_json FROM kb_drafts WHERE id=?", (row[0],)).fetchone()
+        d2 = json.loads(r2[1])
+        assert st["drafts_rebuilt"] >= 1 and d2["builder"] == ks.BUILDER, "older draft not rebuilt"
+        assert r2[0] == "2.5 mg" and d2["strength"] == "2.5 mg", "strength not refreshed: " + str(r2[0])
+        return "combination ATC skipped; label bullets split; older pending draft rebuilt with the new strength"
+
     tests = [("00 FDA table parser", t00_fda_parse), ("01 FDA cache + outage", t01_fda_cache),
              ("02 DDInter index", t02_ddinter), ("03 RxNorm identity", t03_rxnorm),
              ("04 openFDA label choice", t04_openfda), ("05 draft properties", t05_draft_props),
@@ -458,9 +535,11 @@ def main():
              ("18 label re-verify", t18_reverify), ("19 all sources down", t19_sources_down),
              ("20 fetch button", t20_fetch_button), ("21 login", t21_login),
              ("22 names only", t22_only_names_leave), ("23 smoke untouched", t23_smoke_untouched),
-             ("24 terminal report", t24_report)]
+             ("24 terminal report", t24_report),
+             ("25 trickling server cut off", t25_trickle), ("26 DDInter resume + draft rebuild", t26_ddinter_resume_and_rebuild),
+             ("27 connectivity check", t27_diag), ("28 draft quality fixes", t28_quality_fixes)]
     print("=" * 66)
-    print("RxGuard v1.2.0 sources review - test")
+    print("RxGuard v1.2.2 sources review - test")
     print("=" * 66)
     for name, fn in tests:
         check(name, fn)

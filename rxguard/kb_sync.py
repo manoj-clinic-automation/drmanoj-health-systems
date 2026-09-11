@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-kb_sync.py -- RxGuard v1.2.0 background sync. Run by cron every 30 minutes
+kb_sync.py -- RxGuard v1.2.2 background sync. Run by cron every 30 minutes
 and by the "Fetch now" button. Safe to run at any time; one run at a time.
 
   1. Reads what GutLog shows is current (regimen + 30 days of doses).
@@ -71,7 +71,16 @@ def get_meta(con, key, default=None):
     return json.loads(r[0]) if r else default
 
 
-def run(con, data=None, now=None):
+def _stage(con, status, name):
+    """Record progress as the run goes, so a slow or stopped run still shows
+    how far it got (Sources review page and --report)."""
+    status["stage"] = name
+    set_meta(con, "sources", status)
+    con.commit()
+    log("stage: " + name)
+
+
+def run(con, data=None, now=None, ddi_budget=900):
     now = now or time.strftime("%Y-%m-%d %H:%M")
     rx.reload_overlay(force=True)
     status = {"run": now}
@@ -79,37 +88,59 @@ def run(con, data=None, now=None):
         data, err = gutlog_stack(30)
         status["gutlog"] = err or "ok"
         if data is None:
-            set_meta(con, "sources", status)
-            con.commit()
+            _stage(con, status, "stopped: GutLog feed unavailable")
             log("GutLog feed unavailable: " + err)
             return status
     else:
         status["gutlog"] = "ok"
+    _stage(con, status, "FDA CYP table")
     cyp_table, cyp_meta = ks.fda_cyp_table()
-    ddi_path, ddi_meta = ks.ddinter_db()
     status["fda_cyp"] = cyp_meta
-    status["ddinter"] = {k: v for k, v in ddi_meta.items() if k != "failed"}
+    _stage(con, status, "DDInter download")
+    ddi_path, ddi_meta = ks.ddinter_db(budget=ddi_budget)
+    ddi_full = bool(ddi_meta.get("ok"))
+    status["ddinter"] = {k: v for k, v in ddi_meta.items() if k not in ("files",)}
+    _stage(con, status, "drafts (RxNorm + FDA labels)")
     mols = current_molecules(data)
     current = [(rx.norm_key(t), t) for t, _s, _n in mols]
     known = sorted(set(k for k, _t in current if k in rx.DRUGS))
-    cache, made = {}, 0
+    cache, made, rebuilt = {}, 0, 0
     for term, strength, gname in mols:
         k = rx.norm_key(term)
         if k in rx.DRUGS:
             continue
-        if con.execute("SELECT 1 FROM kb_drafts WHERE term=? OR key=?", (term.lower(), k)).fetchone():
-            continue
+        row = con.execute("SELECT id, status, draft_json FROM kb_drafts WHERE term=? OR key=?",
+                          (term.lower(), k)).fetchone()
+        if row:
+            old = json.loads(row[2] or "{}")
+            if row[1] == "pending" and not old.get("alias_of") and (old.get("strength") or "") != (strength or ""):
+                old["strength"] = strength or ""          # salt page edited since the draft was made
+                con.execute("UPDATE kb_drafts SET strength=?, draft_json=? WHERE id=?",
+                            (strength or "", json.dumps(old), row[0]))
+            # a pending draft is rebuilt once DDInter is complete, or when the builder improved
+            stale = old.get("builder", 1) < ks.BUILDER and not old.get("alias_of")
+            if not (row[1] == "pending" and ((ddi_full and old.get("ddi_complete") is False) or stale)):
+                continue
         d = ks.build_draft(term, strength, current, cyp_table, ddi_path, cache)
         d["gutlog_name"] = gname
+        d["ddi_complete"] = ddi_full
         if d["key"] in rx.DRUGS or d["key"] in rx.SYNONYMS:
             d = {"alias_of": rx.norm_key(d["key"]), "term": term, "key": ks.norm(term),
                  "display": term, "identity": d["identity"], "strength": strength,
                  "gutlog_name": gname}
-        con.execute("INSERT OR IGNORE INTO kb_drafts(key, term, strength, status, draft_json, created) "
-                    "VALUES(?,?,?,?,?,?)", (d["key"], term.lower(), strength, "pending",
-                                            json.dumps(d), now))
-        made += 1
+        if row:
+            con.execute("UPDATE kb_drafts SET strength=?, draft_json=? WHERE id=?",
+                        (strength or "", json.dumps(d), row[0]))
+            rebuilt += 1
+        else:
+            con.execute("INSERT OR IGNORE INTO kb_drafts(key, term, strength, status, draft_json, created) "
+                        "VALUES(?,?,?,?,?,?)", (d["key"], term.lower(), strength, "pending",
+                                                json.dumps(d), now))
+            made += 1
+        con.commit()
     status["drafts_made"] = made
+    status["drafts_rebuilt"] = rebuilt
+    _stage(con, status, "interaction candidates")
     covered = set(frozenset((r["a"], r["b"])) for r in rx.PAIRWISE)
     np_ = 0
     for p in ks.pair_candidates(known, ddi_path, covered):
@@ -118,6 +149,7 @@ def run(con, data=None, now=None):
                           (p["a"], p["b"], p["kind"], p["flag"], p["quote"], p["source"], "pending", now))
         np_ += cur.rowcount
     status["pairs_made"] = np_
+    _stage(con, status, "PvPI alerts")
     alerts, perr = ks.pvpi_alerts()
     first = not con.execute("SELECT 1 FROM kb_alerts").fetchone()
     for title, url in alerts:
@@ -126,6 +158,7 @@ def run(con, data=None, now=None):
     status["pvpi"] = perr or ("%d links" % len(alerts))
     today = now[:10]
     if get_meta(con, "last_reverify") != today:
+        _stage(con, status, "label re-check")
         changed = 0
         for rid, dj in con.execute("SELECT id, draft_json FROM kb_drafts WHERE status='approved'").fetchall():
             d = json.loads(dj)
@@ -137,18 +170,24 @@ def run(con, data=None, now=None):
                 changed += 1
         set_meta(con, "last_reverify", today)
         status["reverify_changed"] = changed
-    set_meta(con, "sources", status)
-    con.commit()
-    log("sync: %s" % json.dumps({k: status[k] for k in ("gutlog", "drafts_made", "pairs_made", "pvpi")}))
+    status["finished"] = time.strftime("%Y-%m-%d %H:%M")
+    _stage(con, status, "done")
+    log("sync: %s" % json.dumps({k: status.get(k) for k in ("gutlog", "drafts_made", "drafts_rebuilt",
+                                                            "pairs_made", "pvpi")}))
     return status
 
 
 def report(con):
     """Plain summary of what the free sources produced, for the terminal."""
     st = get_meta(con, "sources", {}) or {}
-    print("SOURCES  gutlog=%s  fda_cyp=%s  ddinter=%s  pvpi=%s" % (
-        st.get("gutlog"), (st.get("fda_cyp") or {}).get("rows", (st.get("fda_cyp") or {}).get("err", "?")),
-        (st.get("ddinter") or {}).get("pairs", (st.get("ddinter") or {}).get("err", "?")), st.get("pvpi")))
+    fc, dd = st.get("fda_cyp") or {}, st.get("ddinter") or {}
+    print("LAST RUN %s  stage: %s" % (st.get("run", "never"), st.get("stage", "-")))
+    print("SOURCES  gutlog=%s  FDA table rows=%s  DDInter pairs=%s (%d/14 files)  PvPI=%s" % (
+        st.get("gutlog"), fc.get("rows", fc.get("err", "?")), dd.get("pairs", "?"),
+        14 - len(dd.get("failed") or []) if dd else 0, st.get("pvpi")))
+    for k in ("fda_cyp", "ddinter"):
+        if (st.get(k) or {}).get("err"):
+            print("         note: " + st[k]["err"])
     rows = con.execute("SELECT term, strength, status, draft_json FROM kb_drafts ORDER BY id").fetchall()
     print("DRAFTS   %d" % len(rows))
     for term, strength, status, dj in rows:
@@ -173,6 +212,11 @@ def report(con):
 
 
 def main():
+    if "--diag" in sys.argv:
+        print("Connectivity from this server (one small request each):")
+        for name, code, secs, n in ks.diagnose():
+            print("  %-15s %s  %5.1f s  %d bytes" % (name, ("HTTP %d" % code) if code else "NO ANSWER", secs, n))
+        return 0
     if "--report" in sys.argv:
         con = sqlite3.connect(DB)
         con.executescript(rx.SCHEMA)

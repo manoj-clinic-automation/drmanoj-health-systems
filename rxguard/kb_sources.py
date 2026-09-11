@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-kb_sources.py -- RxGuard v1.2.0: fetch and parse FREE, verifiable sources.
+kb_sources.py -- RxGuard v1.2.2: fetch and parse FREE, verifiable sources.
 
 Sources (all public, no key, no licence fee):
   * NLM RxNorm / RxClass  -- name -> ingredient RxCUI, ATC class
@@ -54,17 +54,58 @@ UA = "RxGuard/1.2 (personal medication safety; molecule-name lookups only)"
 _OPENER = urllib.request.build_opener()   # honours system proxy on the server
 
 
-def _get(url, timeout=12, binary=False):
-    """(status, body) -- never raises. status 0 = network failure."""
+def _get(url, timeout=12, binary=False, deadline=None):
+    """(status, body) -- never raises. status 0 = network failure or too slow.
+    `timeout` bounds each wait for bytes; `deadline` (default 4 x timeout)
+    bounds the whole transfer, so a server that trickles cannot hang a run."""
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+    end = time.monotonic() + (deadline or timeout * 4)
     try:
         with _OPENER.open(req, timeout=timeout) as r:
-            data = r.read()
+            chunks = []
+            while True:
+                if time.monotonic() > end:
+                    return 0, b"" if binary else ""
+                b = r.read1(65536)
+                if not b:
+                    break
+                chunks.append(b)
+            data = b"".join(chunks)
             return r.status, (data if binary else data.decode("utf-8", "replace"))
     except urllib.error.HTTPError as e:
         return e.code, b"" if binary else ""
     except Exception:
         return 0, b"" if binary else ""
+
+
+def _download(url, dest, timeout=30, deadline=600, must_start=b""):
+    """Stream `url` into `dest` (atomic). True when complete in time."""
+    tmp = dest + ".part"
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+    end = time.monotonic() + deadline
+    try:
+        with _OPENER.open(req, timeout=timeout) as r, open(tmp, "wb") as fh:
+            if r.status != 200:
+                return False
+            while True:
+                if time.monotonic() > end:
+                    raise TimeoutError("deadline")
+                b = r.read1(65536)
+                if not b:
+                    break
+                fh.write(b)
+        with open(tmp, "rb") as chk:
+            head = chk.read(64)
+        if not head or (must_start and must_start not in head[:32]):
+            raise ValueError("not the expected file")
+        os.replace(tmp, dest)
+        return True
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
 
 
 def _get_json(url, timeout=12):
@@ -194,8 +235,13 @@ def openfda_label(ingredient):
     return out
 
 
+BUILDER = 2   # draft builder version; pending drafts from an older builder are rebuilt
+
+
 def sentences(text):
-    parts = re.split(r"(?<=[.;])\s+(?=[A-Z(\d])", text or "")
+    """Sentences, also split at label bullets so a quote is one statement."""
+    text = re.sub(r"\s*[\u2022\u25cf\u25aa]\s*", ". ", text or "")
+    parts = re.split(r"(?<=[.;])\s+(?=[A-Z(\d])", text)
     return [p.strip() for p in parts if len(p.strip()) > 15]
 
 
@@ -292,7 +338,7 @@ def fda_cyp_table(max_age_days=30):
             return doc["table"], doc["meta"]
         except (OSError, ValueError, KeyError):
             pass
-    code, html = _get(FDA_CYP_URL, timeout=20)
+    code, html = _get(FDA_CYP_URL, timeout=20, deadline=60)
     table = parse_fda_cyp(html) if code == 200 else {}
     meta = {"ok": len(table) >= 100, "fetched": time.strftime("%Y-%m-%d"), "rows": len(table),
             "url": FDA_CYP_URL, "err": "" if table else ("FDA page not reachable" if code == 0
@@ -311,50 +357,83 @@ def fda_cyp_table(max_age_days=30):
 
 
 # ------------------------------------------------------------------ DDInter
-def ddinter_db(max_age_days=30):
-    """(sqlite path, meta). Downloads the 14 ATC-group CSVs into one indexed
-    table, monthly. Pair order is normalised (a < b)."""
+def ddinter_db(max_age_days=30, budget=900, file_deadline=600):
+    """(sqlite path, meta). The 14 ATC-group CSVs are downloaded one by one
+    into the cache (each kept 30 days) within a time budget per run, so a
+    slow server is finished over several runs instead of hanging one. The
+    index is rebuilt from whatever files are present. Pair order a < b."""
     path = _cache_path("ddinter.db")
     meta_path = _cache_path("ddinter.meta.json")
-    if _cache_fresh(path, max_age_days) and os.path.exists(meta_path):
-        with open(meta_path, encoding="utf-8") as fh:
-            return path, json.load(fh)
-    rows, failed = {}, []
+    start = time.monotonic()
+    fetched_now = []
     for c in DDINTER_CODES:
-        code, body = _get(DDINTER + "/static/media/download/ddinter_downloads_code_" + c + ".csv",
-                          timeout=60)
-        if code != 200 or not body:
-            failed.append(c)
+        f = _cache_path("ddinter_" + c + ".csv")
+        if _cache_fresh(f, max_age_days):
             continue
-        for r in csv.DictReader(io.StringIO(body)):
-            a, b, lv = norm(r.get("Drug_A")), norm(r.get("Drug_B")), (r.get("Level") or "").strip()
-            if not a or not b or lv not in ("Major", "Moderate", "Minor"):
-                continue
-            k = (a, b) if a < b else (b, a)
-            rows[k] = lv
-    meta = {"ok": len(rows) > 1000 and not failed, "pairs": len(rows), "failed": failed,
-            "fetched": time.strftime("%Y-%m-%d"),
-            "licence": "DDInter 2.0, CC BY-NC-SA 4.0 -- personal non-commercial use, attribution"}
-    if rows:
-        tmp = path + ".tmp"
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        con = sqlite3.connect(tmp)
-        con.execute("CREATE TABLE ddi (a TEXT, b TEXT, level TEXT, PRIMARY KEY (a, b))")
-        con.executemany("INSERT INTO ddi VALUES (?,?,?)", [(k[0], k[1], v) for k, v in rows.items()])
-        con.commit()
-        con.close()
-        os.replace(tmp, path)
-        with open(meta_path, "w", encoding="utf-8") as fh:
-            json.dump(meta, fh)
-        return path, meta
-    if os.path.exists(path) and os.path.exists(meta_path):
-        with open(meta_path, encoding="utf-8") as fh:
-            old = json.load(fh)
-        old["err"] = "DDInter not reachable (using copy of " + old.get("fetched", "?") + ")"
+        left = budget - (time.monotonic() - start)
+        if left < 30:
+            break
+        if _download(DDINTER + "/static/media/download/ddinter_downloads_code_" + c + ".csv", f,
+                     timeout=60, deadline=min(file_deadline, left), must_start=b"DDInterID"):
+            fetched_now.append(c)
+    present = [c for c in DDINTER_CODES if os.path.exists(_cache_path("ddinter_" + c + ".csv"))]
+    missing = [c for c in DDINTER_CODES if c not in present]
+    old = {}
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, encoding="utf-8") as fh:
+                old = json.load(fh)
+        except (OSError, ValueError):
+            old = {}
+    if os.path.exists(path) and not fetched_now and old.get("files") == present:
+        old["failed"] = missing
         return path, old
-    meta["err"] = "DDInter not reachable"
-    return "", meta
+    rows = {}
+    for c in present:
+        try:
+            with open(_cache_path("ddinter_" + c + ".csv"), encoding="utf-8", errors="replace") as fh:
+                for r in csv.DictReader(fh):
+                    a, b = norm(r.get("Drug_A")), norm(r.get("Drug_B"))
+                    lv = (r.get("Level") or "").strip()
+                    if not a or not b or lv not in ("Major", "Moderate", "Minor"):
+                        continue
+                    rows[(a, b) if a < b else (b, a)] = lv
+        except OSError:
+            continue
+    meta = {"ok": len(rows) > 1000 and not missing, "pairs": len(rows), "files": present,
+            "failed": missing, "fetched": time.strftime("%Y-%m-%d"),
+            "licence": "DDInter 2.0, CC BY-NC-SA 4.0 -- personal non-commercial use, attribution"}
+    if missing:
+        meta["err"] = "DDInter %d of 14 files so far; the rest follow on later runs" % len(present)
+    if not rows:
+        meta["err"] = "DDInter not reachable"
+        return "", meta
+    tmp = path + ".tmp"
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    con = sqlite3.connect(tmp)
+    con.execute("CREATE TABLE ddi (a TEXT, b TEXT, level TEXT, PRIMARY KEY (a, b))")
+    con.executemany("INSERT INTO ddi VALUES (?,?,?)", [(k[0], k[1], v) for k, v in rows.items()])
+    con.commit()
+    con.close()
+    os.replace(tmp, path)
+    with open(meta_path, "w", encoding="utf-8") as fh:
+        json.dump(meta, fh)
+    return path, meta
+
+
+def diagnose():
+    """[(source, status, seconds, bytes)] -- one small request to each source."""
+    out = []
+    for name, url, dl in (("NLM RxNorm", RXNAV + "/REST/version.json", 20),
+                          ("openFDA label", OPENFDA + "/drug/label.json?limit=1", 20),
+                          ("FDA CYP table", FDA_CYP_URL, 40),
+                          ("DDInter", DDINTER + "/", 30),
+                          ("PvPI", PVPI_URL, 30)):
+        t = time.monotonic()
+        code, body = _get(url, timeout=15, deadline=dl)
+        out.append((name, code, round(time.monotonic() - t, 1), len(body or "")))
+    return out
 
 
 def ddinter_names(key):
@@ -385,7 +464,7 @@ def ddinter_level(db_path, a, b):
 def pvpi_alerts():
     """[(title, absolute_url)] of monthly alert pages/PDFs linked from the
     PvPI index. Links only: the alerts are PDFs, read by the owner."""
-    code, html = _get(PVPI_URL, timeout=20)
+    code, html = _get(PVPI_URL, timeout=20, deadline=45)
     if code != 200:
         return [], ("PvPI not reachable" if code == 0 else "PvPI HTTP %d" % code)
     out = []
@@ -487,7 +566,9 @@ def build_draft(term, strength, current, cyp_table, ddi_path, label_cache=None):
         sources.append({"name": "NLM RxNorm", "detail": "RxCUI %s (%s)" % (ident["rxcui"], ident["name"]),
                         "url": "https://mor.nlm.nih.gov/RxNav/search?searchBy=RXCUI&searchTerm=" + ident["rxcui"]})
         if ident["atc"]:
-            code, cname = sorted(ident["atc"], key=lambda x: -len(x[0]))[0]
+            # the ingredient's own class, not a fixed-combination class
+            plain = [a for a in ident["atc"] if "combination" not in a[1].lower()] or ident["atc"]
+            code, cname = sorted(plain, key=lambda x: (-len(x[0]), x[0]))[0]
             props.append({"field": "class", "value": cname.lower(), "quote": "ATC %s %s" % (code, cname),
                           "source": "NLM RxClass (ATC)"})
             props.append({"field": "atc", "value": code, "quote": "ATC %s" % code, "source": "NLM RxClass (ATC)"})
@@ -557,7 +638,8 @@ def build_draft(term, strength, current, cyp_table, ddi_path, label_cache=None):
                           "source": "DDInter 2.0 (academic; CC BY-NC-SA 4.0)", "kind": "ddinter"})
     return {"term": term, "key": key, "display": ingredient, "strength": strength or "",
             "identity": ident, "props": props, "gaps": gaps, "pairs": pairs, "sources": sources,
-            "label_effective": lab.get("effective_time", ""), "label_set_id": lab.get("set_id", "")}
+            "label_effective": lab.get("effective_time", ""), "label_set_id": lab.get("set_id", ""),
+            "builder": BUILDER}
 
 
 def pair_candidates(keys, ddi_path, known_pairs):
