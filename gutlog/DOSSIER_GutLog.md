@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.4.0)
+# GutLog — DOSSIER (v3.4.2)
 
 Single source of truth. Update after every change.
 
@@ -47,6 +47,10 @@ not a form. Everything below serves that.
 - **Extra dose** — chips for unscheduled medicines, one tap logs at current time.
   Each logged extra carries a real Undo button.
 - **Symptom now** — multi-select symptom types, shared severity and Bristol.
+  Below the severity row, **Pain by site** tiles (Left iliac pain,
+  Hypogastrium pain — `PAIN_SITES` in the page script). Tapping a tile opens
+  its own 1–10 score; each site saves as its own episode with its own score.
+  A selected site with no score is refused, never saved blank.
 
 Doses, extras and symptoms are collapsible; each header carries its own summary
 (`3 of 8 taken`, `2 logged today`) so state is readable without expanding
@@ -187,6 +191,14 @@ rediscovered the expensive way.
    the venv is rebuilt or moved. FitLog and the newer units use the portable
    form. Exact `ExecStart` line in `INFRA_GutLog.local.md`.
 
+7. **`test_phase_a.py` never runs the page's JavaScript.** v3.4.0 deleted
+   `openRowActions()` and `openVariantPicker()` while keeping the calls to
+   them; the suite stayed 18/18 while the variant row and every logged-row
+   tap were dead on the phone. Covered from v3.4.1 by `test_ui_now.py`
+   (offline, real Chromium, 16 checks from v3.4.2, fails on any page JS error) and by a
+   defined-if-called check inside `patch_gutlog_v341.py`. Run
+   `test_ui_now.py` before shipping any patch that touches the Now-tab script.
+
 ## What's next
 - **Phase B** — backfill and review surface
 - **Phase C** — RxGuard interaction check across the live med stack (blocked in
@@ -197,6 +209,21 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-11 v3.4.2 — pain by site.** Two tiles on the symptom card, each
+  with its own expanding 1–10 score, saved as separate episodes sharing time
+  and Bristol (`patch_gutlog_v342.py`, 6 anchors). The patcher now also
+  refuses Jinja tokens (`{#`, `{{`, `{%`) in new text: `APP_PAGE` is a Jinja
+  template and a CSS `{#id` broke page render in the first build — caught by
+  `test_ui_now.py`, invisible to `py_compile`. `test_ui_now.py` now 16 checks
+  incl. undo of a wrong tick; `test_phase_a.py` 18/18.
+- **2026-09-11 v3.4.1 — dose picker restored.** Tapping a scheduled row with
+  dose variants did nothing, and tapping any logged row did nothing. Cause:
+  `patch_gutlog_v340.py` replaced the Now-tab script block and dropped
+  `openRowActions()` / `openVariantPicker()` while keeping their calls; the
+  async tap handler swallowed the ReferenceError. `patch_gutlog_v341.py`
+  re-inserts both verbatim from v3.3.3 (2 anchors) and refuses to write unless
+  every Now-tab function called is defined. Reproduced on v3.4.0 and cleared
+  on v3.4.1 by `test_ui_now.py` 6/6; `test_phase_a.py` 18/18. Gap 7 added.
 - **2026-09-10 v3.4.0 — DEPLOYED.** Readability and structure pass
   (`patch_gutlog_v340.py`, 7 anchors). Scheduled medicines hidden from the
   extras row (`meds` / `meds_all`); extra chips reordered by use via
