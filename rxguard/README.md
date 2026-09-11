@@ -1,4 +1,4 @@
-# RxGuard v1.0.0
+# RxGuard v1.1.0
 
 `rx.dr-manoj.in` · service `rxguard` · port 8031 · `/root/rxguard`
 
@@ -41,6 +41,36 @@ and the screen trains you to dismiss it.
 **Curated rules beat derived ones.** Where a named pairwise rule exists it
 suppresses the generic CYP-property derivation for that pair, so the same
 interaction is not reported twice in different words.
+
+## As taken (GutLog) — v1.1.0
+
+RxGuard checks the list typed into it; GutLog records what is actually taken.
+The **As taken (GutLog)** page (and a one-line summary on the Dashboard) reads
+GutLog's read-only feed over loopback and:
+
+- lists every molecule from GutLog (regimen + doses in the last 14 / 30 / 90
+  days) and from this list, with how often it was taken, whether it is on the
+  list, and whether the knowledge base covers it;
+- runs the engine across the **whole as-taken stack** — named pairwise rules,
+  CYP derivation (suppressed where a named rule covers the pair), class
+  duplication, condition rules, burden and QT stacking — judging each pair
+  once, and marks findings that involve a medicine missing from the list;
+- reports taken-but-not-listed (AMBER, reconciliation), molecules outside the
+  knowledge base and GutLog medicines with no molecule (UNKNOWN, named), and
+  listed-but-not-logged.
+
+Read-only; still no GREEN. If GutLog is unreachable the page says so and every
+other screen is unaffected. Config: `GUTLOG_FEED_URL` (default
+`http://127.0.0.1:8020`), `GUTLOG_FEED_TOKEN_FILE` (default
+`/root/gutlog/feed.token`, created by GutLog). The feed follows the live
+database: a database outside the app folder (the test suites) never reads it;
+`RXGUARD_GUTLOG_FEED=1/0` overrides.
+
+Tests: `test_astaken.py` **15/15** — a real GutLog on a scratch database and
+token, RxGuard on a scratch database; covers reconciliation both ways, the
+named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
+days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
+GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
 
 ## Layout
 

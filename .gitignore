@@ -3,6 +3,7 @@
 *.db.*
 *.secret
 *.env
+*.token
 ingest.env
 # Operational detail and clinical term lists stay on the machine.
 # THIS REPOSITORY IS PUBLIC - see tools/NO_SECRETS.py
@@ -20,3 +21,6 @@ __pycache__/
 venv/
 uploads/
 nohup.out
+
+# Local deploy bundles (copies of files that live in the app folders)
+_deploy/

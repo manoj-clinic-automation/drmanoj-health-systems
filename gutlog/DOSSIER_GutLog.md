@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.5.0)
+# GutLog — DOSSIER (v3.6.0)
 
 Single source of truth. Update after every change.
 
@@ -76,6 +76,61 @@ where it is already logged (409). Extras move to any past day.
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
 
+## Stock and refill (Meds → Stock) — v3.6.0
+
+Stock is **derived from events at read time**, never kept as a running number
+— the same rule as expected doses. An undone dose therefore puts its tablet
+back by itself, and a retimed dose moves its deduction with it.
+
+- **Count** — what is left in the strips or bottle, *not* the pillbox. Every
+  count is a fresh starting point; only doses and fills after it deduct.
+- **Bought** — adds a pack (defaults to `pack_size`). Refused before a count.
+- **Pillbox medicines** (scheduled, fixed dose — the default for those) come
+  out of stock when the pillbox is filled: *Pillbox filled* deducts N days
+  (default 7) of every counted pillbox medicine at its regimen rate. A dose
+  taken from the pillbox does not deduct again; an *extra* dose of the same
+  medicine does, because it did not come from the pillbox. *Undo last fill*
+  removes exactly the last fill.
+- **Per-dose medicines** (extras, PRN — and any medicine switched to per dose)
+  deduct per logged dose, by the tablet count read from the dose text
+  (`2 tab` → 2, `1/2` → 0.5; a strength such as `40 mg` reads as 1).
+- **Variant-strength medicines are not tracked.** One count cannot stand for
+  three strengths, and a wrong count makes the alert noise.
+
+Alerts (a banner at the top of the Now tab, tapping it opens Stock):
+- pillbox — RED when stock will not cover the next 7-day fill, AMBER when it
+  covers only one more;
+- per dose — RED under 3 days at the 14-day average use, AMBER under 7, and
+  AMBER at zero even when rarely used (a PRN you need on hand).
+
+## Vitals log (Review tab, second card) — v3.6.0
+
+Blood pressure and pulse chart (faint guides at 140 and 90), averages for the
+range and for morning (before 12:00) vs evening (after 17:00), highest and
+lowest, every reading in a table, and a `vitals.csv` download. Follows the
+30 d / 90 d / 6 mo selector. Entry is unchanged: BP on the Now tab, full
+vitals under Log → Vitals.
+
+## Feed for RxGuard and FitLog — v3.6.0
+
+Two read-only endpoints for the companion apps, bearer-gated (not session):
+
+| Endpoint | Returns |
+|---|---|
+| `/api/feed/stack?days=14` | Open regimen lines (name, molecule, slot, dose, variants) + per-medicine totals of what was taken (doses, days, last day) |
+| `/api/feed/doses?since=YYYY-MM-DD` | Every non-skipped dose event since the date (clamped to 180 days) |
+
+Old PRN-tab rows that carry only a medicine name are mapped to their
+`prnmeds` row and molecule. Skips are never included. The token lives in
+`feed.token` beside `app.py`, mode 600, **created by GutLog on first start**;
+RxGuard and FitLog read the same file, so there is no token to copy. Rotate
+by deleting the file and restarting all three services. The feed token
+cannot write anything (test 19).
+
+Consumers follow their **live database**: a scratch database outside the app
+folder — every test suite — never reads the feed, so a test can never be
+coloured by the real diary.
+
 ## Schema
 
 | Table | Purpose |
@@ -89,6 +144,8 @@ silently cannot be trusted later; one that changed visibly can.
 | `meals` · `library` · `foodtests` | Food logging, item library, food challenge results |
 | `labs` · `consults` · `doctors` · `courses` · `patches` · `files` | Labs, visits, drug courses, patch on/off times, attachments |
 | `settings` | key/value — schema_version, credential hashes, auth_epoch |
+| `stock_events` | v3.6.0. med_id, kind (COUNT / ADD / FILL), qty, at (`YYYY-MM-DD HH:MM`), note (fill batch id) |
+| `stock_meds` | v3.6.0. Per-medicine stock mode override (`pillbox` / `per_dose`) |
 | `edits` | Retime audit (v3.5.0). tbl, rid, old_day, old_time, new_day, new_time, at. Created by `SCHEMA` on first request — no migration step |
 
 ### med_schedule — effective dating
@@ -150,7 +207,7 @@ Concrete paths and commands are in `gutlog/INFRA_GutLog.local.md` (gitignored).
 2. Patch `app.py` via its versioned patcher — `--check` first, then apply
 3. Restart the service
 4. Run `test_phase_a.py` on the server → must be **18/18**, and
-   `test_phase_b.py` → must be **16/16**
+   `test_phase_b.py` → must be **16/16**, and `test_phase_c.py` → **20/20**
 5. Verify against real data, not just the fixture — `test_phase_a.py` builds its
    own database and never touches the live one
 6. OLS reverse proxy → loopback port · CyberPanel SSL · DNS A record
@@ -160,6 +217,18 @@ Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · HTTPS liv
 via OLS reverse proxy.
 
 ## Test evidence
+- `test_phase_c.py` — **20/20 PASS** (2026-09-11, v3.6.0): dose-text parsing,
+  default modes, 7 guard cases, count/use/undo/bought, only after-count doses
+  deduct, pillbox dose not double-counted, fill and undo-fill (two fills in the
+  same second stay separate — found by this suite), both alert ladders, mode
+  switch, page cards, token file mode, feed auth (no token / wrong / no
+  Bearer → 401, token without login → 200), stack and doses shape, skips
+  excluded, legacy rows mapped, since clamped, feed cannot write.
+- `test_ui_now.py` — **36/36** in real Chromium (offline only), incl. stock
+  count, pillbox fill, refill banner → Stock, vitals chart and averages.
+- Full server-sequence rehearsal (2026-09-11): the exact VPS command block run
+  against replicas of all three app folders — patch, all suites, restart,
+  `verify_phase_c.py` 9/9 — then re-run to prove it idempotent.
 - `test_phase_b.py` — **16/16 PASS** (2026-09-11, v3.5.0): backfill (plain,
   variant, skip), future/bad-time refusal writing nothing, retime + audit row,
   no-op retime writes no audit, 7 guard cases, no move onto a logged day or
@@ -229,14 +298,21 @@ rediscovered the expensive way.
    `test_ui_now.py` before shipping any patch that touches the Now-tab script.
 
 ## What's next
-- **Phase C** — RxGuard interaction check across the live med stack (blocked in
-  part by gap 5 — unmapped molecules are invisible to it)
-- Stock and refill alerts, driven by `prnmeds.stock` / `pack_size`
-- FitLog read-endpoint cutover — FitLog consuming GutLog data rather than
-  duplicating it
-- Cardiologist BP export from `vitals`
+- Phase C shipped in v3.6.0 with RxGuard v1.1.0 and FitLog v1.1.0. The
+  cardiologist BP export was dropped by the owner: the Vitals log plus
+  `vitals.csv` covers it.
+- **RxGuard coverage** — several molecules in the regimen are not in RxGuard's
+  knowledge base, so its As-taken page reports them UNKNOWN (sedatives among
+  them, which means the sedation burden it shows is understated). Extending
+  `knowledge/drugs.json` is curated, sourced clinical work — a separate job.
+- Record a molecule for every single-molecule medicine (gap 5).
 
 ## Changelog
+- **2026-09-11 v3.6.0 — Phase C (GutLog side).** Stock and refill (Meds →
+  Stock, derived from events; pillbox vs per-dose; alerts + Now banner);
+  Vitals log card; read-only feed for RxGuard/FitLog with a self-created
+  mode-600 token. `patch_gutlog_v360.py`, 14 anchors. Shipped with RxGuard
+  v1.1.0 (As taken) and FitLog v1.1.0 (W03 reads GutLog).
 - **2026-09-11 v3.5.0 — Phase B.** Retime from the Now strip; *Day by day*
   card on Review (all streams, time order, tap to retime/delete); backfill of
   unlogged scheduled doses; `edits` audit table; server guards on day/time;

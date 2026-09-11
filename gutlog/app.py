@@ -105,6 +105,14 @@ CREATE TABLE IF NOT EXISTS med_schedule (
   dose_text TEXT DEFAULT '', with_food TEXT DEFAULT 'ANY', valid_from TEXT NOT NULL,
   valid_to TEXT DEFAULT '', epoch INTEGER DEFAULT 1, notes TEXT DEFAULT '', created TEXT,
   variants TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS edits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, tbl TEXT, rid INTEGER, old_day TEXT,
+  old_time TEXT, new_day TEXT, new_time TEXT, at TEXT);
+CREATE TABLE IF NOT EXISTS stock_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, med_id INTEGER NOT NULL, kind TEXT NOT NULL,
+  qty REAL NOT NULL, at TEXT NOT NULL, note TEXT DEFAULT '', created TEXT);
+CREATE TABLE IF NOT EXISTS stock_meds (
+  med_id INTEGER PRIMARY KEY, mode TEXT DEFAULT '');
 """
 
 ANALYTES = {  # name: (unit, repeat-months or None)
@@ -247,7 +255,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE
+SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -804,6 +812,13 @@ def api_now_dose():
     day = d.get("day") or today()
     dtime = d.get("dtime") or now_hm()
     sched_id = d.get("sched_id")
+    # GUTLOG_V350_PHASE_B -- backfill arrives with a day and time; refuse the future
+    if not _valid_day(day):
+        return jsonify(ok=False, err="Pick a real date, not in the future."), 400
+    if not _valid_hm(dtime):
+        return jsonify(ok=False, err="Time must be HH:MM."), 400
+    if day == today() and dtime > now_hm():
+        return jsonify(ok=False, err="That time has not come yet today."), 400
 
     # Re-tapping a scheduled row corrects it rather than duplicating.
     if sched_id:
@@ -1089,6 +1104,496 @@ def api_delete(table, rid):
             except OSError: pass
     db().execute(f"DELETE FROM {table} WHERE id=?", (rid,))
     db().commit(); return jsonify(ok=True)
+
+# ------------------------------------------------------------------ day view / retime
+# GUTLOG_V350_PHASE_B -- one day, every stream, in time order; entries can
+# be moved to the time they actually happened. Every move is kept in
+# `edits`, so a changed time is visible rather than silent.
+_TIME_COL = {"doses": "dtime", "episodes": "etime", "vitals": "vtime", "meals": "mtime"}
+
+
+def _valid_hm(s):
+    s = (s or "").strip()
+    if len(s) != 5 or s[2] != ":" or not (s[:2] + s[3:]).isdigit():
+        return None
+    if int(s[:2]) > 23 or int(s[3:]) > 59:
+        return None
+    return s
+
+
+def _valid_day(s):
+    try:
+        d = date.fromisoformat((s or "").strip())
+    except ValueError:
+        return None
+    if d > date.today() or d.year < 2020:
+        return None
+    return d.isoformat()
+
+
+@app.route("/api/dayview")
+@login_required
+def api_dayview():
+    day = _valid_day(request.args.get("day")) or today()
+    edited = set((r["tbl"], r["rid"]) for r in db().execute(
+        "SELECT DISTINCT tbl, rid FROM edits").fetchall())
+    out = []
+
+    def add(tbl, rid, t, kind, title, sub):
+        out.append({"tbl": tbl, "id": rid, "time": t or "", "kind": kind,
+                    "title": title or "", "sub": sub,
+                    "edited": (tbl, rid) in edited})
+
+    for r in db().execute(
+            "SELECT id, dtime, medicine, status, sched_id, dose_text "
+            "FROM doses WHERE day=?", (day,)).fetchall():
+        if r["status"] == "SKIPPED":
+            add("doses", r["id"], r["dtime"], "Skipped", r["medicine"], "")
+        else:
+            add("doses", r["id"], r["dtime"],
+                "Dose" if r["sched_id"] else "Extra",
+                r["medicine"], r["dose_text"] or "")
+    for r in db().execute(
+            "SELECT id, etime, etype, side, severity, bristol "
+            "FROM episodes WHERE day=?", (day,)).fetchall():
+        parts = []
+        if r["severity"] not in (None, ""):
+            parts.append(str(r["severity"]) + "/10")
+        if r["bristol"]:
+            parts.append("Bristol " + str(r["bristol"]))
+        if r["side"]:
+            parts.append(str(r["side"]))
+        add("episodes", r["id"], r["etime"], "Symptom", r["etype"], " · ".join(parts))
+    for r in db().execute(
+            "SELECT id, vtime, sys, dia, pulse, weight, temp "
+            "FROM vitals WHERE day=?", (day,)).fetchall():
+        parts = []
+        if r["pulse"]:
+            parts.append("pulse " + str(r["pulse"]))
+        if r["weight"]:
+            parts.append(str(r["weight"]) + " kg")
+        if r["temp"]:
+            parts.append(str(r["temp"]) + "°")
+        if r["sys"] or r["dia"]:
+            add("vitals", r["id"], r["vtime"], "BP",
+                str(r["sys"] or "-") + "/" + str(r["dia"] or "-"), " · ".join(parts))
+        else:
+            add("vitals", r["id"], r["vtime"], "Vitals", "Vitals", " · ".join(parts))
+    for r in db().execute(
+            "SELECT id, mtime, slot, items, protein FROM meals WHERE day=?",
+            (day,)).fetchall():
+        try:
+            names = [str(i.get("n", "")) for i in json.loads(r["items"] or "[]")]
+        except (ValueError, AttributeError):
+            names = []
+        sub = ", ".join(n for n in names if n)[:90]
+        if r["protein"]:
+            sub = (sub + " · " if sub else "") + str(r["protein"]) + " g protein"
+        add("meals", r["id"], r["mtime"], "Meal", r["slot"] or "Meal", sub)
+
+    out.sort(key=lambda e: (e["time"] == "", e["time"], e["tbl"], e["id"]))
+    return jsonify(day=day, today=today(), entries=out)
+
+
+@app.route("/api/retime", methods=["POST"])
+@login_required
+def api_retime():
+    d = J()
+    tbl = d.get("table")
+    col = _TIME_COL.get(tbl)
+    if not col:
+        return jsonify(ok=False, err="Unknown entry type."), 400
+    try:
+        rid = int(d.get("id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, err="Bad entry."), 400
+    new_t = _valid_hm(d.get("time"))
+    if not new_t:
+        return jsonify(ok=False, err="Time must be HH:MM."), 400
+    row = db().execute("SELECT * FROM " + tbl + " WHERE id=?", (rid,)).fetchone()
+    if not row:
+        return jsonify(ok=False, err="Entry not found."), 404
+    new_d = _valid_day(d.get("day") or row["day"])
+    if not new_d:
+        return jsonify(ok=False, err="Pick a real date, not in the future."), 400
+    if new_d == today() and new_t > now_hm():
+        return jsonify(ok=False, err="That time has not come yet today."), 400
+
+    old_d, old_t = row["day"], (row[col] or "")
+    if old_d == new_d and old_t == new_t:
+        return jsonify(ok=True, unchanged=True)
+
+    if tbl == "doses" and row["sched_id"] and new_d != old_d:
+        on = db().execute(
+            "SELECT 1 FROM med_schedule WHERE id=? AND valid_from<=? "
+            "AND (valid_to='' OR valid_to IS NULL OR valid_to>=?)",
+            (row["sched_id"], new_d, new_d)).fetchone()
+        if not on:
+            return jsonify(ok=False, err="That medicine was not scheduled on " + new_d + "."), 400
+        clash = db().execute(
+            "SELECT 1 FROM doses WHERE sched_id=? AND day=? AND id<>?",
+            (row["sched_id"], new_d, rid)).fetchone()
+        if clash:
+            return jsonify(ok=False, err="Already logged on " + new_d + " - undo that one first."), 409
+
+    db().execute("UPDATE " + tbl + " SET day=?, " + col + "=? WHERE id=?",
+                 (new_d, new_t, rid))
+    db().execute(
+        "INSERT INTO edits(tbl, rid, old_day, old_time, new_day, new_time, at) "
+        "VALUES(?,?,?,?,?,?,?)", (tbl, rid, old_d, old_t, new_d, new_t, now_s()))
+    db().commit()
+    return jsonify(ok=True)
+
+
+# ------------------------------------------------------------------ stock / feed
+# GUTLOG_V360_PHASE_C -- stock is derived from events at read time; the
+# feed gives RxGuard and FitLog read-only access to what was taken.
+_STRENGTH_UNITS = ("mg", "mcg", "µg", "ug", "g", "iu", "%")
+
+
+def _units(dose_text):
+    """Tablets (or puffs, sachets) per dose from free text. '1 tab' -> 1,
+    '2 caps' -> 2, '1/2' or a half sign -> 0.5. A strength ('40 mg') is not
+    a count, so it reads as 1."""
+    s = (dose_text or "").strip().lower().replace("½", "0.5")
+    if not s:
+        return 1.0
+    parts = s.split()
+    if len(parts) > 1 and parts[1] in _STRENGTH_UNITS:
+        return 1.0
+    tok = parts[0]
+    try:
+        if "/" in tok:
+            a, b = tok.split("/", 1)
+            v = float(a) / float(b)
+        else:
+            v = float(tok)
+    except (ValueError, ZeroDivisionError):
+        return 1.0
+    return v if 0 < v <= 20 else 1.0
+
+
+def _now_at():
+    return today() + " " + now_hm()
+
+
+def _stock_rows():
+    con = db()
+    tday = today()
+    since14 = (date.fromisoformat(tday) - timedelta(days=13)).isoformat()
+    meds = con.execute(
+        "SELECT id, name, pack_size FROM prnmeds WHERE active=1 ORDER BY sort, id").fetchall()
+    name_to_id = dict((r["name"], r["id"]) for r in con.execute(
+        "SELECT id, name FROM prnmeds").fetchall())
+    sched = {}
+    for l in con.execute(
+            "SELECT med_id, dose_text, variants FROM med_schedule WHERE valid_from<=? "
+            "AND (valid_to='' OR valid_to IS NULL OR valid_to>=?)", (tday, tday)).fetchall():
+        s = sched.setdefault(l["med_id"], {"units": 0.0, "variants": False})
+        if (l["variants"] or "").strip():
+            s["variants"] = True
+        else:
+            s["units"] += _units(l["dose_text"])
+    modes = dict((r["med_id"], r["mode"]) for r in con.execute(
+        "SELECT med_id, mode FROM stock_meds").fetchall())
+    ev = {}
+    for e in con.execute(
+            "SELECT id, med_id, kind, qty, at FROM stock_events ORDER BY at, id").fetchall():
+        ev.setdefault(e["med_id"], []).append(e)
+    first = [v[0]["at"][:10] for v in ev.values() if v]
+    lo = min(first + [since14])
+    by_med = {}
+    for d in con.execute(
+            "SELECT med_id, medicine, day, dtime, status, sched_id, dose_text FROM doses "
+            "WHERE day>=? AND COALESCE(status,'')<>'SKIPPED'", (lo,)).fetchall():
+        mid = d["med_id"] or name_to_id.get(d["medicine"])
+        if mid:
+            by_med.setdefault(mid, []).append(d)
+
+    rows = []
+    for m in meds:
+        mid = m["id"]
+        s = sched.get(mid)
+        fixed = bool(s and s["units"] > 0)
+        mode = modes.get(mid) or ("pillbox" if fixed else "per_dose")
+        if mode == "pillbox" and not fixed:
+            mode = "per_dose"
+        r = {"med_id": mid, "name": m["name"], "mode": mode, "can_pillbox": fixed,
+             "pack_size": m["pack_size"] or 0, "tracked": False,
+             "trackable": not (s and s["variants"]), "current": None,
+             "per_day": 0.0, "days_left": None, "level": "", "why": "", "counted_at": ""}
+        if s and s["variants"]:
+            r["why"] = "strengths vary - not tracked"
+            rows.append(r)
+            continue
+        doses = by_med.get(mid, [])
+        uses = [d for d in doses if mode == "per_dose" or not d["sched_id"]]
+        if mode == "pillbox":
+            per_day = s["units"]
+        else:
+            per_day = sum(_units(d["dose_text"]) for d in uses if d["day"] >= since14) / 14.0
+        r["per_day"] = round(per_day, 2)
+        evs = ev.get(mid, [])
+        counts = [e for e in evs if e["kind"] == "COUNT"]
+        if not counts:
+            rows.append(r)
+            continue
+        c = counts[-1]
+        cur = float(c["qty"])
+        for e in evs:
+            if (e["at"], e["id"]) <= (c["at"], c["id"]):
+                continue
+            if e["kind"] == "ADD":
+                cur += e["qty"]
+            elif e["kind"] == "FILL":
+                cur -= e["qty"]
+        for d in uses:
+            if ((d["day"] or "") + " " + (d["dtime"] or "00:00")) > c["at"]:
+                cur -= _units(d["dose_text"])
+        r.update(tracked=True, current=round(cur, 1), counted_at=c["at"])
+        dl = (cur / per_day) if per_day > 0 else None
+        if dl is not None:
+            r["days_left"] = round(max(dl, 0), 1)
+        if mode == "pillbox":
+            need = per_day * 7
+            if cur <= 0:
+                r["level"], r["why"] = "RED", "none left for the next fill"
+            elif cur < need:
+                r["level"], r["why"] = "RED", "will not cover the next 7-day fill"
+            elif cur < 2 * need:
+                r["level"], r["why"] = "AMBER", "enough for one more fill"
+        else:
+            if cur <= 0:
+                r["level"] = "RED" if per_day > 0 else "AMBER"
+                r["why"] = "none left"
+            elif dl is not None and dl < 3:
+                r["level"], r["why"] = "RED", "about %d days left" % int(dl + 0.5)
+            elif dl is not None and dl < 7:
+                r["level"], r["why"] = "AMBER", "about %d days left" % int(dl + 0.5)
+        rows.append(r)
+    return rows
+
+
+def _stock_qty(d, lo, hi):
+    try:
+        v = float(d.get("qty"))
+    except (TypeError, ValueError):
+        return None
+    return v if lo <= v <= hi else None
+
+
+@app.route("/api/stock")
+@login_required
+def api_stock():
+    rows = _stock_rows()
+    order = {"RED": 0, "AMBER": 1, "": 2}
+    rows.sort(key=lambda r: (order.get(r["level"], 2), not r["tracked"], not r["trackable"]))
+    lf = db().execute("SELECT at FROM stock_events WHERE kind='FILL' "
+                      "ORDER BY at DESC, id DESC LIMIT 1").fetchone()
+    preview = [{"med_id": r["med_id"], "name": r["name"], "per_day": r["per_day"]}
+               for r in rows if r["tracked"] and r["mode"] == "pillbox" and r["per_day"] > 0]
+    return jsonify(rows=rows, last_fill=lf["at"] if lf else "", fill_preview=preview)
+
+
+def _stock_med(d):
+    try:
+        mid = int(d.get("med_id"))
+    except (TypeError, ValueError):
+        return None
+    r = db().execute("SELECT id FROM prnmeds WHERE id=?", (mid,)).fetchone()
+    return mid if r else None
+
+
+@app.route("/api/stock/count", methods=["POST"])
+@login_required
+def api_stock_count():
+    d = J()
+    mid = _stock_med(d)
+    q = _stock_qty(d, 0, 100000)
+    if not mid or q is None:
+        return jsonify(ok=False, err="Enter how many are left."), 400
+    db().execute("INSERT INTO stock_events(med_id,kind,qty,at,note,created) VALUES(?,?,?,?,?,?)",
+                 (mid, "COUNT", q, _now_at(), "", now_s()))
+    db().commit()
+    return jsonify(ok=True)
+
+
+@app.route("/api/stock/add", methods=["POST"])
+@login_required
+def api_stock_add():
+    d = J()
+    mid = _stock_med(d)
+    q = _stock_qty(d, 0.5, 100000)
+    if not mid or q is None:
+        return jsonify(ok=False, err="Enter how many were bought."), 400
+    if not db().execute("SELECT 1 FROM stock_events WHERE med_id=? AND kind='COUNT'",
+                        (mid,)).fetchone():
+        return jsonify(ok=False, err="Count what is left first, then add purchases."), 400
+    db().execute("INSERT INTO stock_events(med_id,kind,qty,at,note,created) VALUES(?,?,?,?,?,?)",
+                 (mid, "ADD", q, _now_at(), "", now_s()))
+    db().commit()
+    return jsonify(ok=True)
+
+
+@app.route("/api/stock/mode", methods=["POST"])
+@login_required
+def api_stock_mode():
+    d = J()
+    mid = _stock_med(d)
+    mode = d.get("mode")
+    if not mid or mode not in ("pillbox", "per_dose"):
+        return jsonify(ok=False, err="Bad mode."), 400
+    db().execute("INSERT INTO stock_meds(med_id, mode) VALUES(?,?) "
+                 "ON CONFLICT(med_id) DO UPDATE SET mode=excluded.mode", (mid, mode))
+    db().commit()
+    return jsonify(ok=True)
+
+
+@app.route("/api/stock/fill", methods=["POST"])
+@login_required
+def api_stock_fill():
+    d = J()
+    try:
+        days = int(d.get("days") or 7)
+    except (TypeError, ValueError):
+        days = 0
+    if not 1 <= days <= 31:
+        return jsonify(ok=False, err="Days must be 1 to 31."), 400
+    items = [r for r in _stock_rows()
+             if r["tracked"] and r["mode"] == "pillbox" and r["per_day"] > 0]
+    if not items:
+        return jsonify(ok=False, err="No counted pillbox medicines - count them first."), 400
+    at, batch = _now_at(), "fill:" + now_s() + ":" + secrets.token_hex(4)
+    for r in items:
+        db().execute("INSERT INTO stock_events(med_id,kind,qty,at,note,created) "
+                     "VALUES(?,?,?,?,?,?)",
+                     (r["med_id"], "FILL", round(r["per_day"] * days, 2), at, batch, now_s()))
+    db().commit()
+    return jsonify(ok=True, n=len(items), days=days)
+
+
+@app.route("/api/stock/fill/undo", methods=["POST"])
+@login_required
+def api_stock_fill_undo():
+    r = db().execute("SELECT note FROM stock_events WHERE kind='FILL' "
+                     "ORDER BY id DESC LIMIT 1").fetchone()
+    if not r:
+        return jsonify(ok=False, err="No fill to undo."), 400
+    db().execute("DELETE FROM stock_events WHERE kind='FILL' AND note=?", (r["note"],))
+    db().commit()
+    return jsonify(ok=True)
+
+
+# ---- feed: read-only, bearer-gated, loopback consumers (RxGuard, FitLog)
+def _feed_token():
+    p = os.environ.get("GUTLOG_FEED_TOKEN_FILE") or os.path.join(BASE, "feed.token")
+    try:
+        with open(p, "r") as f:
+            t = f.read().strip()
+        if len(t) >= 32:
+            return t
+    except OSError:
+        pass
+    try:
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        try:
+            with open(p, "r") as f:
+                t = f.read().strip()
+            return t if len(t) >= 32 else None
+        except OSError:
+            return None
+    except OSError:
+        return None
+    t = secrets.token_hex(32)
+    with os.fdopen(fd, "w") as f:
+        f.write(t)
+    return t
+
+
+_FEED_TOKEN = _feed_token()
+
+
+def feed_required(fn):
+    import hmac
+
+    @wraps(fn)
+    def w(*a, **k):
+        tok = _FEED_TOKEN
+        got = (request.headers.get("Authorization") or "")
+        got = got[7:].strip() if got.startswith("Bearer ") else ""
+        if not tok or not got or not hmac.compare_digest(tok, got):
+            return jsonify(ok=False, err="unauthorised"), 401
+        return fn(*a, **k)
+    return w
+
+
+def _feed_since(default_days):
+    s = _valid_day(request.args.get("since"))
+    floor = (date.today() - timedelta(days=180)).isoformat()
+    if not s:
+        s = (date.today() - timedelta(days=default_days - 1)).isoformat()
+    return max(s, floor)
+
+
+def _feed_events(since):
+    meds = dict((r["id"], r) for r in db().execute(
+        "SELECT id, name, molecule FROM prnmeds").fetchall())
+    by_name = dict((r["name"], r) for r in meds.values())
+    out = []
+    for d in db().execute(
+            "SELECT day, dtime, medicine, med_id, status, sched_id, dose_text FROM doses "
+            "WHERE day>=? AND COALESCE(status,'')<>'SKIPPED' ORDER BY day, dtime",
+            (since,)).fetchall():
+        m = meds.get(d["med_id"]) or by_name.get(d["medicine"])
+        out.append({"day": d["day"], "time": d["dtime"] or "",
+                    "name": m["name"] if m else d["medicine"],
+                    "molecule": (m["molecule"] or "") if m else "",
+                    "med_id": m["id"] if m else None,
+                    "scheduled": bool(d["sched_id"]),
+                    "dose_text": d["dose_text"] or ""})
+    return out
+
+
+@app.route("/api/feed/doses")
+@feed_required
+def api_feed_doses():
+    since = _feed_since(14)
+    return jsonify(ok=True, app="gutlog", since=since, events=_feed_events(since))
+
+
+@app.route("/api/feed/stack")
+@feed_required
+def api_feed_stack():
+    try:
+        days = max(1, min(90, int(request.args.get("days") or 14)))
+    except ValueError:
+        days = 14
+    since = (date.today() - timedelta(days=days - 1)).isoformat()
+    tday = today()
+    regimen = [dict(r) for r in db().execute(
+        "SELECT p.id AS med_id, p.name, p.molecule, s.slot, s.dose_text, s.variants "
+        "FROM med_schedule s JOIN prnmeds p ON p.id=s.med_id WHERE s.valid_from<=? "
+        "AND (s.valid_to='' OR s.valid_to IS NULL OR s.valid_to>=?) ORDER BY p.sort, p.id",
+        (tday, tday)).fetchall()]
+    taken = {}
+    for e in _feed_events(since):
+        k = e["med_id"] or e["name"]
+        t = taken.setdefault(k, {"med_id": e["med_id"], "name": e["name"],
+                                 "molecule": e["molecule"], "doses": 0, "days": set(),
+                                 "last_day": "", "scheduled": False})
+        t["doses"] += 1
+        t["days"].add(e["day"])
+        t["last_day"] = max(t["last_day"], e["day"])
+        t["scheduled"] = t["scheduled"] or e["scheduled"]
+    out = []
+    for t in taken.values():
+        t["days"] = len(t["days"])
+        out.append(t)
+    out.sort(key=lambda t: (-t["days"], t["name"]))
+    return jsonify(ok=True, app="gutlog", since=since, days=days, today=tday,
+                   regimen=regimen, taken=out)
+
 
 # ------------------------------------------------------------------ review
 @app.route("/api/review")
@@ -1573,6 +2078,55 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 .ptile.open{border-color:var(--teal);background:#F7FBF9}
 .ptile.open .pscore{display:flex}
 @media (max-width:430px){ #n_painSites .chip{padding:8px 0;min-width:34px;text-align:center}}
+/* GUTLOG_V350_PHASE_B -- time row, day view, backfill rows */
+.vtm{display:flex;gap:8px;align-items:center;margin-top:10px}
+.vtm .lb{font-size:13px;font-weight:700;color:var(--muted)}
+.vtm input{flex:1;min-width:0;padding:9px;border:1.5px solid var(--line);border-radius:10px;font-size:15px;background:#fff;color:var(--ink)}
+.vtm .btn{flex:0 0 auto;margin:0}
+.vtm .btn.go,.vtm .btn.tm{background:var(--teal);border-color:var(--teal);color:#fff}
+.vtm .btn.sk{background:#fff;color:var(--teal);border-color:#BAD2C8}
+.dvnav{display:flex;gap:8px;align-items:center}
+.dvnav input{flex:1;min-width:0;text-align:center;padding:9px;border:1.5px solid var(--line);border-radius:10px;font-size:15.5px;font-weight:700;background:#fff;color:var(--ink)}
+.dvnav .btn{flex:0 0 auto;min-width:48px;font-size:22px;line-height:1;padding:7px 12px;margin:0}
+.dvnav .btn:disabled{opacity:.35}
+.dvrow{display:flex;gap:10px;align-items:flex-start;padding:11px 2px;border-top:1px solid var(--line);cursor:pointer}
+.dvrow .t{flex:0 0 44px;font-size:14px;font-weight:700;color:var(--ink);padding-top:2px}
+.dvrow .tag{flex:0 0 auto;font-size:10.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;padding:4px 7px;border-radius:7px;background:var(--chip);color:var(--muted)}
+.dvrow .x{min-width:0}
+.dvrow .x b{display:block;font-size:15px}
+.dvrow .x span{font-size:13px;color:var(--muted)}
+.tag.k-dose{background:#E3F1EC;color:var(--teal)}
+.tag.k-extra{background:#EFE7F8;color:#6A3FA8}
+.tag.k-skip{background:#ECECEC;color:#666}
+.tag.k-sym{background:#FBEDEC;color:var(--err)}
+.tag.k-bp{background:#FFF3DC;color:#8A5A00}
+.tag.k-meal{background:#E8F0FA;color:#2F5C8A}
+.dvmiss{padding:10px 12px;border:1.5px dashed var(--line);border-radius:13px;margin:0 0 8px}
+.dvmiss .mh{display:flex;gap:8px;align-items:baseline}
+.dvmiss .sl{font-size:11.5px;font-weight:800;color:var(--teal-d);text-transform:uppercase;letter-spacing:.4px}
+.dvmiss .vrow{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+/* GUTLOG_V360_PHASE_C -- stock rows, refill banner, vitals table */
+.stockalert{display:flex;gap:10px;align-items:baseline;padding:11px 14px;border-radius:13px;margin:0 0 10px;
+  font-size:14px;cursor:pointer;border:1.5px solid}
+.stockalert b{font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+.stockalert.red{background:#FBEDEC;border-color:#E4B9B3;color:var(--err)}
+.stockalert.amber{background:#FFF3DC;border-color:#EBCB8B;color:#7A5200}
+.strow{background:var(--card);border:1.5px solid var(--line);border-radius:13px;padding:11px 13px;margin:0 0 8px}
+.strow .sh{display:flex;gap:10px;align-items:baseline}
+.strow .sh b{font-size:15.5px}
+.strow .sq{margin-left:auto;font-weight:800;font-size:15px;color:var(--teal-d)}
+.strow .ss{font-size:13px;color:var(--muted);margin-top:2px}
+.strow .sb{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+.strow .sb .btn{margin:0;background:#fff;color:var(--teal);border-color:#BAD2C8}
+.strow .sf[hidden]{display:none}
+.strow.untracked{opacity:.8}
+.strow.lv-red{border-color:#E4B9B3;background:#FDF5F4}
+.strow.lv-red .sq{color:var(--err)}
+.strow.lv-amber{border-color:#EBCB8B;background:#FFFAF0}
+.strow.lv-amber .sq{color:#8A5A00}
+.vtwrap{overflow-x:auto;margin-top:8px}
+.vtwrap table{font-size:13.5px}
+#vitalsLog .tot{margin:4px 2px}
 @media (prefers-reduced-motion:reduce){.toast,.pbar i,.chip{transition:none}}
 </style></head><body>
 <div style="display:flex;gap:8px;padding:8px 12px 4px;font-size:13.5px">
@@ -1589,6 +2143,7 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 <!-- ============ LOG ============ -->
 <!-- ============ NOW ============ -->
 <section class="tab sel" id="tab-now">
+  <div id="nowStock"></div>
   <div class="card" id="nowBP">
     <p class="q">Blood pressure</p>
     <div class="row3">
@@ -1776,7 +2331,7 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 <!-- ============ MEDS ============ -->
 <section class="tab" id="tab-meds">
   <div class="seg" data-seg="meds">
-    <button data-s="prn" class="sel">PRN dose</button><button data-s="course">Courses</button><button data-s="sched">Schedule</button>
+    <button data-s="prn" class="sel">PRN dose</button><button data-s="course">Courses</button><button data-s="sched">Schedule</button><button data-s="stock">Stock</button>
   </div>
 
   <div class="sub sel" id="meds-prn">
@@ -1812,6 +2367,20 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
       </div>
       <button type="button" class="addbtn" id="sc_add" style="margin-top:10px">Add to regimen</button>
     </div>
+  </div>
+
+  <div class="sub" id="meds-stock">
+    <div class="card" id="stPill">
+      <p class="q">Pillbox</p>
+      <p class="hint st-last" style="margin:0 2px 8px"></p>
+      <div class="vtm"><span class="lb">Days</span><input type="number" id="stDays" min="1" max="31" value="7">
+        <button type="button" class="btn tiny go" id="stFill">Pillbox filled</button></div>
+      <p class="hint st-prev" style="margin:10px 2px 0"></p>
+      <button type="button" class="mini" id="stFillUndo" style="margin-top:6px">Undo last fill</button>
+    </div>
+    <p class="hint">Count = what is left in the strips or bottle, not in the pillbox. Pillbox medicines come
+      out of stock when you fill it; the others per logged dose.</p>
+    <div id="stList"></div>
   </div>
 
   <div class="sub" id="meds-course">
@@ -1868,6 +2437,25 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 
 <!-- ============ REVIEW ============ -->
 <section class="tab" id="tab-review">
+  <div class="card" id="dayView">
+    <p class="q">Day by day</p>
+    <div class="dvnav"><button type="button" class="btn ghost" id="dvPrev">&lsaquo;</button>
+      <input type="date" id="dvDate"><button type="button" class="btn ghost" id="dvNext">&rsaquo;</button></div>
+    <p class="hint" style="margin:8px 2px 4px"><span id="dvSum"></span> &middot; tap an entry to fix its time</p>
+    <div id="dvList"></div>
+    <p class="lbl" id="dvMissHd" style="margin-top:14px">Scheduled but not logged &mdash; enter the time it was taken</p>
+    <div id="dvMiss"></div>
+  </div>
+  <div class="card" id="vitalsLog">
+    <p class="q">Vitals log</p>
+    <div id="vtChart"></div>
+    <p class="legend"><span class="dot" style="background:#B3372A"></span><b>Systolic</b>
+      <span class="dot" style="background:#0B6E6E"></span><b>Diastolic</b>
+      <span class="dot" style="background:#C8860A"></span><b>Pulse</b></p>
+    <div id="vtSum"></div>
+    <div id="vtTable" class="vtwrap"></div>
+    <a class="exp" href="/export/vitals.csv">Download vitals.csv</a>
+  </div>
   <p class="hint">Last <span id="rvDaysN">30</span> days. Show at clinic visits, or export any stream as CSV.</p>
   <div class="seg" id="rvRange"><button data-d="30" class="sel">30 d</button><button data-d="90">90 d</button><button data-d="180">6 mo</button></div>
   <div class="card"><p class="q">Pain, tea &amp; coffee</p><div id="chartMain"></div>
@@ -1902,6 +2490,11 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 <script>
 const $=q=>document.querySelector(q), $$=q=>[...document.querySelectorAll(q)];
 const todayISO=new Date().toLocaleDateString('en-CA');
+/* GUTLOG_V350_PHASE_B -- 'today' is fixed at load; a page left open overnight
+   would log the morning dose against yesterday. Reload on a new day. */
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden&&new Date().toLocaleDateString('en-CA')!==todayISO)location.reload();
+});
 const nowHM=()=>new Date().toTimeString().slice(0,5);
 const S={log:{},episode:{},vitals:{},meal:{},test:{},prn:{}};
 const FMAP={L:0,'L-M':0.5,M:1,'M-H':1.5,H:2};
@@ -2287,9 +2880,250 @@ function svgBars(data,key,col,h=110){
     s+=`<rect x="${x.toFixed(1)}" y="${(h-P-bh).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${col}"/>`;});
   s+=`<text x="${P}" y="10" font-size="9" fill="#5B7370">max ${max}</text></svg>`;return s;
 }
+/* ---------- STOCK (GUTLOG_V360_PHASE_C) ---------- */
+function fmtQ(v){return String(Math.round(v*10)/10);}
+async function loadStockAlerts(){
+  const box=$('#nowStock');if(!box)return;
+  try{
+    const j=await jget('/api/stock');
+    const al=j.rows.filter(r=>r.level);
+    box.innerHTML='';
+    if(!al.length)return;
+    const d=document.createElement('div');
+    d.className='stockalert '+(al.some(r=>r.level==='RED')?'red':'amber');
+    d.innerHTML='<b>Refill</b><span></span>';
+    d.querySelector('span').textContent=al.map(r=>r.name+' - '+r.why).join(' · ');
+    d.onclick=()=>{switchTab('meds');setSeg('meds','stock');};
+    box.appendChild(d);
+  }catch(e){}
+}
+async function loadStock(){
+  const j=await jget('/api/stock');
+  const pb=$('#stPill');
+  pb.querySelector('.st-last').textContent=j.last_fill?('Last filled '+j.last_fill):'Not filled yet.';
+  const days=()=>Math.max(1,Math.min(31,parseInt($('#stDays').value||'7',10)||7));
+  const prev=()=>{
+    const pv=pb.querySelector('.st-prev');
+    pv.textContent=j.fill_preview.length
+      ?('Filling '+days()+' days takes: '+j.fill_preview.map(x=>x.name+' '+fmtQ(x.per_day*days())).join(' · '))
+      :'No counted pillbox medicines yet - count them below first.';
+  };
+  prev();
+  $('#stDays').oninput=prev;
+  $('#stFill').onclick=async()=>{
+    try{const r=await post('/api/stock/fill',{days:days()});
+      toast('Pillbox filled: '+r.n+' medicines, '+r.days+' days');loadStock();loadStockAlerts();}
+    catch(err){toast(err.message);}
+  };
+  $('#stFillUndo').onclick=async()=>{
+    if(!confirm('Undo the last pillbox fill?'))return;
+    try{await post('/api/stock/fill/undo',{});toast('Last fill undone');loadStock();loadStockAlerts();}
+    catch(err){toast(err.message);}
+  };
+  const list=$('#stList');list.innerHTML='';
+  j.rows.forEach(r=>list.appendChild(stockRow(r)));
+}
+function stockRow(r){
+  const w=document.createElement('div');
+  w.className='strow'+(r.level?(' lv-'+r.level.toLowerCase()):'')+(r.tracked?'':' untracked');
+  w.innerHTML='<div class="sh"><b></b><span class="sq"></span></div><div class="ss"></div>'+
+    '<div class="sb"></div><div class="vtm sf" hidden><input type="number" step="0.5" min="0" inputmode="decimal">'+
+    '<button type="button" class="btn tiny go">Save</button></div>';
+  w.querySelector('.sh b').textContent=r.name;
+  const sq=w.querySelector('.sq'),ss=w.querySelector('.ss'),sb=w.querySelector('.sb');
+  const modeTxt=r.mode==='pillbox'?'pillbox':'per dose';
+  if(!r.trackable){sq.textContent='';ss.textContent=r.why;w.querySelector('.sf').remove();return w;}
+  if(r.tracked){
+    sq.textContent=fmtQ(r.current)+' left';
+    const bits=[modeTxt];
+    if(r.per_day>0)bits.push(fmtQ(r.per_day)+'/day');
+    if(r.why)bits.push(r.why);
+    else if(r.days_left!=null)bits.push('about '+Math.floor(r.days_left)+' days');
+    ss.textContent=bits.join(' · ');
+  }else{
+    sq.textContent='';
+    ss.textContent=modeTxt+' · not counted yet';
+  }
+  const sf=w.querySelector('.sf'),inp=sf.querySelector('input'),go=sf.querySelector('button');
+  let act='';
+  const open=(a,val,ph)=>{act=a;sf.hidden=false;inp.value=val;inp.placeholder=ph;inp.focus();};
+  const mk=(txt,fn)=>{const b=document.createElement('button');b.type='button';b.className='btn tiny ghost';
+    b.textContent=txt;b.onclick=fn;sb.appendChild(b);};
+  mk(r.tracked?'Count':'Set count',()=>open('count','','how many left'));
+  if(r.tracked)mk('Bought',()=>open('add',r.pack_size||'','how many bought'));
+  if(r.can_pillbox)mk(r.mode==='pillbox'?'Make per dose':'Make pillbox',async()=>{
+    try{await post('/api/stock/mode',{med_id:r.med_id,mode:r.mode==='pillbox'?'per_dose':'pillbox'});
+      loadStock();loadStockAlerts();}catch(err){toast(err.message);}
+  });
+  go.onclick=async()=>{
+    if(inp.value===''){toast('Enter a number');return;}
+    try{
+      await post(act==='add'?'/api/stock/add':'/api/stock/count',{med_id:r.med_id,qty:inp.value});
+      toast(act==='add'?'Added':'Count saved');loadStock();loadStockAlerts();
+    }catch(err){toast(err.message);}
+  };
+  return w;
+}
+
+/* ---------- VITALS LOG (GUTLOG_V360_PHASE_C) ---------- */
+function vtEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);}
+function vitalsChart(rows){
+  const bp=rows.filter(v=>v.sys||v.dia).slice().reverse();
+  if(bp.length<2)return '<p class="hint" style="margin:0">The chart appears after two readings.</p>';
+  const W=320,H=150,P=24;
+  let lo=1e9,hi=0;
+  bp.forEach(v=>[v.sys,v.dia,v.pulse].forEach(x=>{
+    if(x){if(x<lo)lo=x;if(x>hi)hi=x;}
+  }));
+  lo=Math.min(lo,90)-8;hi=Math.max(hi,140)+8;
+  const xs=i=>P+(W-P-6)*(i/(bp.length-1));
+  const ys=v=>H-16-(H-26)*((v-lo)/(hi-lo));
+  let s='<svg class="chart" viewBox="0 0 '+W+' '+H+'">';
+  [140,90].forEach(gl=>{const y=ys(gl).toFixed(1);
+    s+='<line x1="'+P+'" x2="'+W+'" y1="'+y+'" y2="'+y+'" stroke="#C9D6D0" stroke-dasharray="3 3"/>'+
+       '<text x="2" y="'+(parseFloat(y)+3)+'" font-size="9" fill="#5B7370">'+gl+'</text>';});
+  [['sys','#B3372A'],['dia','#0B6E6E'],['pulse','#C8860A']].forEach(k=>{
+    let p='',dots='';
+    bp.forEach((v,i)=>{if(!v[k[0]])return;const x=xs(i).toFixed(1),y=ys(v[k[0]]).toFixed(1);
+      p+=(p?'L':'M')+x+' '+y+' ';dots+='<circle cx="'+x+'" cy="'+y+'" r="2" fill="'+k[1]+'"/>';});
+    if(p)s+='<path d="'+p+'" fill="none" stroke="'+k[1]+'" stroke-width="2"/>'+dots;
+  });
+  s+='<text x="'+P+'" y="'+(H-3)+'" font-size="9" fill="#5B7370">'+vtEsc(bp[0].day)+'</text>'+
+     '<text x="'+(W-58)+'" y="'+(H-3)+'" font-size="9" fill="#5B7370">'+vtEsc(bp[bp.length-1].day)+'</text></svg>';
+  return s;
+}
+function renderVitals(rows){
+  const tb=$('#vtTable');if(!tb)return;
+  rows=rows||[];
+  $('#vtChart').innerHTML=vitalsChart(rows);
+  const bp=rows.filter(v=>v.sys&&v.dia);
+  const av=a=>Math.round(a.reduce((x,y)=>x+y,0)/a.length);
+  const avBP=a=>a.length?(av(a.map(v=>v.sys))+'/'+av(a.map(v=>v.dia))):'';
+  const sum=$('#vtSum');sum.innerHTML='';
+  const line=t=>{const p=document.createElement('p');p.className='tot';p.textContent=t;sum.appendChild(p);};
+  if(bp.length){
+    const pl=bp.filter(v=>v.pulse).map(v=>v.pulse);
+    line(bp.length+' readings · average '+avBP(bp)+(pl.length?(' · pulse '+av(pl)):''));
+    const am=bp.filter(v=>(v.vtime||'')<'12:00'),pm=bp.filter(v=>(v.vtime||'')>='17:00');
+    if(am.length&&pm.length)line('Morning '+avBP(am)+' · evening '+avBP(pm));
+    const hiR=bp.reduce((a,b)=>b.sys>a.sys?b:a),loR=bp.reduce((a,b)=>b.sys<a.sys?b:a);
+    line('Highest '+hiR.sys+'/'+hiR.dia+' ('+hiR.day+' '+(hiR.vtime||'')+') · lowest '+loR.sys+'/'+loR.dia);
+  }else line('No blood pressure readings in this range.');
+  if(!rows.length){tb.innerHTML='';return;}
+  let t='<table><tr><th>Day</th><th>Time</th><th>BP</th><th>Pulse</th><th>Wt</th><th>Temp</th></tr>';
+  rows.slice(0,300).forEach(v=>{
+    t+='<tr><td>'+vtEsc(v.day)+'</td><td>'+vtEsc(v.vtime)+'</td><td><b>'+
+      ((v.sys||v.dia)?(vtEsc(v.sys||'-')+'/'+vtEsc(v.dia||'-')):'')+'</b></td><td>'+vtEsc(v.pulse||'')+
+      '</td><td>'+vtEsc(v.weight||'')+'</td><td>'+vtEsc(v.temp||'')+'</td></tr>';
+  });
+  tb.innerHTML=t+'</table>';
+}
+
+/* ---------- DAY BY DAY (GUTLOG_V350_PHASE_B) ----------
+   Everything logged on one day, every stream, in time order. Tap an
+   entry to move it to the time (or day) it really happened, or delete it.
+   Below: that day's scheduled doses never logged, for backfilling. */
+let dvDay=todayISO;
+const DV_TAG={Dose:'dose',Extra:'extra',Skipped:'skip',Symptom:'sym',BP:'bp',Vitals:'bp',Meal:'meal'};
+function dvShift(n){
+  const d=new Date(dvDay+'T12:00:00');d.setDate(d.getDate()+n);
+  const s=d.toLocaleDateString('en-CA');
+  if(s>todayISO)return;
+  dvDay=s;loadDayView();
+}
+async function loadDayView(){
+  const di=$('#dvDate');if(!di)return;
+  di.value=dvDay;di.max=todayISO;
+  $('#dvNext').disabled=(dvDay>=todayISO);
+  const both=await Promise.all([jget('/api/dayview?day='+dvDay),jget('/api/now?day='+dvDay)]);
+  const v=both[0],n=both[1];
+  const box=$('#dvList');box.innerHTML='';
+  $('#dvSum').textContent=v.entries.length?(v.entries.length+' logged'):'nothing logged';
+  v.entries.forEach(e=>{
+    const r=document.createElement('div');r.className='dvrow';
+    r.innerHTML='<span class="t"></span><span class="tag"></span><div class="x"><b></b><span></span></div>';
+    r.querySelector('.t').textContent=e.time||'--:--';
+    const tg=r.querySelector('.tag');tg.textContent=e.kind;tg.classList.add('k-'+(DV_TAG[e.kind]||'x'));
+    r.querySelector('.x b').textContent=e.title;
+    r.querySelector('.x span').textContent=[e.sub,e.edited?'time edited':''].filter(Boolean).join(' · ');
+    r.onclick=()=>dvEdit(r,e);
+    box.appendChild(r);
+  });
+  const miss=[];
+  (n.slots||[]).forEach(s=>s.rows.forEach(x=>{if(!x.status)miss.push([s,x]);}));
+  const mb=$('#dvMiss');mb.innerHTML='';
+  $('#dvMissHd').style.display=miss.length?'':'none';
+  miss.forEach(p=>mb.appendChild(dvMissRow(p[0],p[1])));
+}
+function dvEdit(rowEl,e){
+  const old=document.querySelector('.varpick');if(old)old.remove();
+  const box=document.createElement('div');box.className='varpick';
+  box.innerHTML='<p class="vt"></p><div class="vtm"><input type="date" class="dd"><input type="time" class="tt"></div>'+
+    '<div class="vb three"><button type="button" class="cx">Cancel</button>'+
+    '<button type="button" class="danger dl">Delete</button><button type="button" class="go">Save</button></div>';
+  box.querySelector('.vt').textContent=e.title+' - set the real time';
+  const dd=box.querySelector('.dd'),tt=box.querySelector('.tt');
+  dd.value=dvDay;dd.max=todayISO;tt.value=e.time||'';
+  box.querySelector('.cx').onclick=()=>box.remove();
+  box.querySelector('.go').onclick=async()=>{
+    if(!tt.value||!dd.value){toast('Pick a day and time');return;}
+    try{
+      const r=await post('/api/retime',{table:e.tbl,id:e.id,day:dd.value,time:tt.value});
+      toast(r.unchanged?'No change':('Moved to '+tt.value+(dd.value!==dvDay?(' on '+dd.value):'')));
+      loadDayView();
+    }catch(err){toast(err.message);}
+  };
+  box.querySelector('.dl').onclick=async()=>{
+    if(!confirm('Delete this entry?'))return;
+    try{await post('/api/delete/'+e.tbl+'/'+e.id,{});toast('Deleted');loadDayView();}
+    catch(err){toast(err.message);}
+  };
+  rowEl.parentNode.insertBefore(box,rowEl.nextSibling);
+  box.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function dvMissRow(s,x){
+  const w=document.createElement('div');w.className='dvmiss';
+  w.innerHTML='<div class="mh"><span class="sl"></span><b></b></div><div class="vrow"></div>'+
+    '<div class="vtm"><input type="time" class="tt"><button type="button" class="btn tiny ghost sk">Skipped</button>'+
+    '<button type="button" class="btn tiny go">Taken</button></div>';
+  w.querySelector('.sl').textContent=s.label;
+  w.querySelector('b').textContent=x.name+(x.dose_text?(' '+x.dose_text):'');
+  const tt=w.querySelector('.tt');
+  tt.value=(dvDay===todayISO&&s.time>nowHM())?nowHM():s.time;
+  const picked=[],vr=w.querySelector('.vrow');
+  if(x.variants){
+    x.variants.split('|').map(v=>v.trim()).filter(Boolean).forEach(v=>{
+      const b=document.createElement('div');b.className='chip';b.textContent=v;
+      b.onclick=()=>{const i=picked.indexOf(v);if(i>=0)picked.splice(i,1);else picked.push(v);
+        b.classList.toggle('sel',picked.indexOf(v)>=0);};
+      vr.appendChild(b);
+    });
+  }else vr.remove();
+  const send=async st=>{
+    if(!tt.value){toast('Pick a time');return;}
+    if(st==='TAKEN'&&x.variants&&!picked.length){toast('Pick a dose');return;}
+    try{
+      await post('/api/now/dose',{med_id:x.med_id,sched_id:x.sched_id,status:st,day:dvDay,
+        dtime:tt.value,dose_text:x.variants?picked.join(' + '):x.dose_text});
+      toast((st==='TAKEN'?'Logged ':'Skipped ')+x.name+' at '+tt.value);loadDayView();
+    }catch(err){toast(err.message);}
+  };
+  w.querySelector('.go').onclick=()=>send('TAKEN');
+  w.querySelector('.sk').onclick=()=>send('SKIPPED');
+  return w;
+}
+$('#dvPrev').onclick=()=>dvShift(-1);
+$('#dvNext').onclick=()=>dvShift(1);
+$('#dvDate').onchange=ev=>{
+  const v=ev.target.value;
+  if(v&&v<=todayISO){dvDay=v;loadDayView();}
+};
+
 async function loadReview(){
+  loadDayView();
   $('#rvDaysN').textContent=rvDays;
   const rv=await jget('/api/review?days='+rvDays);
+  renderVitals(rv.vitals);
   const dmap={};rv.days.forEach(d=>dmap[d.day=d.day]=d);
   $('#chartMain').innerHTML=svgLine(rv.days,['pain','tea','coffee'],['#B3372A','#C8860A','#8A5A2B']);
   const fmapData=rv.daily.map(d=>({day:d.day,fscore:d.fscore,sym:0}));
@@ -2410,7 +3244,7 @@ $('#saveBtn').onclick=async()=>{
 /* ---------- tab + segment switching ---------- */
 function saveBtnVisible(){
   const hide=(tab==='review')||(tab==='meals'&&seg.meals==='foods')||
-    (tab==='files'&&(seg.files==='vault'||seg.files==='labs'));
+    (tab==='files'&&(seg.files==='vault'||seg.files==='labs'))||(tab==='meds'&&seg.meds==='stock');
   $('.save').style.display=hide?'none':'flex';
   const L={'log:day':'Save day','log:episode':'Save episode','log:vitals':'Save vitals',
     'meals:meal':'Save meal','meals:test':'Save food test','meds:prn':'Log dose',
@@ -2430,10 +3264,12 @@ function switchTab(t){
   if(t==='now')loadNow();
   if(t==='meds'){loadPRNToday();loadPatch();loadCourses();}
   if(t==='meds'&&seg.meds==='sched'){loadSchedMeds();loadSchedule();}
+  if(t==='meds'&&seg.meds==='stock')loadStock();
   window.scrollTo(0,0);
 }
 function setSeg(section,s){
   seg[section]=s;
+  if(section==='meds'&&s==='stock')loadStock();
   if(section==='meds'&&s==='sched'){loadSchedMeds();loadSchedule();}
   $$(`.seg[data-seg="${section}"] button`).forEach(b=>b.classList.toggle('sel',b.dataset.s===s));
   $$(`#tab-${section} .sub`).forEach(el=>el.classList.remove('sel'));
@@ -2518,9 +3354,20 @@ function openRowActions(rowEl,r,st){
   if(canChange)html+='<button type="button" class="ch">Change dose</button>';
   if(st==='TAKEN')html+='<button type="button" class="sp">Skip</button>';
   html+='<button type="button" class="danger un">Undo</button></div>';
+  if(r.dose_id)html+='<div class="vtm"><span class="lb">Time</span><input type="time" class="tt"><button type="button" class="btn tiny tm">Save time</button></div>';
   box.innerHTML=html;
   const was=st==='TAKEN'?('taken'+(r.logged_dose?' '+r.logged_dose:'')):'skipped';
   box.querySelector('.vt').textContent=r.name+' - '+was;
+  const tt=box.querySelector('.tt');
+  if(tt){
+    tt.value=r.dtime||'';
+    box.querySelector('.tm').onclick=async()=>{
+      if(!tt.value){toast('Pick a time');return;}
+      try{await post('/api/retime',{table:'doses',id:r.dose_id,day:nowData.day,time:tt.value});
+        toast('Time set to '+tt.value);box.remove();loadNow();}
+      catch(err){toast(err.message);}
+    };
+  }
   box.querySelector('.cx').onclick=()=>box.remove();
   box.querySelector('.un').onclick=async()=>{
     try{
@@ -2570,7 +3417,8 @@ function openVariantPicker(rowEl,r){
     const txt=picked.join(' + ');
     try{
       await post('/api/now/dose',{med_id:r.med_id,sched_id:r.sched_id,
-        status:'TAKEN',day:nowData.day,dose_text:txt});
+        status:'TAKEN',day:nowData.day,dose_text:txt,
+        dtime:(r.status==='TAKEN'&&r.dtime)?r.dtime:undefined});
       toast('Logged '+r.name+' '+txt);box.remove();loadNow();
     }catch(err){toast(err.message);}
   };
@@ -2579,6 +3427,7 @@ function openVariantPicker(rowEl,r){
 }
 
 async function loadNow(){
+  loadStockAlerts();
   nowData=await jget('/api/now?day='+todayISO);
   const box=$('#nowSched');box.innerHTML='';
   let done=0,total=0;

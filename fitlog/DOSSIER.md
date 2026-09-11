@@ -1,4 +1,4 @@
-# FitLog — DOSSIER (v1.0.1)
+# FitLog — DOSSIER (v1.1.0)
 
 Single source of truth. Update after every change.
 
@@ -28,6 +28,29 @@ The owner key is a **per-route `@login_required` decorator** (app.py:95), not a
 `before_request` hook. Blueprint routes are therefore untouched by it — the
 Phase 3.5 ingest endpoints carry their own bearer token and needed no exemption
 patch. Verified on server 2026-09-10: `grep before_request app.py` → 0 matches.
+
+## Doses from GutLog — v1.1.0 (read-endpoint cutover)
+
+Doses are logged in GutLog. FitLog reads them from GutLog's read-only feed
+(`/api/feed/doses`, bearer token from `/root/gutlog/feed.token`, loopback,
+2 s timeout, 60 s cache) and unions them with its own `analgesic_log`:
+
+- **W03** counts distinct days across both sources — a day logged in both
+  counts once. When GutLog contributed a day the flag text says *incl. GutLog*.
+- A GutLog dose counts when its molecule appears in the `generic` of an
+  active `med_stack` entry, and takes that entry's category (analgesic
+  first). Unmatched molecules are ignored rather than guessed — W03 counts
+  analgesics only. **Keep `generic` filled in /meds/manage** or GutLog doses
+  cannot be matched.
+- The Meds page shows the last 14 days from GutLog beside FitLog's own log,
+  and the per-category day counts use both. FitLog's own tap-to-log is
+  unchanged — the manual path stays as the fallback.
+- The feed follows the live database: a scratch database outside the app
+  folder (every test suite) never reads it, so the 53-check smoke suite is
+  untouched on the server. `FITLOG_GUTLOG_FEED=1/0` overrides. GutLog down →
+  FitLog-only counts, and the Meds page says so.
+
+No rule threshold changed.
 
 ## Wearable ingest (Phase 3.5)
 
@@ -151,6 +174,7 @@ Run all three on the server. They gate the restart.
 | `test_health_ingest.py` | 23/23 | Base ingest, auth, S01, idempotency |
 | `test_hc_ingest.py` | 36/36 | HC Webhook path, R1/R2 regressions, negative controls |
 | `test_db_pin.py` | 12/12 | Non-default DB filename resolution |
+| `test_gutlog_feed.py` | 10/10 | v1.1.0: real GutLog on loopback — W03 from GutLog alone, sleep and unmatched negatives, union dedupe, FitLog-only unchanged, window, Meds page, escaping, scratch-DB isolation, GutLog down |
 
 `test_health_ingest.py` does **not** exercise the HC path — every
 healthconnect case in it uses the legacy shape, so `is_hc` is false. It scored
@@ -158,6 +182,7 @@ healthconnect case in it uses the legacy shape, so `is_hc` is false. It scored
 on HC changes.
 
 ## Changelog
+- 2026-09-11 v1.1.0 — DEPLOYED 07:37 IST. W03 and the Meds page read doses from GutLog's feed (`patch_fitlog_v110.py`, 4 anchors). Suites: smoke 53/53, kb_lint, 23/23, 36/36, 12/12 unchanged; new `test_gutlog_feed.py` 10/10 (0/10 against v1.0.1, as it should). On-server: all suites green, `verify_phase_c.py` 9/9. Rollback: `app.py.bak-v110-20260911_073740`.
 - 2026-09-10 Phase 3.5b — DEPLOYED. HC Webhook support (`patch_hc_support.py`) + `FITLOG_DB` pinning (`patch_db_pin.py`). Separate URL-borne token for the healthconnect feed, scope-verified in production. Record-level ingest with interval-keyed upsert. Suites: 23/23, 36/36, 12/12 on Python 3.9.25. Live probe through OLS confirmed R1: a redelivered interval grown 600→900 resolved to 900, not 1500. Probe removed, all four ingest tables back to 0. `app.py` untouched (MD5 `fb8520e5…`, unchanged since Phase 3.5). Rollback: `health_ingest.py.bak_20260910_083629` (pre-HC), `health_ingest.py.bak_20260910_084058` (pre-pin), `fitlog.db.bak_20260910_083629`.
 - 2026-09-10 Phase 3.5 — DEPLOYED. Wearable ingest: `health_ingest.py` blueprint + `health_metrics`/`health_workouts`/`health_raw` tables + rule S01. Registered via anchor-verified patcher (`patch_register_ingest.py`, anchor = Flask() at line 16); diff vs pre-deploy backup is exactly 4 added lines, nothing else. On-server smoke 23/23 on Python 3.9.25. Public verification through OLS: unauth 401, auth 200, end-to-end write + S01 read-back, probe rows removed (all three tables back to 0). No owner-key exemption needed — gate is a per-route decorator, not `before_request`. Verdict logic untouched. Rollback: `app.py.bak_20260910_075535`, `fitlog.db.bak_20260910_075503`.
 - 2026-08-02 v1.0.1 — DEPLOYED. Pre-3.12 f-string fixes (2 sites) applied on server via anchor-verified in-place patcher (`patch_fitlog.py`; rollback at app.py.bak). On-server smoke: 53/53. HTTPS health verified. Manual backup run: integrity ok. Root cause: build container ran Python 3.12 (PEP 701), server runs 3.9 — runtime now pinned in repo CLAUDE.md.

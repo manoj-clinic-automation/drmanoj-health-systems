@@ -140,6 +140,49 @@ with sync_playwright() as p:
         res(pg.locator("#dvMiss .dvmiss").count() == 0 and pg.locator("#dvList .dvrow").count() == 2,
             "yesterday now shows 2 logged, none missing")
         pg.locator("#dayView").screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "dayview.png"))
+    # --- Phase C (v3.6.0): stock + vitals log ----------------------------
+    if "function loadStock(" in pg.content():
+        import sqlite3 as _sq
+        pg.goto(B + "/"); pg.wait_for_load_state("networkidle")
+        pg.click('#nav button[data-t="meds"]'); time.sleep(0.3)
+        pg.click('.seg[data-seg="meds"] button[data-s="stock"]'); time.sleep(0.8)
+        res(pg.locator("#stList .strow").count() >= 3 and not pg.locator("#saveBtn").is_visible(),
+            "Stock lists medicines; Save button hidden")
+        xr = pg.locator("#stList .strow", has_text=meds[2]["name"]).first
+        xr.locator(".sb button", has_text="Set count").click(); xr.locator(".sf input").fill("2")
+        xr.locator(".sf button").click(); time.sleep(0.7)
+        xr = pg.locator("#stList .strow", has_text=meds[2]["name"]).first
+        res("2 left" in xr.inner_text(), "Set count shows 2 left")
+        pr = pg.locator("#stList .strow", has_text=meds[1]["name"]).first
+        pr.locator(".sb button", has_text="Set count").click(); pr.locator(".sf input").fill("20")
+        pr.locator(".sf button").click(); time.sleep(0.7)
+        res(meds[1]["name"] in pg.locator("#stPill .st-prev").inner_text(), "pillbox preview lists the counted pillbox medicine")
+        pg.click("#stFill"); time.sleep(0.8)
+        pr = pg.locator("#stList .strow", has_text=meds[1]["name"]).first
+        res("13 left" in pr.inner_text(), "Pillbox filled takes 7 -> 13 left")
+        vr = pg.locator("#stList .strow", has_text=name).first
+        res("strengths vary" in vr.inner_text(), "variant medicine shown as not tracked")
+        for dd in range(14):
+            day = (_dt.date.today() - _dt.timedelta(days=dd)).isoformat()
+            _c = _sq.connect(os.environ["GUTLOG_DB"])
+            _c.execute("INSERT INTO doses(day,dtime,medicine,med_id,status,created) VALUES(?,?,?,?,?,?)",
+                       (day, "00:00", "x", meds[2]["id"], "EXTRA", "t")); _c.commit(); _c.close()
+        pg.click('#nav button[data-t="now"]'); time.sleep(0.8)
+        res(pg.locator("#nowStock .stockalert").count() == 1 and meds[2]["name"] in pg.locator("#nowStock").inner_text(),
+            "Now tab shows the refill banner")
+        pg.locator("#nowStock").screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "banner.png"))
+        pg.click("#nowStock .stockalert"); time.sleep(0.8)
+        res(pg.locator("#meds-stock").is_visible(), "tapping the banner opens Stock")
+        pg.locator("#meds-stock").screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "stock.png"))
+        for i, (d, t, s_, di, pu) in enumerate([(1, "07:10", 132, 84, 70), (1, "21:00", 124, 80, 66),
+                                                (2, "07:05", 138, 88, 72), (3, "20:30", 121, 79, 64)]):
+            day = (_dt.date.today() - _dt.timedelta(days=d)).isoformat()
+            pg.request.post(B + "/api/vitals", data={"day": day, "vtime": t, "sys": s_, "dia": di, "pulse": pu})
+        pg.click('#nav button[data-t="review"]'); time.sleep(1.0)
+        res(pg.locator("#vtChart svg path").count() == 3 and pg.locator("#vtTable tr").count() == 5,
+            "Vitals log: 3 lines charted, 4 readings listed")
+        res("average 129/83" in pg.locator("#vtSum").inner_text(), "Vitals summary average 129/83")
+        pg.locator("#vitalsLog").screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "vitals.png"))
     pg.screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui_" + os.path.basename(app_path) + ".png"), full_page=True)
     res(not errs, "no JavaScript errors" + ("" if not errs else ": " + " | ".join(errs)))
     br.close()
