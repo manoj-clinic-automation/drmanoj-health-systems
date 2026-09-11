@@ -3,6 +3,23 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-11 — Phase C across GutLog v3.6.0, RxGuard v1.1.0, FitLog v1.1.0
+
+**Added**
+- GutLog: Stock and refill (Meds → Stock; derived from events; pillbox fill vs
+  per-dose; alerts + Now banner), Vitals log card, read-only feed
+  (`/api/feed/stack`, `/api/feed/doses`) with a self-created mode-600 token.
+  `patch_gutlog_v360.py`, `test_phase_c.py` 20/20.
+- RxGuard: *As taken (GutLog)* — reconciliation of the typed list against what
+  GutLog shows taken, and the engine run across the whole as-taken stack.
+  `patch_rxguard_v110.py`, `test_astaken.py` 15/15.
+- FitLog: W03 and the Meds page count GutLog doses (union, matched by
+  molecule to the stack). `patch_fitlog_v110.py`, `test_gutlog_feed.py` 10/10.
+- `gutlog/verify_phase_c.py` — live post-restart check, prints no names.
+
+**Earlier the same day**: GutLog v3.4.1 (dose picker restored), v3.4.2 (pain-by-
+site tiles), v3.5.0 (Phase B: retime, backfill, Day by day). See the dossier.
+
 ## 2026-09-10 — FitLog Phase 3.5b: HC Webhook + FITLOG_DB pinning
 
 **Added**

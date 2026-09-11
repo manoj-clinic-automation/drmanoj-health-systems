@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """
+FITLOG_V110_GUTLOG_FEED -- FitLog v1.1.0 reads doses from GutLog.
 FitLog v1.0 — Personal physical capacity & recovery engine.
 Dr. Manoj Agarwal | fit.dr-manoj.in | port 8040
 Single-file Flask + SQLite. Deterministic rule engine (no LLM in decision path).
@@ -236,6 +237,81 @@ def protocols_for(ev):
         if best: out[phase] = best
     return out
 
+# ---------------- GutLog dose feed (FITLOG_V110_GUTLOG_FEED) ----------------
+# Doses are logged in GutLog; W03 and the Meds page read them from its
+# read-only feed and union them with FitLog's own log. Never raises.
+GUTLOG_FEED_URL = os.environ.get("GUTLOG_FEED_URL", "http://127.0.0.1:8020")
+GUTLOG_TOKEN_FILE = os.environ.get("GUTLOG_FEED_TOKEN_FILE", "/root/gutlog/feed.token")
+_GL_CACHE = {}
+
+
+def gutlog_feed_enabled():
+    """Follows the live database: a scratch DB outside the app folder (the
+    test suites) never reads real doses. FITLOG_GUTLOG_FEED=1/0 overrides."""
+    v = os.environ.get("FITLOG_GUTLOG_FEED", "")
+    if v in ("0", "1"):
+        return v == "1"
+    return os.path.dirname(os.path.abspath(DB_PATH)) == APP_DIR
+
+
+def gutlog_events(since):
+    """GutLog dose events on or after `since`: (events, error). Cached 60 s."""
+    import time
+    import urllib.request
+    if not gutlog_feed_enabled():
+        return [], "off"
+    hit = _GL_CACHE.get(since)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1], hit[2]
+    events, err = [], ""
+    try:
+        with open(GUTLOG_TOKEN_FILE, encoding="utf-8") as fh:
+            tok = fh.read().strip()
+        req = urllib.request.Request(
+            GUTLOG_FEED_URL.rstrip("/") + "/api/feed/doses?since=" + since,
+            headers={"Authorization": "Bearer " + tok})
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=2) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        if isinstance(data, dict) and data.get("ok"):
+            events = data.get("events") or []
+        else:
+            err = "GutLog returned an unexpected answer"
+    except Exception as e:
+        err = "GutLog not reachable (" + type(e).__name__ + ")"
+    _GL_CACHE[since] = (time.time(), events, err)
+    return events, err
+
+
+def gutlog_catmap():
+    """molecule -> FitLog category, via the generic names in the stack."""
+    stack = [((m["generic"] or "").lower(), m["category"]) for m in db().execute(
+        "SELECT generic, category FROM med_stack WHERE active=1").fetchall()]
+    memo = {}
+
+    def cat(molecule):
+        mol = (molecule or "").strip().lower()
+        if not mol:
+            return ""
+        if mol not in memo:
+            found = ""
+            for gen, c in stack:
+                if gen and mol in gen:
+                    if c == "analgesic":
+                        found = c
+                        break
+                    found = found or c
+            memo[mol] = found
+        return memo[mol]
+    return cat
+
+
+def gutlog_days(category, since):
+    events, _err = gutlog_events(since)
+    cat = gutlog_catmap()
+    return set(e.get("day") for e in events if e.get("day") and cat(e.get("molecule")) == category)
+
+
 # ---------------- warning flags ----------------
 def compute_flags():
     flags = []
@@ -260,11 +336,14 @@ def compute_flags():
         flags.append(("W02", f"Adherence {done}/{tot} in {TH['w02_window_days']}d \u2014 review friction, not willpower"))
     # W03 analgesic frequency
     w3 = (date.today() - timedelta(days=TH["w03_window_days"])).isoformat()
-    days = db().execute("""SELECT COUNT(DISTINCT substr(dt,1,10)) c FROM analgesic_log l
+    local = set(r["d"] for r in db().execute("""SELECT DISTINCT substr(dt,1,10) d FROM analgesic_log l
                            JOIN med_stack m ON m.id=l.med_id
-                           WHERE m.category='analgesic' AND substr(dt,1,10)>?""", (w3,)).fetchone()["c"]
+                           WHERE m.category='analgesic' AND substr(dt,1,10)>?""", (w3,)).fetchall())
+    gl = gutlog_days("analgesic", (date.fromisoformat(w3) + timedelta(days=1)).isoformat())
+    days = len(local | gl)
+    src = " (incl. GutLog)" if gl - local else ""
     if days >= TH["w03_analgesic_days"]:
-        flags.append(("W03", f"Analgesic use on {days} days in last {TH['w03_window_days']} \u2014 minimum-effective-analgesia review"))
+        flags.append(("W03", f"Analgesic use on {days} days in last {TH['w03_window_days']}{src} \u2014 minimum-effective-analgesia review"))
     return flags
 
 # ---------------- html ----------------
@@ -540,12 +619,37 @@ def meds():
                              ORDER BY l.dt DESC LIMIT 15""").fetchall()
     hist = "".join(f"<tr><td>{r['dt'][5:16].replace('T',' ')}</td><td>{r['name']}</td><td>{r['dose_label']}</td></tr>" for r in recent)
     w3 = (date.today() - timedelta(days=TH["w03_window_days"])).isoformat()
-    counts = db().execute("""SELECT m.category,COUNT(DISTINCT substr(dt,1,10)) d FROM analgesic_log l
-                             JOIN med_stack m ON m.id=l.med_id WHERE substr(dt,1,10)>? GROUP BY m.category""", (w3,)).fetchall()
-    cs = " \u00b7 ".join(f"{r['category']}: {r['d']} days/14" for r in counts) or "no use logged in 14 days"
+    import html as _html
+    pairs = db().execute("""SELECT DISTINCT m.category c, substr(dt,1,10) d FROM analgesic_log l
+                             JOIN med_stack m ON m.id=l.med_id WHERE substr(dt,1,10)>?""", (w3,)).fetchall()
+    bycat = {}
+    for r in pairs:
+        bycat.setdefault(r["c"], set()).add(r["d"])
+    gl_since = (date.fromisoformat(w3) + timedelta(days=1)).isoformat()
+    gev, gerr = gutlog_events(gl_since)
+    gcat = gutlog_catmap()
+    grows = []
+    for e in gev:
+        c = gcat(e.get("molecule"))
+        if c:
+            bycat.setdefault(c, set()).add(e.get("day"))
+            grows.append((e, c))
+    counts = sorted(bycat.items())
+    cs = " \u00b7 ".join(f"{c}: {len(d)} days/14" for c, d in counts) or "no use logged in 14 days"
+    if gerr == "off":
+        glcard = ""
+    elif gerr:
+        glcard = f'<div class="card"><h2>From GutLog</h2><p class=small>{_html.escape(gerr)} \u2014 counts above are FitLog only.</p></div>'
+    else:
+        gl_hist = "".join("<tr><td>" + _html.escape((e.get("day") or "")[5:] + " " + (e.get("time") or "")) +
+                          "</td><td>" + _html.escape(e.get("name") or "") + "</td><td class=small>" + c + "</td></tr>"
+                          for e, c in reversed(grows[-20:]))
+        glcard = ('<div class="card"><h2>From GutLog, last 14 days</h2><p class=small>Doses logged in GutLog count here '
+                  'automatically, matched by molecule to your stack.</p><table>' +
+                  (gl_hist or "<tr><td class=small>No matching doses.</td></tr>") + "</table></div>")
     body = f"""<h1>Medication log</h1><p class=small>Tap drug dose = logged with timestamp. {cs}.
     <a href="/meds/manage">Manage stack \u2192</a></p>{cards}
-    <div class="card"><h2>Recent</h2><table>{hist}</table></div>"""
+    <div class="card"><h2>Recent</h2><table>{hist}</table></div>{glcard}"""
     return page("Meds", body)
 
 @app.route("/meds/manage", methods=["GET", "POST"])
