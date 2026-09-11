@@ -26,9 +26,12 @@ with sync_playwright() as p:
     pg.goto(B + "/setup"); pg.fill("input[name=pw]", "testpassword1"); pg.fill("input[name=pw2]", "testpassword1")
     pg.locator("input[name=pw2]").press("Enter"); pg.wait_for_load_state("networkidle")
     meds = pg.request.get(B + "/api/prnmeds/full").json()
-    pg.request.post(B + "/api/schedule", data={"med_id": meds[0]["id"], "slot": "MORNING",
+    import datetime as _dt
+    Y1 = (_dt.date.today() - _dt.timedelta(days=1)).isoformat()
+    pg.request.post(B + "/api/schedule", data={"med_id": meds[0]["id"], "slot": "MORNING", "valid_from": Y1,
                     "dose_text": "", "with_food": "ANY", "variants": "72|145|290"})
-    pg.request.post(B + "/api/schedule", data={"med_id": meds[1]["id"], "slot": "MORNING", "dose_text": "1 tab"})
+    pg.request.post(B + "/api/schedule", data={"med_id": meds[1]["id"], "slot": "MORNING", "dose_text": "1 tab",
+                    "valid_from": Y1})
     name = meds[0]["name"]
     pg.goto(B + "/"); pg.wait_for_load_state("networkidle")
     pg.click("#nowDoses .fold-h"); time.sleep(0.3)
@@ -95,6 +98,48 @@ with sync_playwright() as p:
         res(pg.locator("#n_painSites .pscore:visible").count() == 0, "tiles reset after save")
         hy.locator(".ph").click(); time.sleep(0.2); hy.locator(".ph").click(); time.sleep(0.2)
         res(not hy.locator(".pscore").is_visible(), "tapping the name again clears the tile")
+    # --- Phase B (v3.5.0) ------------------------------------------------
+    if "loadDayView" in pg.content():
+        def nrow(mid, day=None):
+            j = pg.request.get(B + "/api/now" + ("?day=" + day if day else "")).json()
+            return [x for s in j["slots"] for x in s["rows"] if x["med_id"] == mid][0]
+        # retime from the Now strip, then change dose must keep that time
+        pg.goto(B + "/"); pg.wait_for_load_state("networkidle"); pg.click("#nowDoses .fold-h"); time.sleep(0.3)
+        pg.locator("#nowSched .doserow", has_text=name).first.locator(".nm").click(); time.sleep(0.3)
+        pg.locator(".varpick .chip", has_text="145").click(); pg.locator(".varpick .go").click(); time.sleep(0.6)
+        pg.locator("#nowSched .doserow", has_text=name).first.locator(".nm").click(); time.sleep(0.3)
+        res(pg.locator(".varpick .tt").count() == 1, "Now strip shows the logged time")
+        pg.locator(".varpick .tt").fill("00:00"); pg.locator(".varpick .tm").click(); time.sleep(0.6)
+        res(nrow(meds[0]["id"])["dtime"] == "00:00", "Save time retimes the dose to 00:00")
+        pg.locator("#nowSched .doserow", has_text=name).first.locator(".nm").click(); time.sleep(0.3)
+        pg.locator(".varpick .ch").click(); time.sleep(0.2)
+        pg.locator(".varpick .chip", has_text="72").click(); pg.locator(".varpick .go").click(); time.sleep(0.6)
+        r0 = nrow(meds[0]["id"])
+        res(r0["logged_dose"] == "72" and r0["dtime"] == "00:00", "change dose keeps the retimed time (" + str(r0["dtime"]) + ")")
+        # day view
+        pg.click('#nav button[data-t="review"]'); time.sleep(0.8)
+        res(pg.locator("#dvList .dvrow").count() >= 1 and pg.locator("#dvNext").is_disabled(),
+            "Day by day lists today; next-day arrow disabled")
+        pg.locator("#dvList .dvrow", has_text=name).first.click(); time.sleep(0.3)
+        pg.locator("#dayView .varpick .tt").fill("00:01"); pg.locator("#dayView .varpick .go").click(); time.sleep(0.7)
+        res(nrow(meds[0]["id"])["dtime"] == "00:01", "day-view edit retimes")
+        res("time edited" in pg.locator("#dvList .dvrow", has_text=name).first.inner_text(), "edited entry is marked")
+        # backfill yesterday
+        pg.click("#dvPrev"); time.sleep(0.8)
+        res(pg.locator("#dvMiss .dvmiss").count() == 2, "yesterday shows 2 scheduled-not-logged")
+        plain = pg.locator("#dvMiss .dvmiss", has_text=meds[1]["name"]).first
+        plain.locator(".tt").fill("07:15"); plain.locator(".go").click(); time.sleep(0.7)
+        ry = nrow(meds[1]["id"], Y1)
+        res(ry["status"] == "TAKEN" and ry["dtime"] == "07:15", "backfilled yesterday at 07:15")
+        var = pg.locator("#dvMiss .dvmiss", has_text=name).first
+        var.locator(".go").click(); time.sleep(0.5)
+        res(nrow(meds[0]["id"], Y1)["status"] is None, "variant backfill refused without a dose")
+        var.locator(".chip", has_text="290").click(); var.locator(".go").click(); time.sleep(0.7)
+        rv = nrow(meds[0]["id"], Y1)
+        res(rv["status"] == "TAKEN" and rv["logged_dose"] == "290", "variant backfilled as 290")
+        res(pg.locator("#dvMiss .dvmiss").count() == 0 and pg.locator("#dvList .dvrow").count() == 2,
+            "yesterday now shows 2 logged, none missing")
+        pg.locator("#dayView").screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "dayview.png"))
     pg.screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui_" + os.path.basename(app_path) + ".png"), full_page=True)
     res(not errs, "no JavaScript errors" + ("" if not errs else ": " + " | ".join(errs)))
     br.close()

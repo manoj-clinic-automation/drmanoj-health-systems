@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.4.2)
+# GutLog — DOSSIER (v3.5.0)
 
 Single source of truth. Update after every change.
 
@@ -52,9 +52,29 @@ not a form. Everything below serves that.
   its own 1–10 score; each site saves as its own episode with its own score.
   A selected site with no score is refused, never saved blank.
 
+- **Retime from the strip** (v3.5.0) — the action strip on a logged dose
+  carries its logged time, editable, with *Save time*.
+
 Doses, extras and symptoms are collapsible; each header carries its own summary
 (`3 of 8 taken`, `2 logged today`) so state is readable without expanding
 anything. Blood pressure does not collapse.
+
+## Day by day (Review tab, first card) — v3.5.0
+
+One day at a time: every dose, extra, skip, symptom, BP reading and meal,
+in time order, tagged by kind. Tap any entry to move it to the right time or
+day, or delete it. Below the list, that day's scheduled doses that were never
+logged, each with a time box (slot time by default; now, if the slot time is
+still ahead today) and Taken / Skipped — variant medicines show their chips.
+
+Server guards (`/api/retime`, and `/api/now/dose` when given a day/time):
+no future day, no time later than now for today, HH:MM only. A scheduled
+dose can move only to a day its regimen line covered, and never onto a day
+where it is already logged (409). Extras move to any past day.
+
+**Every retime is recorded** in `edits` (old/new day and time, when). The
+day view marks such entries *time edited*. A diary time that changed
+silently cannot be trusted later; one that changed visibly can.
 
 ## Schema
 
@@ -69,6 +89,7 @@ anything. Blood pressure does not collapse.
 | `meals` · `library` · `foodtests` | Food logging, item library, food challenge results |
 | `labs` · `consults` · `doctors` · `courses` · `patches` · `files` | Labs, visits, drug courses, patch on/off times, attachments |
 | `settings` | key/value — schema_version, credential hashes, auth_epoch |
+| `edits` | Retime audit (v3.5.0). tbl, rid, old_day, old_time, new_day, new_time, at. Created by `SCHEMA` on first request — no migration step |
 
 ### med_schedule — effective dating
 
@@ -128,7 +149,8 @@ Concrete paths and commands are in `gutlog/INFRA_GutLog.local.md` (gitignored).
 1. WinSCP upload to the app directory (never terminal paste for multi-line files)
 2. Patch `app.py` via its versioned patcher — `--check` first, then apply
 3. Restart the service
-4. Run `test_phase_a.py` on the server → must be **18/18**
+4. Run `test_phase_a.py` on the server → must be **18/18**, and
+   `test_phase_b.py` → must be **16/16**
 5. Verify against real data, not just the fixture — `test_phase_a.py` builds its
    own database and never touches the live one
 6. OLS reverse proxy → loopback port · CyberPanel SSL · DNS A record
@@ -138,6 +160,13 @@ Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · HTTPS liv
 via OLS reverse proxy.
 
 ## Test evidence
+- `test_phase_b.py` — **16/16 PASS** (2026-09-11, v3.5.0): backfill (plain,
+  variant, skip), future/bad-time refusal writing nothing, retime + audit row,
+  no-op retime writes no audit, 7 guard cases, no move onto a logged day or
+  outside the regimen, extras move freely, symptom/BP/meal retime, day view
+  merge order and edited flags. Against v3.4.2 it scores 4/16, as it should.
+- `test_ui_now.py` — **27/27** in real Chromium (offline only), incl. strip
+  retime, change-dose-keeps-time, day-view edit, backfill of both kinds.
 - `test_phase_a.py` — **18/18 PASS** (2026-09-10, post-v3.4.0). Covers
   authenticated boot, empty schedule, regimen add, slot render, one-tap TAKEN,
   re-tap correction without duplication, skip-as-data, extra dose path, mistap
@@ -200,7 +229,6 @@ rediscovered the expensive way.
    `test_ui_now.py` before shipping any patch that touches the Now-tab script.
 
 ## What's next
-- **Phase B** — backfill and review surface
 - **Phase C** — RxGuard interaction check across the live med stack (blocked in
   part by gap 5 — unmapped molecules are invisible to it)
 - Stock and refill alerts, driven by `prnmeds.stock` / `pack_size`
@@ -209,6 +237,13 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-11 v3.5.0 — Phase B.** Retime from the Now strip; *Day by day*
+  card on Review (all streams, time order, tap to retime/delete); backfill of
+  unlogged scheduled doses; `edits` audit table; server guards on day/time;
+  change-dose now keeps the logged time (it restamped to now, which would
+  have undone a retime); page reloads itself when reopened on a new calendar
+  day (`todayISO` was fixed at load, so an app left open overnight logged the
+  morning dose against yesterday). `patch_gutlog_v350.py`, 11 anchors.
 - **2026-09-11 v3.4.2 — pain by site.** Two tiles on the symptom card, each
   with its own expanding 1–10 score, saved as separate episodes sharing time
   and Bristol (`patch_gutlog_v342.py`, 6 anchors). The patcher now also
