@@ -1,4 +1,4 @@
-# FitLog — DOSSIER (v1.2.0)
+# FitLog — DOSSIER (v1.3.2)
 
 Single source of truth. Update after every change.
 
@@ -127,6 +127,114 @@ as R2.
 - `health_hc_records` — record_key (PK), date, metric, value, unit,
   ingested_at · created by `patch_hc_support.py`, not by the base migration
 
+### iOS Health Webhook (Apple Watch) — v1.3.0
+Health Webhook on iOS posts the same snake_case array style as the Android
+app, not Apple's `{"data":{"metrics":[…]}}` shape, and it posts under
+`source=applewatch`. The route branched on the source NAME, so an iOS body
+went to the Apple parser, matched nothing, and stored zero metrics while
+still landing in `health_raw`. Routing is now by payload **shape**:
+`payload["platform"] == "ios"` selects `parse_ios_payload`.
+
+**iOS timestamps are UTC.** `2026-09-08T18:30:00.000Z` is `2026-09-09
+00:00` IST. Slicing the first ten characters filed every record a full day
+early, silently. `_to_ist_date()` adds +05:30 before deriving the date.
+A `+05:30` offset already in the string is taken at face value.
+`activity_rings` carries its own local calendar date and is trusted as-is.
+
+Arrays: `steps`→steps, `distance`→distance_km (metres), `active_calories`→
+active_energy_kcal, `total_calories`→total_energy_kcal, `resting_heart_rate`
+→resting_hr, `heart_rate`→hr, `heart_rate_variability`→hrv_ms. Summed:
+steps, distance, both energies. Everything else averaged over the day.
+`basal_metabolic_rate` is deliberately ignored — hundreds of records a day,
+no rule uses it. `exercise` becomes `health_workouts` rows. Ring **goals**
+(`move_goal_kcal`, `exercise_goal_min`, `stand_goal_hours`) are stored as
+context-only metrics so the rings view has something to draw against — a
+target is not a measurement and is absent from `RULE_BEARING` on purpose.
+
+iOS record keys are prefixed `ios|` so they cannot collide with HC keys.
+
+### health_hc_records carries a source — v1.3.0
+The record table is now shared by two wearables, and the daily recompute
+used to read `WHERE date = ? AND metric = ?` with no source filter. With
+Watch and Health Connect records on the same date+metric that **summed
+across sources**, writing the combined figure under whichever source posted
+last — a direct breach of S01. Caught before deploy: the table held 129
+healthconnect `steps` rows on 2026-09-10/11 and the first iOS payload
+covered exactly those dates, which would have written 1723 steps for
+09-10 instead of 2305 and 1206 as two separate rows.
+
+`_ensure_hc_source_column()` adds `source TEXT NOT NULL DEFAULT
+'healthconnect'` in place — additive, idempotent, correct for every row
+that predates it — and the recompute filters by source.
+`test_ios_source_isolation.py` seeds HC rows *before* posting iOS data and
+fails 2/19 against the unfixed code. `test_ios_ingest.py` scores 18/18
+either way: it runs on a fresh temp database with only iOS rows, so it
+never enters the branch. Rule 2, again.
+
+### Health Auto Export (Apple `data.metrics`) — v1.3.2
+The iPhone moved from Health Webhook (ios snake_case) to Health Auto
+Export on 2026-09-11. Auto Export posts the Apple `{"data":{"metrics":…}}`
+shape, so it routes to `parse_payload`, not `parse_ios_payload`. Two
+defects surfaced immediately.
+
+**Energy arrives in kilojoules.** `active_energy` and
+`basal_energy_burned` carry `units: "kJ"`. The canonical names end in
+`_kcal` and the parser stored `qty` verbatim with the source unit, so
+every energy figure was 4.184× too large and labelled kJ.
+`_apple_convert()` now converts and relabels. Validated against the
+retired ios feed: 521.8159 kJ ÷ 4.184 = 124.717, exactly the
+`move_kilocalories` the ios ring reported for 2026-09-09, and 257.294
+for 09-10.
+
+**A day's samples overwrote each other.** `parse_payload` emitted one row
+per sample and `store()` upserts on `(date, metric, source)`, so the last
+sample won instead of the day's total. Replaying the real per-hour export
+(`health_raw` id 22) through the unpatched parser stored, for 09-11:
+steps **4.61** instead of 4914, stand_hours **1** instead of 19,
+exercise_minutes **1** instead of 17. It never surfaced only because a
+daily-rollup export landed three minutes later and overwrote the damage.
+`_apple_aggregate()` now sums counts and durations and averages levels;
+`_APPLE_SUM` / `_APPLE_MEAN` name every canonical in `METRIC_MAP`.
+
+**Watch the loop variable.** `unit` in `parse_payload` is entry-level and
+shared by every point. The first build of this patch rebound it, so the
+first sample converted and every later one looked already-kcal and passed
+through raw. Caught by `test_apple_aggregation.py`, not by review. Bind to
+a fresh name.
+
+### `apple_stand_hour` has no stood/idle flag — 19 is not a bug
+Apple's `HKCategoryValueAppleStandHour` (`.stood` / `.idle`) is **not
+exported**. Every per-hour sample is `qty: 1`; the daily rollup is the
+pre-summed count. There is nothing to filter and no way to recover
+"stood" from this feed.
+
+2026-09-11 recorded hours 05:00–23:00 = **19 hours**, all confirmed by
+`apple_stand_time`. The ios ring's 12 was a 16:56 snapshot, which is
+exactly hours 05..16. **Stand hours can exceed the goal** — the ring caps
+at 100%, the count does not. `test_apple_aggregation.py` asserts 19 stays
+19, so a future "correction" to 12 fails the suite.
+
+`exercise_minutes` and `flights` are unaffected: each
+`apple_exercise_time` sample genuinely is one minute, so summing is right
+(17 matches the ring), and `flights_climbed` carries a real count.
+
+### One writer per source (2026-09-11)
+Both formats wrote `(date, metric, 'applewatch')` with different
+semantics — `store_hc` recomputed `stand_hours` = 12 from
+`health_hc_records` while `store` wrote 19, last writer winning. Owner's
+decision: **Auto Export wins.** The 604 ios-era `applewatch` rows were
+deleted from `health_hc_records` (healthconnect rows untouched), along
+with the ios-only measured metrics `move_energy_kcal` and `hr`. The three
+ring **goals** are kept — nothing else supplies them and they are static.
+
+**Open gaps from that decision:** `walking_running_distance` (units km)
+is not in `METRIC_MAP`, so `distance_km` no longer updates and holds its
+last ios value. `total_energy_kcal` is likewise orphaned and now
+inconsistent with active + basal. Neither is displayed anywhere. Also,
+`store()` replaces a day's value, so a *partial* export replaces a fuller
+one — fine while Auto Export sends whole-day rollups, not fine if it is
+ever set to incremental-only.
+
 ### Rule S01 — Source Precedence
 `applewatch` > `healthconnect` > `manual`, per metric per date. Values are
 **never summed or averaged** across sources. The phone feed can only fill a
@@ -153,6 +261,91 @@ by silently bending the data.
 **No F-rule consumes ingested data.** Verdict logic is byte-identical before
 and after Phase 3.5, deliberately. Wire metrics into rules only after a few
 weeks of real data shows what an OT day looks like on the wrist.
+
+## Apple Watch view — `/watch` (v1.3.0)
+
+`https://fit.dr-manoj.in/watch` — owner-facing, `@login_required`, in the
+switcher bar between FitLog and Events. **Read-only by construction**: the
+route runs SELECTs and renders. It touches no rule, no knowledge file and
+no write path.
+
+- **Activity rings** — Move / Exercise / Stand as inline SVG arcs against
+  the goals the Watch itself reported, with the percentage.
+- **Recent days** — 14 days × steps, active energy, exercise minutes,
+  stand hours, resting HR, HRV, sleep. A blank cell is "the Watch sent
+  nothing", never a zero.
+- **Trend** — 28-day step bars plus mean / low / high / days-reported per
+  metric.
+- **Workouts** — type, duration, distance, energy, last 28 days.
+- **Sources** — every source with row count and date range. Apple Watch
+  reads *active*; Health Connect reads *parked — kept, not fed*. Samsung
+  rows are retained deliberately.
+- Each metric carries an **R** (rule-bearing) or **C** (context-only)
+  badge, and `RULE_BEARING` is imported from `health_ingest` rather than
+  restated, so the page can never disagree with the engine.
+
+`test_watch_page.py` (39 checks) actually renders the page and asserts on
+the HTML — the auth gate, the goals, the None-safe workout row, the parked
+label, the read-only guarantee (row counts unchanged across three GETs)
+and the switcher bar. Server suites otherwise never render a page; this is
+the FitLog analogue of GutLog's `test_ui_now.py` lesson.
+
+Every string the page builds is plain concatenation, never an f-string —
+Python 3.9 has no PEP 701, and CSS/SVG braces inside an f-string are a
+live hazard in this codebase.
+
+## "Today so far" strip — the vitals page (v1.3.1)
+
+A compact live Watch block at the top of `/`, the page shown on login
+where the morning check-in happens. **Today**, not yesterday: progress
+during the day.
+
+Placement is deliberate: immediately **after** the safety flags and
+**before** the check-in form. Flags stay first — demoting an F-rule
+warning below a data strip would be a regression — and the strip is one
+card of roughly 160px, so the Sleep/Energy/Pain scales stay on the first
+screen at 375×812. Logging remains the primary action. On a day already
+checked in, the strip sits above the verdict (owner's call, 2026-09-11).
+
+Four tiles: Steps (big figure), then Move / Exercise / Stand as 46px ring
+arcs against the goals the Watch reported, each captioned `value/goal`.
+A context line carries resting HR and HRV. Every tile carries an R or C
+badge drawn from `W_RULE_BEARING`, the alias of `health_ingest.RULE_BEARING`
+— never a local copy, so the badges cannot drift from the engine.
+
+**Freshness.** Every populated strip shows `as of HH:MM IST` from
+`MAX(ingested_at)` over today's Watch rows, plus a relative age
+("8 min ago", "5 h ago"). Past `W_STALE_MINUTES` (180) the stamp turns
+amber. A stale figure can never be read as live.
+
+**Empty day.** If nothing has arrived today the strip says so in words and
+names the last reading on file ("Last reading was 2026-09-10 at 17:31
+IST"). It never renders a zero the Watch did not send, and never draws an
+empty ring.
+
+Read-only. `/watch` is unchanged; the strip links to it.
+
+## Token handling — open issue (2026-09-11)
+
+**The OLS access log records the full request line (`%r`), so the `?k=`
+healthconnect token is written to disk in clear text on every HC post.**
+Rotation does not fix this; it only invalidates what is already logged.
+The next successful HC post re-leaks whatever the current token is.
+
+The real fix is changing `logFormat` in
+`/usr/local/lsws/conf/vhosts/fit.dr-manoj.in/vhost.conf` from `%r` to
+`"%m %U"`, which drops the query string. Deferred by the owner
+(2026-09-11): it needs a graceful OLS restart affecting every vhost on the
+box, and CyberPanel may rewrite the file. **Schedule it.** Until then,
+treat `FITLOG_HC_TOKEN` as compromised on every rotation cycle.
+
+There is **no logrotate rule** for that file — OLS self-rolls at
+`rollingSize 10M` / `keepDays 10`, and at ~100 KB it will not roll for
+months. Clearing it means truncating in place (`: > file`); litespeed
+holds the fd in append mode, so it keeps writing from offset 0. Do not
+delete it — that orphans the fd.
+
+The gunicorn log is unaffected: `RedactingLogger` writes `k=<redacted>`.
 
 ## Observability — request logging (2026-09-11)
 
@@ -221,6 +414,11 @@ Run all three on the server. They gate the restart.
 | Suite | Count | Covers |
 |---|---|---|
 | `test_health_ingest.py` | 23/23 | Base ingest, auth, S01, idempotency |
+| `test_ios_ingest.py` | 18/18 | v1.3.0: iOS Health Webhook path — UTC→IST boundary, units, averaging vs summing, rings, idempotency, workouts |
+| `test_ios_source_isolation.py` | 19/19 | v1.3.0: **negative control for cross-source contamination** — seeds HC rows first, then posts Watch data for the same date. 2/19 against the unfixed code |
+| `test_watch_page.py` | 39/39 | v1.3.0: renders `/watch` — auth gate, rings vs goals, R/C badges, None-safe workout, parked label, read-only, switcher bar |
+| `test_apple_aggregation.py` | 29/29 | v1.3.2: Health Auto Export parser — per-hour and daily-rollup shapes from the real payloads, kJ→kcal both ways, sum vs mean, idempotency, and **stand_hours 19 pinned as correct**. 7 failures against the unfixed parser |
+| `test_watch_strip.py` | 52/52 | v1.3.1: renders `/` — empty day, data-but-not-today, exact freshness stamp, stale marker, badge provenance from the engine, strip shape and position, read-only, `/watch` untouched |
 | `test_hc_ingest.py` | 36/36 | HC Webhook path, R1/R2 regressions, negative controls |
 | `test_db_pin.py` | 12/12 | Non-default DB filename resolution |
 | `test_activity_feed.py` | 12/12 | v1.2.0: real GutLog + real FitLog on loopback — workout classes, mindful + indoor ingest, feed auth and content (best source only), GutLog pulling watch data (merge), Home card, escaping, cache not mutated, scratch-DB isolation, GutLog down, token file missing |
@@ -232,6 +430,10 @@ healthconnect case in it uses the legacy shape, so `is_hc` is false. It scored
 on HC changes.
 
 ## Changelog
+- 2026-09-11 v1.3.2 — DEPLOYED 23:41 IST. **Health Auto Export parser fixes.** `patch_apple_aggregation.py`, 2 anchors: `_apple_convert()` (kJ→kcal on `active_energy` / `basal_energy_burned`) and `_apple_aggregate()` (sum counts and durations, average levels, instead of last-sample-wins). New `test_apple_aggregation.py` **29/29**, built on the real id 22 / id 23 payload shapes; **7 checks fail against the unfixed parser**. First apply was rolled back — it rebound the entry-level `unit` variable so only the first sample converted; the suite caught it, `point_unit` fixes it. Suites after: 23/23, 36/36, 18/18, 19/19, 29/29, 39/39, 52/52, 10/10, 12/12, 12/12, kb_lint PASS, smoke 53/53. History recomputed for 09-09..09-11 by replaying stored `health_raw` bodies (no new raw rows): `active_energy_kcal` 521.8/1076.5/1845.1 kJ → **124.7/257.3/441.0 kcal**, `basal_energy_kcal` → 1528.4/1666.1/1735.3 kcal; steps 951/2305/4914, exercise 0/11/17, stand 7/11/19 and flights 1 all unchanged and confirmed correct. 604 ios-era `applewatch` rows retired from `health_hc_records`. **`stand_hours` 19 on 09-11 was investigated and found correct, not a bug** — see the section above. Rollback: `health_ingest.py.bak-apple-20260911_234019`, `fitlog.db.bak-apple-20260911_234019`.
+- 2026-09-11 Cleanup sweep — no code change. Fresh DB backup `/root/backups/fitlog/fitlog.db.cleanup-20260911_221631` (integrity ok). Removed 15 superseded `.bak` files (534 KB), `patch_hc_support.py` (md5-verified identical to the repo copy, R1 key `metric|start|end` confirmed), 23 stray `/tmp/fitlog_*` test dirs (1.8 MB) and `__pycache__` (92 KB). Kept per file: newest rollback + last pre-feature state + the pre-Phase-3.5 `app.py` floor. **`FITLOG_HC_TOKEN` rotated a second time** — the first rotation's token had itself been logged by three verification curls through OLS; this rotation was verified over loopback only, so nothing reached the vhost log. OLS access log archived **redacted** to `/root/backups/fitlog/fit.access_log.redacted-20260911_222730` (mode 600, all three tokens masked, 597 lines) then truncated in place; OLS confirmed still appending. Suites after: 23/23, 36/36, 18/18, 19/19, 39/39, 52/52, 10/10, 12/12, 12/12, kb_lint PASS, smoke 53/53. **Two live faults found, not caused by the sweep: the Samsung HC feed has been dead since the 17:24 rotation (last good post 17:11), and iOS `Auto Export` has been 401-looping every ~90 s since 18:16. Both need a token entered on the phone.**
+- 2026-09-11 v1.3.1 — DEPLOYED 18:07 IST. **"Today so far" Watch strip on the vitals page.** `patch_watch_strip.py`, 4 anchors (styles, `w_ring_svg` gains a `size` argument, strip renderer, one line wiring it into `home()` after the flags and before the check-in form). Previewed in a full staging copy at `/root/fitlog_stage` before the live file was touched — four states rendered against a copy of the live DB (logging path, fresh, stale, empty). Placement above the verdict on checked-in days confirmed by the owner. Suites: new `test_watch_strip.py` **52/52**, plus 23/23, 36/36, 18/18, 19/19, 39/39, 10/10, 12/12, 12/12 unchanged; kb_lint PASS, smoke 53/53 — rule engine untouched. Live strip reads `as of 17:31 IST · 35 min ago`, steps 3874, Move 319/300 kcal, Exercise 17/30 min, Stand 12/12 h. Rollback: `app.py.bak-strip-20260911_180622`, `fitlog.db.bak-strip-20260911_180622`.
+- 2026-09-11 v1.3.0 — DEPLOYED 17:31 IST. **iOS payload support + Apple Watch view + HC token rotation.** Four anchor-verified patchers, each dry-run first: `patch_ios_payload.py` (6 anchors — shape routing, UTC→IST, generalised record store), `patch_ios_source_isolation.py` (5 anchors — `source` column on `health_hc_records`, recompute filtered by source, `source` bound as a parameter instead of concatenated into SQL), `patch_ios_ring_goals.py` (1 anchor — ring goals as context-only metrics), `patch_watch_page.py` (3 anchors — styles, nav, `/watch` route). Suites: 23/23, 36/36, 18/18, **19/19 new isolation**, **39/39 new watch page**, plus 10/10, 12/12, 12/12 unchanged; kb_lint PASS and smoke 53/53 — rule engine untouched. Backfill: `health_raw` id 11 re-POSTed through `https://fit.dr-manoj.in` → 604 records, 2 workouts, dates 2026-09-09/10/11, steps 439 / 2305 / 3874, healthconnect 1206 / 2242 preserved as separate rows. `FITLOG_HC_TOKEN` rotated (the old value had leaked into the OLS access log in clear text); old token → 401, new → 200, scope re-verified (401 on read and on `source=applewatch`). No phone change needed — Samsung is parked. Rollback: `app.py.bak-watch-20260911_173020`, `health_ingest.py.bak-preios-20260911_172110`, `fitlog.db.bak-ios-20260911_172110`, `ingest.env.bak-rotate-20260911_172449`.
 - 2026-09-11 Observability — DEPLOYED. gunicorn access logging on (`gunicorn_conf.py` + `-c` in `fitlog.service`, `LogsDirectory=fitlog`, 30-day logrotate), URL tokens redacted. Diagnosis of "no phone data since 10-Sep": every phone POST **did** arrive and was answered `401` by FitLog — OLS access log carries them hourly (Android `okhttp/4.12.0`) and in bursts (iOS `Health Webhook/4`, `Auto Export/20260909.1`). Android sends `?source=<token>` — token in the wrong parameter, no `k=`, no `source` — so `_authorised_hc` is never reached. iOS sends `?source=applewatch` with no usable `Authorization` header; `k=` cannot substitute, being healthconnect-scoped by design. Both corrected shapes replayed `200` through OLS. Probe rows removed: `health_raw` back to id 4 only, `health_metrics` 0. **Open:** `FITLOG_HC_TOKEN` is in clear text in the OLS log and, via the mis-set `source=`, in the new gunicorn log — rotate once both phones are reconfigured.
 - 2026-09-11 v1.2.0 — activity feed for GutLog, Home *Activity today* card, mindful minutes, indoor workouts (`patch_fitlog_v120.py`, app.py + health_ingest.py). All earlier suites unchanged; `test_activity_feed.py` 12/12.
 - 2026-09-11 v1.1.0 — DEPLOYED 07:37 IST. W03 and the Meds page read doses from GutLog's feed (`patch_fitlog_v110.py`, 4 anchors). Suites: smoke 53/53, kb_lint, 23/23, 36/36, 12/12 unchanged; new `test_gutlog_feed.py` 10/10 (0/10 against v1.0.1, as it should). On-server: all suites green, `verify_phase_c.py` 9/9. Rollback: `app.py.bak-v110-20260911_073740`.

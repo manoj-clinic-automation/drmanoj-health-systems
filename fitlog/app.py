@@ -519,6 +519,29 @@ ul.plan li{padding:8px 4px;border-bottom:1px dashed #dde3e8}.flag{background:#ff
 .rulechips span{display:inline-block;background:#eef2f5;border-radius:8px;padding:2px 8px;margin:2px;font-size:12px}
 table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:6px 4px;border-bottom:1px solid #eee;text-align:left}
 .msg{background:#e5f5ec;border:1px solid #79c99a;border-radius:8px;padding:8px;margin:8px 0;font-size:14px}
+.wrings{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
+.wring{display:flex;align-items:center;gap:8px;min-width:158px}
+.wring-l{font-size:13px;line-height:1.35}.wring-v{font-size:17px;font-weight:700}
+.wscroll{overflow-x:auto}.wscroll table{min-width:520px}
+.wr,.wc{display:inline-block;width:15px;height:15px;line-height:15px;text-align:center;border-radius:4px;font-size:10px;font-weight:700}
+.wr{background:#0b6e6e;color:#fff}.wc{background:#e7eef2;color:#5a6b78}
+.wbars{display:flex;align-items:flex-end;gap:2px;height:82px;overflow-x:auto;margin:6px 0}
+.wbar{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:11px}
+.wbar i{display:block;width:9px;background:#0b6e6e;border-radius:2px 2px 0 0}
+.wbar u{font-size:9px;color:#8a9aa8;text-decoration:none;margin-top:2px}
+.wstrip{padding:10px 12px}
+.wstrip-h{display:flex;align-items:baseline;gap:8px;margin-bottom:4px}
+.wstrip-h b{font-size:14px}
+.wfresh{font-size:11px;color:#5a6b78;margin-left:auto;white-space:nowrap}
+.wfresh.stale{color:#a56a00;font-weight:600}
+.wstrip-h a{font-size:11px;white-space:nowrap}
+.wts{display:flex;gap:6px;align-items:flex-end}
+.wt{flex:1;text-align:center;min-width:0}
+.wt-n{font-size:12px;font-weight:700;margin-top:-3px}
+.wt-big{font-size:23px;font-weight:700;line-height:46px}
+.wt-l{font-size:10px;color:#5a6b78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wt-l .wr,.wt-l .wc{width:12px;height:12px;line-height:12px;font-size:9px;border-radius:3px}
+.wctx{margin-top:6px}.wctx .wc{width:12px;height:12px;line-height:12px;font-size:9px;border-radius:3px}
 """
 
 def page(title, body, msg=""):
@@ -529,7 +552,7 @@ def page(title, body, msg=""):
         <a class="app" href="https://health.dr-manoj.in">GutLog</a>
         <a class="app cur" href="/">FitLog</a>
         <span style="flex:1"></span>
-        <a href="/events">Events</a> <a href="/meds">Meds</a> <a href="/tests">Tests</a> <a href="/history">Log</a>
+        <a href="/watch">Watch</a> <a href="/events">Events</a> <a href="/meds">Meds</a> <a href="/tests">Tests</a> <a href="/history">Log</a>
         </div>"""
     m = f'<div class="msg">{msg}</div>' if msg else ""
     return f"""<!doctype html><html><head><meta charset="utf-8">
@@ -575,6 +598,10 @@ def home():
     body = f"<h1>Today \u2014 {t}</h1>"
     for fid, txt in compute_flags():
         body += f'<div class="flag">\u2691 <b>{fid}</b> {txt}</div>'
+    # Live Watch progress for today. Read-only, and deliberately below the
+    # safety flags and above the check-in form: logging stays the primary
+    # action on this page.
+    body += watch_today_strip(t)
     if not ci:
         chips_pain = "".join(
             f'<input class="chk" type="checkbox" name="site" value="{s}" id="s{i}"><label class="chip" for="s{i}">{s}</label>'
@@ -896,9 +923,405 @@ def history():
     <p class=small><a href="/logout">Logout</a></p>"""
     return page("History", body)
 
+# ---------------- Apple Watch view (read-only) ----------------
+# Renders what the ingest layer already stored. Writes nothing, decides
+# nothing. RULE_BEARING is imported rather than restated so the page can
+# never disagree with the engine about which metrics a rule may read.
+from health_ingest import RULE_BEARING as W_RULE_BEARING
+
+W_SRC = "applewatch"
+W_TREND_DAYS = 28
+W_RECENT_DAYS = 14
+W_CIRC = 263.9  # 2 * pi * r, r = 42
+
+# metric key, label, unit suffix, decimal places
+W_DAILY = (
+    ("steps", "Steps", "", 0),
+    ("active_energy_kcal", "Active", "kcal", 0),
+    ("exercise_minutes", "Exercise", "min", 0),
+    ("stand_hours", "Stand", "h", 0),
+    ("resting_hr", "Rest HR", "bpm", 0),
+    ("hrv_ms", "HRV", "ms", 1),
+    ("sleep_hours", "Sleep", "h", 1),
+)
+
+# label, achieved metric, goal metric, unit, ring colour
+W_RINGS = (
+    ("Move", "move_energy_kcal", "move_goal_kcal", "kcal", "#e0245e"),
+    ("Exercise", "exercise_minutes", "exercise_goal_min", "min", "#9bd430"),
+    ("Stand", "stand_hours", "stand_goal_hours", "h", "#38d6e0"),
+)
+
+W_DASH = "\u2014"
+
+
+def w_esc(v):
+    s = str(v)
+    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return s.replace('"', "&quot;")
+
+
+def w_fmt(v, places):
+    if v is None:
+        return W_DASH
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return W_DASH
+    if places == 0:
+        return str(int(round(f)))
+    return str(round(f, places))
+
+
+def w_metrics(days):
+    """Return {date: {metric: value}} for the Watch over the last N days."""
+    cut = (date.today() - timedelta(days=days - 1)).isoformat()
+    out = {}
+    rows = db().execute(
+        "SELECT date, metric, value FROM health_metrics "
+        "WHERE source = ? AND date >= ? ORDER BY date DESC",
+        (W_SRC, cut)).fetchall()
+    for r in rows:
+        out.setdefault(r["date"], {})[r["metric"]] = r["value"]
+    return out
+
+
+def w_ring_svg(pct, colour, size=74):
+    filled = W_CIRC * min(max(pct, 0.0), 1.0)
+    rest = W_CIRC - filled
+    out = ['<svg viewBox="0 0 100 100" width="' + str(size) + '" height="' +
+           str(size) + '" aria-hidden="true">']
+    out.append('<circle cx="50" cy="50" r="42" fill="none" stroke="#e7eef2" '
+               'stroke-width="13"/>')
+    if filled > 0:
+        out.append('<circle cx="50" cy="50" r="42" fill="none" stroke="' + colour +
+                   '" stroke-width="13" stroke-linecap="round" stroke-dasharray="' +
+                   str(round(filled, 1)) + " " + str(round(rest, 1)) +
+                   '" transform="rotate(-90 50 50)"/>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+def w_rings_card(rows):
+    day = None
+    for d in sorted(rows.keys(), reverse=True):
+        for spec in W_RINGS:
+            if rows[d].get(spec[1]) is not None:
+                day = d
+                break
+        if day:
+            break
+    if day is None:
+        return ""
+    cells = []
+    for label, got_key, goal_key, unit, colour in W_RINGS:
+        got = rows[day].get(got_key)
+        goal = rows[day].get(goal_key)
+        pct = 0.0
+        if got is not None and goal:
+            pct = float(got) / float(goal)
+        pct_txt = str(int(round(pct * 100))) + "%" if goal else "no goal on file"
+        goal_txt = w_fmt(goal, 0) if goal else W_DASH
+        cells.append('<div class="wring">' + w_ring_svg(pct, colour) +
+                     '<div class="wring-l"><b>' + label + "</b><br>" +
+                     '<span class="wring-v">' + w_fmt(got, 0) + "</span> / " +
+                     goal_txt + " " + unit + '<br><span class="small">' +
+                     pct_txt + "</span></div></div>")
+    return ("<h2>Activity rings</h2>" +
+            '<div class="card"><div class="small">' + w_esc(day) +
+            ' &middot; source: Apple Watch</div><div class="wrings">' +
+            "".join(cells) + "</div>" +
+            '<div class="small">Goals are read from the Watch itself and are '
+            "context-only: a target is not a measurement, and no rule reads "
+            "one.</div></div>")
+
+
+def w_recent_card(rows):
+    days = sorted(rows.keys(), reverse=True)[:W_RECENT_DAYS]
+    if not days:
+        return ""
+    head = ["<tr><th>Date</th>"]
+    for key, label, unit, places in W_DAILY:
+        mark = "R" if key in W_RULE_BEARING else "C"
+        cls = "wr" if key in W_RULE_BEARING else "wc"
+        unit_txt = '<br><span class="small">' + unit + "</span>" if unit else ""
+        head.append('<th><span class="' + cls + '" title="' +
+                    ("rule-bearing" if cls == "wr" else "context-only") +
+                    '">' + mark + "</span> " + label + unit_txt + "</th>")
+    head.append("</tr>")
+    body = []
+    for d in days:
+        body.append("<tr><td>" + w_esc(d[5:]) + "</td>")
+        for key, label, unit, places in W_DAILY:
+            body.append("<td>" + w_fmt(rows[d].get(key), places) + "</td>")
+        body.append("</tr>")
+    return ("<h2>Recent days</h2>" +
+            '<div class="card"><div class="wscroll"><table>' +
+            "".join(head) + "".join(body) + "</table></div>" +
+            '<div class="small">Every value shown is Apple Watch. A blank cell '
+            "means the Watch sent nothing for that day, not a zero.</div></div>")
+
+
+def w_trend_card(rows):
+    days = sorted(rows.keys())
+    if not days:
+        return ""
+    series = [(d, rows[d].get("steps")) for d in days]
+    vals = [v for d, v in series if v is not None]
+    if not vals:
+        return ""
+    top = max(float(v) for v in vals)
+    bars = []
+    for d, v in series:
+        h = 0
+        if v is not None and top > 0:
+            h = int(round(58.0 * float(v) / top))
+            if h < 1:
+                h = 1
+        bars.append('<div class="wbar" title="' + w_esc(d) + ": " +
+                    w_fmt(v, 0) + ' steps"><i style="height:' + str(h) +
+                    'px"></i><u>' + w_esc(d[8:]) + "</u></div>")
+    stats = []
+    for key, label, unit, places in W_DAILY:
+        got = [rows[d].get(key) for d in days if rows[d].get(key) is not None]
+        if not got:
+            continue
+        nums = [float(x) for x in got]
+        mark = "R" if key in W_RULE_BEARING else "C"
+        cls = "wr" if key in W_RULE_BEARING else "wc"
+        suffix = (" " + unit) if unit else ""
+        stats.append('<tr><td><span class="' + cls + '">' + mark + "</span> " +
+                     label + "</td><td>" +
+                     w_fmt(sum(nums) / len(nums), places) + suffix + "</td><td>" +
+                     w_fmt(min(nums), places) + suffix + "</td><td>" +
+                     w_fmt(max(nums), places) + suffix + "</td><td>" +
+                     str(len(nums)) + "</td></tr>")
+    return ("<h2>Trend " + W_DASH + " last " + str(W_TREND_DAYS) + " days</h2>" +
+            '<div class="card"><div class="small">Daily steps</div>' +
+            '<div class="wbars">' + "".join(bars) + "</div>" +
+            "<table><tr><th>Metric</th><th>Mean</th><th>Low</th><th>High</th>" +
+            "<th>Days</th></tr>" + "".join(stats) + "</table>" +
+            '<div class="small">Mean, low and high are over the days the Watch '
+            "actually reported, shown in the Days column.</div></div>")
+
+
+def w_workouts_card():
+    cut = (date.today() - timedelta(days=W_TREND_DAYS - 1)).isoformat()
+    rows = db().execute(
+        "SELECT date, start_ts, wtype, duration_s, distance_km, energy_kcal "
+        "FROM health_workouts WHERE source = ? AND date >= ? "
+        "ORDER BY start_ts DESC LIMIT 40", (W_SRC, cut)).fetchall()
+    if not rows:
+        return ("<h2>Workouts</h2>" +
+                '<div class="card"><div class="small">No Watch workouts in the '
+                "last " + str(W_TREND_DAYS) + " days.</div></div>")
+    out = ["<tr><th>Date</th><th>Type</th><th>Time</th><th>Distance</th>"
+           "<th>Energy</th></tr>"]
+    for r in rows:
+        secs = r["duration_s"]
+        mins = W_DASH if secs is None else str(int(round(float(secs) / 60.0))) + " min"
+        km = r["distance_km"]
+        km_txt = W_DASH if km is None else str(round(float(km), 2)) + " km"
+        kc = r["energy_kcal"]
+        kc_txt = W_DASH if kc is None else str(int(round(float(kc)))) + " kcal"
+        out.append("<tr><td>" + w_esc(r["date"][5:]) + "</td><td>" +
+                   w_esc(str(r["wtype"] or "unknown").title()) + "</td><td>" +
+                   mins + "</td><td>" + km_txt + "</td><td>" + kc_txt +
+                   "</td></tr>")
+    return ("<h2>Workouts</h2>" +
+            '<div class="card"><table>' + "".join(out) + "</table>" +
+            '<div class="small">Source: Apple Watch. Context-only ' + W_DASH +
+            " no rule reads a workout.</div></div>")
+
+
+def w_sources_card():
+    rows = db().execute(
+        "SELECT source, COUNT(*) AS n, MIN(date) AS d0, MAX(date) AS d1 "
+        "FROM health_metrics GROUP BY source ORDER BY source").fetchall()
+    out = ["<tr><th>Source</th><th>Rows</th><th>From</th><th>To</th>"
+           "<th>State</th></tr>"]
+    for r in rows:
+        src = r["source"]
+        if src == W_SRC:
+            state = '<b style="color:#1d8a4e">active</b>'
+        elif src == "healthconnect":
+            state = '<span class="small">parked ' + W_DASH + " kept, not fed</span>"
+        else:
+            state = '<span class="small">manual entry</span>'
+        out.append("<tr><td>" + w_esc(src) + "</td><td>" + str(r["n"]) +
+                   "</td><td>" + w_esc(r["d0"] or W_DASH) + "</td><td>" +
+                   w_esc(r["d1"] or W_DASH) + "</td><td>" + state + "</td></tr>")
+    return ("<h2>Sources</h2>" +
+            '<div class="card"><table>' + "".join(out) + "</table>" +
+            '<div class="small">S01 source precedence: Apple Watch &gt; Health '
+            "Connect &gt; manual, per metric per date. Values are never summed "
+            "or averaged across sources " + W_DASH + " Health Connect can only "
+            "fill a date the Watch left silent. Samsung rows are retained "
+            "deliberately; nothing healthconnect has been deleted.</div></div>")
+
+
+# label, value keys in preference order, goal key, unit, ring colour
+W_STRIP = (
+    ("Move", ("move_energy_kcal", "active_energy_kcal"), "move_goal_kcal",
+     "kcal", "#e0245e"),
+    ("Exercise", ("exercise_minutes",), "exercise_goal_min", "min", "#9bd430"),
+    ("Stand", ("stand_hours",), "stand_goal_hours", "h", "#38d6e0"),
+)
+
+W_STALE_MINUTES = 180
+
+
+def w_age_mins(stamp):
+    """Minutes since an 'YYYY-MM-DD HH:MM:SS' local stamp, or None."""
+    try:
+        then = datetime.strptime(str(stamp), "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
+    delta = (datetime.now() - then).total_seconds()
+    if delta < 0:
+        return 0
+    return int(delta // 60)
+
+
+def w_age_txt(mins):
+    if mins is None:
+        return ""
+    if mins < 1:
+        return "just now"
+    if mins < 60:
+        return str(mins) + " min ago"
+    if mins < 1440:
+        return str(mins // 60) + " h ago"
+    return str(mins // 1440) + " d ago"
+
+
+def watch_today_strip(t):
+    """
+    Compact live Watch progress for today, for the top of the vitals page.
+
+    Read-only. No rule reads any value shown here; the R/C badges come
+    from the engine's own RULE_BEARING, never from a local copy.
+    """
+    rows = db().execute(
+        "SELECT metric, value, ingested_at FROM health_metrics "
+        "WHERE source = ? AND date = ?", (W_SRC, t)).fetchall()
+    vals = {}
+    stamp = None
+    for r in rows:
+        vals[r["metric"]] = r["value"]
+        if stamp is None or str(r["ingested_at"]) > stamp:
+            stamp = str(r["ingested_at"])
+
+    link = '<a href="/watch">All Watch data &rarr;</a>'
+    shown = ("steps", "exercise_minutes", "stand_hours", "active_energy_kcal",
+             "move_energy_kcal", "resting_hr", "hrv_ms")
+    has_data = False
+    for k in shown:
+        if vals.get(k) is not None:
+            has_data = True
+            break
+
+    if not has_data:
+        last = db().execute(
+            "SELECT date, MAX(ingested_at) AS at FROM health_metrics "
+            "WHERE source = ? GROUP BY date ORDER BY date DESC LIMIT 1",
+            (W_SRC,)).fetchone()
+        if last and last["at"]:
+            tail = ("Last reading was " + w_esc(last["date"]) + " at " +
+                    w_esc(str(last["at"])[11:16]) + " IST.")
+        else:
+            tail = "No Watch data on file yet."
+        return ('<div class="card wstrip" id="wstrip">'
+                '<div class="wstrip-h"><b>\u231a Today so far</b>' + link +
+                '</div><div class="small">Nothing has arrived from the Watch '
+                "yet today. " + tail + "</div></div>")
+
+    mins = w_age_mins(stamp)
+    age = w_age_txt(mins)
+    cls = "wfresh stale" if (mins is not None and mins >= W_STALE_MINUTES) else "wfresh"
+    hhmm = w_esc(str(stamp)[11:16]) if stamp else "\u2014"
+    fresh = ('<span class="' + cls + '">as of ' + hhmm + " IST" +
+             ((" \u00b7 " + age) if age else "") + "</span>")
+
+    steps_mark = "wr" if "steps" in W_RULE_BEARING else "wc"
+    tiles = ['<div class="wt"><div class="wt-big">' + w_fmt(vals.get("steps"), 0) +
+             '</div><div class="wt-l"><span class="' + steps_mark + '">' +
+             ("R" if steps_mark == "wr" else "C") + "</span> Steps</div></div>"]
+
+    for label, keys, goal_key, unit, colour in W_STRIP:
+        got = None
+        for k in keys:
+            if vals.get(k) is not None:
+                got = vals.get(k)
+                break
+        goal = vals.get(goal_key)
+        pct = 0.0
+        if got is not None and goal:
+            pct = float(got) / float(goal)
+        cap = w_fmt(got, 0)
+        if goal:
+            cap = cap + "/" + w_fmt(goal, 0)
+        rb = keys[0] in W_RULE_BEARING
+        badge = "wr" if rb else "wc"
+        tiles.append('<div class="wt">' + w_ring_svg(pct, colour, 46) +
+                     '<div class="wt-n">' + cap + " " + unit + "</div>" +
+                     '<div class="wt-l"><span class="' + badge + '">' +
+                     ("R" if rb else "C") + "</span> " + label + "</div></div>")
+
+    ctx = []
+    if vals.get("resting_hr") is not None:
+        ctx.append("Rest HR " + w_fmt(vals.get("resting_hr"), 0) + " bpm")
+    if vals.get("hrv_ms") is not None:
+        ctx.append("HRV " + w_fmt(vals.get("hrv_ms"), 1) + " ms")
+    ctx_html = ""
+    if ctx:
+        ctx_html = ('<div class="small wctx"><span class="wc">C</span> ' +
+                    " \u00b7 ".join(ctx) + " \u2014 context only, no rule "
+                    "reads these</div>")
+
+    return ('<div class="card wstrip" id="wstrip"><div class="wstrip-h">'
+            '<b>\u231a Today so far</b>' + fresh + link + "</div>" +
+            '<div class="wts">' + "".join(tiles) + "</div>" + ctx_html +
+            "</div>")
+
+
+@app.route("/watch")
+@login_required
+def watch_view():
+    rows = w_metrics(W_TREND_DAYS)
+    if not rows:
+        body = ("<h1>Apple Watch</h1>" +
+                '<div class="card">No Watch data in the last ' +
+                str(W_TREND_DAYS) + " days. The feed posts to "
+                "<code>/api/ingest?source=applewatch</code> with the bearer "
+                "token.</div>" + w_sources_card())
+        return page("Watch", body)
+    parts = ["<h1>Apple Watch</h1>"]
+    parts.append(w_rings_card(rows))
+    parts.append(w_recent_card(rows))
+    parts.append(w_trend_card(rows))
+    parts.append(w_workouts_card())
+    parts.append(w_sources_card())
+    parts.append('<div class="card"><b>How to read this page</b>'
+                 '<div class="small"><span class="wr">R</span> rule-bearing: '
+                 "the rule engine is permitted to read this metric. "
+                 '<span class="wc">C</span> context-only: shown so you can '
+                 "interpret a day, never read by a rule.<br><br>"
+                 "Rule-bearing metrics: " + w_esc(", ".join(W_RULE_BEARING)) +
+                 ".<br>Heart rate and HRV are context-only on purpose "
+                 "" + W_DASH + " HR is unreliable during medication titration, "
+                 "so aerobic intensity stays governed by the talk test."
+                 "<br><br>This page is read-only. No F-rule consumes an "
+                 "ingested metric; verdict logic is unchanged by anything "
+                 "shown here.</div></div>")
+    parts.append('<p class=small><a href="/">Home</a> &middot; '
+                 '<a href="/history">Log</a></p>')
+    return page("Watch", "".join(parts))
+
+
 @app.route("/health")
 def health():
-    return {"app": "fitlog", "version": "1.2.0", "ok": True}
+    return {"app": "fitlog", "version": "1.3.1", "ok": True}
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=8040, debug=False)

@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.10.0)
+# GutLog — DOSSIER (v3.5.0)
 
 Single source of truth. Update after every change.
 
@@ -76,150 +76,6 @@ where it is already logged (409). Extras move to any past day.
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
 
-## Stock and refill (Meds → Stock) — v3.6.0
-
-Stock is **derived from events at read time**, never kept as a running number
-— the same rule as expected doses. An undone dose therefore puts its tablet
-back by itself, and a retimed dose moves its deduction with it.
-
-- **Count** — what is left in the strips or bottle, *not* the pillbox. Every
-  count is a fresh starting point; only doses and fills after it deduct.
-- **Bought** — adds a pack (defaults to `pack_size`). Refused before a count.
-- **Pillbox medicines** (scheduled, fixed dose — the default for those) come
-  out of stock when the pillbox is filled: *Pillbox filled* deducts N days
-  (default 7) of every counted pillbox medicine at its regimen rate. A dose
-  taken from the pillbox does not deduct again; an *extra* dose of the same
-  medicine does, because it did not come from the pillbox. *Undo last fill*
-  removes exactly the last fill.
-- **Per-dose medicines** (extras, PRN — and any medicine switched to per dose)
-  deduct per logged dose, by the tablet count read from the dose text
-  (`2 tab` → 2, `1/2` → 0.5; a strength such as `40 mg` reads as 1).
-- **Variant-strength medicines are not tracked.** One count cannot stand for
-  three strengths, and a wrong count makes the alert noise.
-
-Alerts (a banner at the top of the Now tab, tapping it opens Stock):
-- pillbox — RED when stock will not cover the next 7-day fill, AMBER when it
-  covers only one more;
-- per dose — RED under 3 days at the 14-day average use, AMBER under 7, and
-  AMBER at zero even when rarely used (a PRN you need on hand).
-
-## Vitals log (Review tab, second card) — v3.6.0
-
-Blood pressure and pulse chart (faint guides at 140 and 90), averages for the
-range and for morning (before 12:00) vs evening (after 17:00), highest and
-lowest, every reading in a table, and a `vitals.csv` download. Follows the
-30 d / 90 d / 6 mo selector. Entry is unchanged: BP on the Now tab, full
-vitals under Log → Vitals.
-
-## Feed for RxGuard and FitLog — v3.6.0
-
-Two read-only endpoints for the companion apps, bearer-gated (not session):
-
-| Endpoint | Returns |
-|---|---|
-| `/api/feed/stack?days=14` | Open regimen lines (name, molecule, slot, dose, variants) + per-medicine totals of what was taken (doses, days, last day) |
-| `/api/feed/doses?since=YYYY-MM-DD` | Every non-skipped dose event since the date (clamped to 180 days) |
-
-Old PRN-tab rows that carry only a medicine name are mapped to their
-`prnmeds` row and molecule. Skips are never included. The token lives in
-`feed.token` beside `app.py`, mode 600, **created by GutLog on first start**;
-RxGuard and FitLog read the same file, so there is no token to copy. Rotate
-by deleting the file and restarting all three services. The feed token
-cannot write anything (test 19).
-
-Consumers follow their **live database**: a scratch database outside the app
-folder — every test suite — never reads the feed, so a test can never be
-coloured by the real diary.
-
-## Salts and medicine status — v3.7.0
-
-**Meds → Salts** lists every active medicine, the ones needing a salt first.
-Each row: salt (combinations joined with ` + `), strength, Save, and
-*Not a single drug* for mixtures and supplements (stops the prompt). Typing
-three letters asks NLM RxNorm for spelling suggestions (only the typed word
-leaves the server, no token). A name like `Brand (salt 135)` or `Salt 20`
-pre-fills a guess that is shown, never saved until Save. Adding a medicine
-from the Now tab lands on Salts.
-
-**Now banner** (`#nowMedStatus`): "N need a salt" → Salts; "N waiting for your
-review in RxGuard" / "N interactions to review" → `rx.dr-manoj.in/kb`;
-"RxGuard shows N RED" → As taken. RxGuard's counts come from its
-`/api/feed/status` (GutLog's feed token, loopback, 5-minute cache). The stack
-feed now carries `strength`, so RxGuard drafts use it.
-
-## Activity card (Now tab) — v3.7.0
-
-Tiles: Walk, Treadmill, Cycling (road), Cycling (static), Meditation. Tap a
-tile → minutes chips (10–60) and talk-test intensity (Easy / Moderate / Hard;
-none for meditation) → Save. Several a day, each with Undo; they appear in
-Day by day and can be retimed or deleted there. Header: total minutes and
-steps.
-
-Watch data comes from FitLog (`/api/feed/activity?day=`, 60-second cache):
-watch workouts show with ⌚; a watch workout of the same kind within 30
-minutes of a tap shows **once**, as *watch-confirmed*, with the watch's
-minutes and your intensity. Watch mindful minutes show only when no
-meditation was tapped. FitLog down → the tapped entries still show, with
-"Watch data not reachable right now". Deep link `/?open=act`.
-
-Outward calls (RxGuard, FitLog, NLM) follow the live-database rule: a scratch
-database never reaches out; `GUTLOG_LINKS=1/0` overrides.
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/salts`, `POST /api/salt`, `GET /api/salt/suggest?q=` | Salts segment |
-| `GET /api/medstatus` | Banner counts |
-| `POST /api/activity`, `POST /api/activity/undo/<id>`, `GET /api/activity?day=` | Activity card |
-| `GET /api/feed/activities?since=` | Bearer feed for FitLog (day, time, kind, minutes, intensity) |
-
-## Records (the Files tab) — v3.8.0
-
-| Segment | What it shows |
-|---|---|
-| Summary | Medicines now (live regimen with salt and strength), as-needed use in 30 days, precautions, recent vitals, latest key results (lab flags in red), active and resolved problems, plan progress, documents still missing, link to the narrative record. Print / PDF. |
-| Reports | Every report on one timeline by year; filter chips by kind; one-line finding (tap to expand); opens the original. Vault uploads appear as "to be processed". |
-| Trends | Every laboratory value exactly as printed, the laboratory's own flag kept; key tests first; sparkline per test; tap for the full series with laboratory. |
-| Plan | The investigation plan; Mark done / undo. |
-| Upload · Labs · Consults | Unchanged (Vault renamed Upload). |
-
-Content arrives through `import_records.py <folder>`: the folder is the
-owner's medical-records folder with `records_manifest.local.json` in it
-(docs to take, with date/kind/title/source/finding; lab values as printed;
-plan; profile). Reports are copied into `uploads/` as `rec_<sha>.pdf`,
-de-duplicated by content; lab values upserted by (date, test, lab); plan
-status kept on re-import; the profile is written to
-`records_profile.local.json` (mode 600). It prints counts only.
-`/api/feed/profile` (feed token) returns condition codes only, for RxGuard.
-
-## Scanner and inbox — v3.9.0
-
-`/scan` hosts the clinic's shared scanner widget (`scanner_widget.js`, v2.3
-from the clinic repository's S219 kit; the file sits beside app.py and is
-served login-gated as `/scanner_widget.js`). The page sets the type and
-report date, then the widget uploads each PDF to `/api/upload`. Buttons:
-Records → Upload and Records → Reports. Deep link `/?open=records`.
-
-Processing a batch: drag `/root/gutlog/uploads/inbox` to the PC's
-`_PENDING_to_process`, say "process"; the reports are transcribed exactly
-and a small manifest names each by its fingerprint (`sha`), so only the
-manifest travels back. `import_records.py` files them from the inbox and
-removes the inbox copies; the waiting list hides anything already filed.
-
-## Automatic reading — v3.10.0
-
-`records_worker.py` (venv python; started by each upload, and by cron
-`*/15`) reads every waiting upload with Sarvam Document Intelligence
-(`client.doc_ai.extract`, JSON schema: patient name, report date,
-laboratory, document type, title, result rows with value/unit/range/flag,
-impression). Filing rules: date from the report (day-first; future or
-impossible dates fall back to the upload date); kind from the type; test
-names matched through an alias table and the record's existing names;
-flag = the laboratory's mark or a value outside the printed range; plan
-items ticked by keyword; inbox copy removed. rec_docs.origin='auto',
-checked=0 until "Looks right". Patient-name mismatch → status 'check',
-values held back. Failures retry (max 3) with the reason shown under
-Reports. `--probe` reports key and library without calling the API.
-
 ## Schema
 
 | Table | Purpose |
@@ -233,13 +89,6 @@ Reports. `--probe` reports key and library without calling the API.
 | `meals` · `library` · `foodtests` | Food logging, item library, food challenge results |
 | `labs` · `consults` · `doctors` · `courses` · `patches` · `files` | Labs, visits, drug courses, patch on/off times, attachments |
 | `settings` | key/value — schema_version, credential hashes, auth_epoch |
-| `stock_events` | v3.6.0. med_id, kind (COUNT / ADD / FILL), qty, at (`YYYY-MM-DD HH:MM`), note (fill batch id) |
-| `stock_meds` | v3.6.0. Per-medicine stock mode override (`pillbox` / `per_dose`) |
-| `med_salts` | v3.7.0. med_id, strength, no_salt, updated (the salt itself stays in `prnmeds.molecule`) |
-| `activities` | v3.7.0. id, day, atime, kind (walk / treadmill / cycle_road / cycle_static / meditation), minutes, intensity, notes, created |
-| `rec_docs` | v3.8.0. day, kind, title, source, finding, stored, orig, sha (unique), status |
-| `rec_labs` | v3.8.0. day, test, section, value (as printed), num (chart only), unit, ref, flag, lab; unique (day, test, lab) |
-| `rec_plan` | v3.8.0. pos, test (unique), why, timing, status, done_day, note |
 | `edits` | Retime audit (v3.5.0). tbl, rid, old_day, old_time, new_day, new_time, at. Created by `SCHEMA` on first request — no migration step |
 
 ### med_schedule — effective dating
@@ -301,7 +150,7 @@ Concrete paths and commands are in `gutlog/INFRA_GutLog.local.md` (gitignored).
 2. Patch `app.py` via its versioned patcher — `--check` first, then apply
 3. Restart the service
 4. Run `test_phase_a.py` on the server → must be **18/18**, and
-   `test_phase_b.py` → must be **16/16**, and `test_phase_c.py` → **20/20**
+   `test_phase_b.py` → must be **16/16**
 5. Verify against real data, not just the fixture — `test_phase_a.py` builds its
    own database and never touches the live one
 6. OLS reverse proxy → loopback port · CyberPanel SSL · DNS A record
@@ -311,39 +160,6 @@ Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · HTTPS liv
 via OLS reverse proxy.
 
 ## Test evidence
-- `test_phase_f.py` — **8/8 PASS** (v3.9.0): login-gated scan page and
-  widget, fingerprint + inbox copy on upload, waiting list, processing by
-  fingerprint clears the inbox, processed scan leaves the waiting list and
-  opens as a record, buttons and deep link, missing widget file → 404.
-- `test_phase_e.py` — **13/13 PASS** (2026-09-11, v3.8.0): import (duplicate
-  content once, missing reported, profile mode 600), idempotent re-import
-  keeping plan status, counts-only output, reports list with uploads as
-  inbox, file serving behind login, trends (key first, printed values and
-  flags kept), summary (live medicines, vitals, key results, problems,
-  plan, narrative), plan guards, profile feed codes-only, page, no-profile
-  and no-manifest cases, login on every records endpoint.
-- `test_phase_d.py` — **18/18 PASS** (2026-09-11, v3.7.0): tables and the
-  no-outward-call rule, salts list and banner count, save/normalise, 4 guard
-  cases, Not a single drug, strength in the stack feed, 7 activity guards,
-  add/order/undo, watch-merge rules, Day by day + retime audit + delete,
-  activities feed (token, fields, read-only), page, and against a fake local
-  server: RxGuard status, FitLog watch data, NLM suggestions without the
-  token, caching, companions down, `GUTLOG_LINKS=0`.
-- `test_ui_now.py` — 48 checks in real Chromium incl. banner → Salts, Save,
-  Not a single drug, five closed tiles, minutes required, meditation without
-  intensity, list and header, Undo, no page JS errors.
-- `test_phase_c.py` — **20/20 PASS** (2026-09-11, v3.6.0): dose-text parsing,
-  default modes, 7 guard cases, count/use/undo/bought, only after-count doses
-  deduct, pillbox dose not double-counted, fill and undo-fill (two fills in the
-  same second stay separate — found by this suite), both alert ladders, mode
-  switch, page cards, token file mode, feed auth (no token / wrong / no
-  Bearer → 401, token without login → 200), stack and doses shape, skips
-  excluded, legacy rows mapped, since clamped, feed cannot write.
-- `test_ui_now.py` — **36/36** in real Chromium (offline only), incl. stock
-  count, pillbox fill, refill banner → Stock, vitals chart and averages.
-- Full server-sequence rehearsal (2026-09-11): the exact VPS command block run
-  against replicas of all three app folders — patch, all suites, restart,
-  `verify_phase_c.py` 9/9 — then re-run to prove it idempotent.
 - `test_phase_b.py` — **16/16 PASS** (2026-09-11, v3.5.0): backfill (plain,
   variant, skip), future/bad-time refusal writing nothing, retime + audit row,
   no-op retime writes no audit, 7 guard cases, no move onto a logged day or
@@ -413,35 +229,47 @@ rediscovered the expensive way.
    `test_ui_now.py` before shipping any patch that touches the Now-tab script.
 
 ## What's next
-- Phase D shipped in v3.7.0 with RxGuard v1.2.0 and FitLog v1.2.0. After the
-  first source sync: fill Salts, then review drafts in RxGuard → Sources
-  review. Watch data appears on the Activity card once Health Auto Export
-  posts to FitLog.
-- Phase C shipped in v3.6.0 with RxGuard v1.1.0 and FitLog v1.1.0. The
-  cardiologist BP export was dropped by the owner: the Vitals log plus
-  `vitals.csv` covers it.
-- **RxGuard coverage** — several molecules in the regimen are not in RxGuard's
-  knowledge base, so its As-taken page reports them UNKNOWN (sedatives among
-  them, which means the sedation burden it shows is understated). Extending
-  `knowledge/drugs.json` is curated, sourced clinical work — a separate job.
-- Record a molecule for every single-molecule medicine (gap 5).
+- **Phase C** — RxGuard interaction check across the live med stack (blocked in
+  part by gap 5 — unmapped molecules are invisible to it)
+- Stock and refill alerts, driven by `prnmeds.stock` / `pack_size`
+- FitLog read-endpoint cutover — FitLog consuming GutLog data rather than
+  duplicating it
+- Cardiologist BP export from `vitals`
 
 ## Changelog
-- **2026-09-11 v3.10.0 — reports read automatically** (Sarvam), filed with a
-  machine-read mark. `patch_gutlog_v3100.py`, 14 anchors.
-- **2026-09-11 v3.9.0 — the clinic scanner** at /scan, inbox for processing.
-  `patch_gutlog_v390.py`, 9 anchors.
-- **2026-09-11 v3.8.0 — Records.** Summary, Reports, Trends, Plan; import
-  from a manifest kept outside the repo; profile feed for RxGuard.
-  `patch_gutlog_v380.py`, 12 anchors.
-- **2026-09-11 v3.7.0 — Phase D (GutLog side).** Salts segment, medicine
-  status banner, Activity card with watch merge, strength in the stack feed,
-  activities feed. `patch_gutlog_v370.py`, 22 anchors.
-- **2026-09-11 v3.6.0 — Phase C (GutLog side).** Stock and refill (Meds →
-  Stock, derived from events; pillbox vs per-dose; alerts + Now banner);
-  Vitals log card; read-only feed for RxGuard/FitLog with a self-created
-  mode-600 token. `patch_gutlog_v360.py`, 14 anchors. Shipped with RxGuard
-  v1.1.0 (As taken) and FitLog v1.1.0 (W03 reads GutLog).
+- **2026-09-12 v3.11.0 — scan quality.** The scanner is the clinic's widget
+  (S219 v2.3, the newest of the three versions), and it was tuned for pharmacy
+  bills: half A4, large print, lying on a desk. A pathology report is the
+  opposite, and two things went wrong on one. **Auto-crop:** the edge fit reads
+  the surface from a ring round the frame, so when a page is held close enough
+  to fill the frame there is no desk in that ring, the brightest "document"
+  left is a block of printing, and the outline lands inside the page — on a
+  synthetic close-held report the old build kept 67% of the ink and threw the
+  rest away; and when it gave up instead, the 8% inset fallback cut past the
+  margin into the text. **Shadow removal:** the flattening window was
+  min-side/8, wider at report resolution than the shadow it is meant to remove;
+  blank paper was divided by its own local mean, which turns paper grain into
+  speckle; and the final stretch used min and max, so one staple set the black
+  point and the print came out pale.
+  GutLog's own copy (`/root/gutlog/scanner_widget.js`, served at
+  `/scanner_widget.js` — the clinic's seven live surfaces read a different
+  file and are untouched) now: probes for a visible border before believing
+  the detector and keeps the whole photo when the page fills the frame; pads a
+  believed crop by 1.5%; makes *Add this page* the whole page and the crop the
+  small button; computes the illumination map on a small grid so 220dpi does
+  not need a 75MB integral image; takes the paper level from the local
+  *maximum* of that map rather than its average, which is what removes the
+  pale halo a local mean leaves round every block of text; and clips the white
+  point just under the paper level, which takes the grain off a shadowed
+  corner instead of amplifying it along with the letters.
+  Capture and save ceilings 1400/1600 → 2600 px (~110 → ~220 dpi at A4), JPEG
+  0.85 → 0.92, upload ceiling 12 → 25 MB. Every knob keeps its old value when
+  a host does not set it. Measured against ground truth in `scan_lab/`:
+  ink kept 66.6% → 100% held close, 82.4% → 100% filling the frame; contrast
+  in the shadowed half of a harshly lit page 64 → 180; blank-paper grain sd
+  3.3 → 0.9; 118 → 220 dpi. `patch_gutlog_v3110.py` (3 anchors),
+  `patch_scanner_report.py` (10 anchors), `test_phase_h.py` 17/17.
+
 - **2026-09-11 v3.5.0 — Phase B.** Retime from the Now strip; *Day by day*
   card on Review (all streams, time order, tap to retime/delete); backfill of
   unlogged scheduled doses; `edits` audit table; server guards on day/time;
