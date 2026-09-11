@@ -247,7 +247,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY
+SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -1565,6 +1565,14 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 .cathead{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin:14px 0 2px}
 .backlink{display:inline-block;font-size:14px;color:var(--teal);font-weight:700;text-decoration:none;margin:0 0 10px;background:none;border:0;cursor:pointer}
 .mini{font-size:13px;color:var(--teal);font-weight:700;background:none;border:0;cursor:pointer;padding:4px 0}
+/* GUTLOG_V342_PAINSITE -- pain-by-site tiles */
+.ptile{border:2px solid var(--line);border-radius:13px;margin:0 0 8px;background:var(--chip)}
+.ptile .ph{display:flex;width:100%;align-items:center;gap:10px;background:none;border:0;padding:12px 14px;font-size:16px;font-weight:600;color:var(--ink);cursor:pointer;text-align:left}
+.ptile .pv{margin-left:auto;font-size:14px;font-weight:700;color:var(--teal-d)}
+.ptile .pscore{display:none;padding:0 12px 12px}
+.ptile.open{border-color:var(--teal);background:#F7FBF9}
+.ptile.open .pscore{display:flex}
+@media (max-width:430px){ #n_painSites .chip{padding:8px 0;min-width:34px;text-align:center}}
 @media (prefers-reduced-motion:reduce){.toast,.pbar i,.chip{transition:none}}
 </style></head><body>
 <div style="display:flex;gap:8px;padding:8px 12px 4px;font-size:13.5px">
@@ -1623,6 +1631,8 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
       <div class="chips" id="n_symType"></div>
       <p class="lbl" style="margin-top:14px">Severity</p>
       <div class="chips" id="n_symSev"></div>
+      <p class="lbl" style="margin-top:14px">Pain by site &mdash; tap to score</p>
+      <div id="n_painSites"></div>
       <p class="lbl" style="margin-top:14px">Bristol (optional)</p>
       <div class="chips" id="n_symBristol"></div>
       <button type="button" class="btn primary" id="n_symSave" style="margin-top:14px">Save episode</button>
@@ -2442,6 +2452,10 @@ buildChips();
 const SEVS=['1','2','3','4','5','6','7','8','9','10'];
 const SYMTYPES=['Abdominal pain','Cramp','Bloating','Urgency','Loose stool','Constipation','Nausea','Reflux','Other'];
 let nowData=null, nSym={types:[],sev:null,bristol:null}, showAllMeds=false;
+/* GUTLOG_V342_PAINSITE -- each site carries its own score; present in
+   nPain = selected, value '' = selected but not yet scored */
+const PAIN_SITES=['Left iliac pain','Hypogastrium pain'];
+let nPain={};
 
 /* Collapsible cards. Only blood pressure stays open; the rest carry their
    state in the header so the summary is readable without expanding. */
@@ -2488,6 +2502,80 @@ function nowRow(r){
     }catch(err){toast(err.message);}
   };
   return d;
+}
+
+/* Tapping a row that is already logged. The instinct is to tap the thing
+   again, so that has to do something -- but an accidental second tap must
+   not silently delete a medication record, hence a strip rather than an
+   immediate toggle. */
+function openRowActions(rowEl,r,st){
+  const old=document.querySelector('.varpick');if(old)old.remove();
+  const box=document.createElement('div');
+  box.className='varpick';
+  const canChange=!!r.variants;
+  let html='<p class="vt"></p><div class="vb'+(canChange?' three':'')+'">'+
+    '<button type="button" class="cx">Cancel</button>';
+  if(canChange)html+='<button type="button" class="ch">Change dose</button>';
+  if(st==='TAKEN')html+='<button type="button" class="sp">Skip</button>';
+  html+='<button type="button" class="danger un">Undo</button></div>';
+  box.innerHTML=html;
+  const was=st==='TAKEN'?('taken'+(r.logged_dose?' '+r.logged_dose:'')):'skipped';
+  box.querySelector('.vt').textContent=r.name+' - '+was;
+  box.querySelector('.cx').onclick=()=>box.remove();
+  box.querySelector('.un').onclick=async()=>{
+    try{
+      if(r.dose_id)await post('/api/now/undo/'+r.dose_id,{});
+      toast('Undone');box.remove();loadNow();
+    }catch(err){toast(err.message);}
+  };
+  const ch=box.querySelector('.ch');
+  if(ch)ch.onclick=()=>{box.remove();openVariantPicker(rowEl,r);};
+  const sp=box.querySelector('.sp');
+  if(sp)sp.onclick=async()=>{
+    try{
+      await post('/api/now/dose',{med_id:r.med_id,sched_id:r.sched_id,
+        status:'SKIPPED',day:nowData.day});
+      toast('Marked skipped');box.remove();loadNow();
+    }catch(err){toast(err.message);}
+  };
+  rowEl.parentNode.insertBefore(box,rowEl.nextSibling);
+  box.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+/* A scheduled medicine whose dose varies. Multi-select, because a
+   combination such as 145 + 72 is one dose, not two. */
+function openVariantPicker(rowEl,r){
+  if(document.querySelector('.varpick'))document.querySelector('.varpick').remove();
+  const opts=r.variants.split('|').map(s=>s.trim()).filter(Boolean);
+  const picked=[];
+  const box=document.createElement('div');
+  box.className='varpick';
+  box.innerHTML='<p class="vt"></p><div class="vrow"></div>'+
+    '<div class="vb"><button type="button" class="cx">Cancel</button>'+
+    '<button type="button" class="go">Log</button></div>';
+  box.querySelector('.vt').textContent=r.name+' - which dose?';
+  const vrow=box.querySelector('.vrow');
+  opts.forEach(v=>{
+    const b=document.createElement('div');b.className='chip';b.textContent=v;
+    b.onclick=()=>{
+      const i=picked.indexOf(v);
+      if(i>=0)picked.splice(i,1);else picked.push(v);
+      b.classList.toggle('sel',picked.indexOf(v)>=0);
+    };
+    vrow.appendChild(b);
+  });
+  box.querySelector('.cx').onclick=()=>box.remove();
+  box.querySelector('.go').onclick=async()=>{
+    if(!picked.length){toast('Pick a dose');return;}
+    const txt=picked.join(' + ');
+    try{
+      await post('/api/now/dose',{med_id:r.med_id,sched_id:r.sched_id,
+        status:'TAKEN',day:nowData.day,dose_text:txt});
+      toast('Logged '+r.name+' '+txt);box.remove();loadNow();
+    }catch(err){toast(err.message);}
+  };
+  rowEl.parentNode.insertBefore(box,rowEl.nextSibling);
+  box.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 
 async function loadNow(){
@@ -2558,6 +2646,27 @@ function buildNowStatics(){
       b.classList.toggle('sel',nSym.types.indexOf(v)>=0);
     };t.appendChild(b);});
 
+  /* Pain by site: tap the tile to select it and open its score row,
+     tap the name again to clear it. */
+  const ps=$('#n_painSites');
+  PAIN_SITES.forEach(site=>{
+    const w=document.createElement('div');w.className='ptile';
+    w.innerHTML='<button type="button" class="ph"><span class="pn"></span><span class="pv"></span></button>'+
+                '<div class="chips pscore"></div>';
+    w.querySelector('.pn').textContent=site;
+    const pv=w.querySelector('.pv'), row=w.querySelector('.pscore');
+    SEVS.forEach(v=>{const b=document.createElement('div');b.className='chip num';b.textContent=v;
+      b.onclick=()=>{nPain[site]=v;pv.textContent=v+'/10';
+        [...row.children].forEach(c=>c.classList.toggle('sel',c===b));};
+      row.appendChild(b);});
+    w.querySelector('.ph').onclick=()=>{
+      if(site in nPain){delete nPain[site];w.classList.remove('open');pv.textContent='';
+        [...row.children].forEach(c=>c.classList.remove('sel'));}
+      else{nPain[site]='';w.classList.add('open');pv.textContent='score?';}
+    };
+    ps.appendChild(w);
+  });
+
   const s=$('#n_symSev');
   SEVS.forEach(v=>{const b=document.createElement('div');b.className='chip num';b.textContent=v;
     b.onclick=()=>{nSym.sev=v;[...s.children].forEach(c=>c.classList.toggle('sel',c===b));};s.appendChild(b);});
@@ -2579,16 +2688,25 @@ function buildNowStatics(){
   /* one episode per symptom chosen, sharing time, severity and Bristol --
      two symptoms at once are two findings, not one blended row */
   $('#n_symSave').onclick=async()=>{
-    if(!nSym.types.length){toast('Pick a symptom');return;}
+    const sites=Object.keys(nPain);
+    if(!nSym.types.length&&!sites.length){toast('Pick a symptom');return;}
+    const unscored=sites.filter(k=>!nPain[k]);
+    if(unscored.length){toast('Give '+unscored[0].toLowerCase()+' a score');return;}
     const t=nowHM();
     try{
       for(const ty of nSym.types){
         await post('/api/episodes',{day:todayISO,etime:t,category:'GI',etype:ty,
           severity:nSym.sev,bristol:nSym.bristol});
       }
-      toast(nSym.types.length>1?(nSym.types.length+' episodes saved'):'Episode saved');
-      nSym={types:[],sev:null,bristol:null};
-      $$('#n_symType .chip,#n_symSev .chip,#n_symBristol .chip').forEach(c=>c.classList.remove('sel'));
+      for(const k of sites){
+        await post('/api/episodes',{day:todayISO,etime:t,category:'GI',etype:k,
+          severity:nPain[k],bristol:nSym.bristol});
+      }
+      const n=nSym.types.length+sites.length;
+      toast(n>1?(n+' episodes saved'):'Episode saved');
+      nSym={types:[],sev:null,bristol:null};nPain={};
+      $$('#n_symType .chip,#n_symSev .chip,#n_symBristol .chip,#n_painSites .chip').forEach(c=>c.classList.remove('sel'));
+      $$('#n_painSites .ptile').forEach(w=>{w.classList.remove('open');w.querySelector('.pv').textContent='';});
     }catch(err){toast(err.message);}
   };
 
