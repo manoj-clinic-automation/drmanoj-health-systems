@@ -9,7 +9,7 @@ table layout). The label text and pairs below are SYNTHETIC -- written to
 exercise the parser, not quoted from any real label. Scratch database,
 scratch knowledge folder; nothing live is touched. Python 3.9.
 
-  python3 test_kb.py        -> must print 29/29 passed
+  python3 test_kb.py        -> must print 32/32 passed
 """
 import json
 import os
@@ -334,11 +334,16 @@ def main():
 
     def t10_page():
         h = c.get("/kb").get_data(as_text=True)
-        for s in ("Sources review", "ramelteon", "Benzodiazepine related drugs", "contraindicated",
-                  "DDInter 2.0 risk level: Moderate", "Approve ticked", "already covers"):
-            assert s in h, "page missing: " + s
+        hl = h.lower()
+        for s_ in ("Your review", "What matters for you", "Accept all recommended", "Medicines RxGuard will learn",
+                   "Bears on what you take now", "Source wording", "contraindicated",
+                   "DDInter 2.0 risk level: Moderate", "already checks"):
+            assert s_ in h, "page missing: " + s_
+        assert "ramelteon" in hl and "diltiazem" in hl
         assert "GREEN" not in h
-        return "drafts, quotes, sources and the alias card render; no GREEN"
+        i_red, i_amb = h.find('rv-find RED'), h.find('rv-find AMBER')
+        assert 0 < i_red < i_amb, "RED interactions must come first"
+        return "leads with interactions (RED first), plain chips, source wording on tap; no GREEN"
 
     def did(key):
         return con.execute("SELECT id FROM kb_drafts WHERE key=?", (key,)).fetchone()[0]
@@ -414,7 +419,7 @@ def main():
         kb_sync.run(con, data=feed, now="2026-09-12 03:00")
         STATE["label_newer"] = False
         assert drafts()["ramelteon"][0] == "source_changed", "label change not flagged: " + drafts()["ramelteon"][0]
-        assert "re-review" in c.get("/kb").get_data(as_text=True)
+        assert "check again" in c.get("/kb").get_data(as_text=True)
         return "next-day re-verify flags an approved entry whose FDA label changed"
 
     def t19_sources_down():
@@ -523,6 +528,40 @@ def main():
         assert r2[0] == "2.5 mg" and d2["strength"] == "2.5 mg", "strength not refreshed: " + str(r2[0])
         return "combination ATC skipped; label bullets split; older pending draft rebuilt with the new strength"
 
+    def t29_plain_reasons():
+        h = c.get("/kb").get_data(as_text=True)
+        assert "Both slow the heart rate" in h or "Both lower blood pressure" in h or "levels can rise" in h, \
+            "no plain-language reason on any interaction card"
+        return "interaction cards explain the mechanism in plain words"
+
+    def t30_organ_notes():
+        f = rx.organ_note_actionable
+        assert f("Reduce the dose in severe renal impairment.")
+        assert f("Exposure increased 10-fold in moderate hepatic impairment.")
+        assert not f("No dose adjustment is necessary in mild-to-moderate hepatic impairment.")
+        assert not f("Renal impairment is not expected to affect the clearance of the drug.")
+        e = rx.draft_to_entry({"props": [], "sources": []}, [
+            {"field": "renal", "value": "Renal impairment is not expected to affect clearance."},
+            {"field": "hepatic", "value": "Reduce the dose in hepatic impairment."}])
+        assert "renal" not in e and e["reference"]["renal"] and e["hepatic"], str(e)
+        return "reassuring kidney/liver wording is kept as reference and no longer triggers a dose review"
+
+    def t31_accept_all():
+        feed5 = json.loads(json.dumps(feed))
+        feed5["taken"].append({"name": "Fresh", "molecule": "freshmolx", "strength": ""})
+        kb_sync.run(con, data=feed5, now="2026-09-12 06:00")
+        con.execute("INSERT OR IGNORE INTO kb_pairs(a,b,kind,flag,quote,source,status,created) "
+                    "VALUES('alprazolam','zz_test','ddinter','AMBER','DDInter 2.0 risk level: Moderate','DDInter 2.0 (academic; CC BY-NC-SA 4.0)','pending','t')")
+        con.commit()
+        before = con.execute("SELECT COUNT(*) FROM kb_drafts WHERE status IN ('pending','source_changed')").fetchone()[0]
+        assert before >= 1
+        r = c.post("/kb/accept_all", follow_redirects=True)
+        h = r.get_data(as_text=True)
+        left = con.execute("SELECT COUNT(*) FROM kb_drafts WHERE status IN ('pending','source_changed')").fetchone()[0]
+        lp = con.execute("SELECT COUNT(*) FROM kb_pairs WHERE status='pending'").fetchone()[0]
+        assert left == 0 and lp == 0 and "Accepted" in h and "Nothing waiting" in h, (left, lp)
+        return "one button accepts %d waiting medicine(s) and every pending interaction" % before
+
     tests = [("00 FDA table parser", t00_fda_parse), ("01 FDA cache + outage", t01_fda_cache),
              ("02 DDInter index", t02_ddinter), ("03 RxNorm identity", t03_rxnorm),
              ("04 openFDA label choice", t04_openfda), ("05 draft properties", t05_draft_props),
@@ -537,9 +576,11 @@ def main():
              ("22 names only", t22_only_names_leave), ("23 smoke untouched", t23_smoke_untouched),
              ("24 terminal report", t24_report),
              ("25 trickling server cut off", t25_trickle), ("26 DDInter resume + draft rebuild", t26_ddinter_resume_and_rebuild),
-             ("27 connectivity check", t27_diag), ("28 draft quality fixes", t28_quality_fixes)]
+             ("27 connectivity check", t27_diag), ("28 draft quality fixes", t28_quality_fixes),
+             ("29 plain reasons", t29_plain_reasons), ("30 kidney/liver notes", t30_organ_notes),
+             ("31 accept all", t31_accept_all)]
     print("=" * 66)
-    print("RxGuard v1.2.2 sources review - test")
+    print("RxGuard v1.3.0 your review - test")
     print("=" * 66)
     for name, fn in tests:
         check(name, fn)
