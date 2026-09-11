@@ -183,6 +183,50 @@ with sync_playwright() as p:
             "Vitals log: 3 lines charted, 4 readings listed")
         res("average 129/83" in pg.locator("#vtSum").inner_text(), "Vitals summary average 129/83")
         pg.locator("#vitalsLog").screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "vitals.png"))
+    # --- v3.7.0: medicine status, salts, activity -------------------------
+    if pg.locator("#nowAct").count():
+        HERE = os.path.dirname(os.path.abspath(__file__))
+        pg.click('#nav button[data-t="now"]'); time.sleep(0.9)
+        res("need a salt" in pg.locator("#nowMedStatus").inner_text(), "Now banner: medicines need a salt")
+        pg.locator("#nowMedStatus .mlink").first.click(); time.sleep(0.8)
+        res(pg.locator("#meds-salts").is_visible() and pg.locator("#saltList .strow").count() >= 3,
+            "banner opens Meds > Salts with one row per medicine")
+        sr = pg.locator("#saltList .strow", has_text=meds[1]["name"]).first
+        sr.locator(".sm").fill("fluconazole"); sr.locator(".st").fill("150 mg")
+        sr.locator(".go").click(); time.sleep(0.7)
+        sj = dict((x["id"], x) for x in pg.request.get(B + "/api/salts").json()["meds"])
+        res(sj[meds[1]["id"]]["molecule"] == "fluconazole" and sj[meds[1]["id"]]["strength"] == "150 mg",
+            "Salts: Save stores salt and strength")
+        nr = pg.locator("#saltList .strow", has_text=meds[2]["name"]).first
+        nr.locator(".ns").click(); time.sleep(0.7)
+        nr = pg.locator("#saltList .strow", has_text=meds[2]["name"]).first
+        res("not a single drug" in nr.inner_text(), "Not a single drug marks the row")
+        pg.locator("#meds-salts").screenshot(path=os.path.join(HERE, "salts.png"))
+        pg.click('#nav button[data-t="now"]'); time.sleep(0.8)
+        pg.click("#nowAct .fold-h"); time.sleep(0.3)
+        tiles = pg.locator("#actTiles .ptile")
+        res(tiles.count() == 5 and pg.locator("#actTiles .pscore:visible").count() == 0,
+            "Activity: five tiles, all closed")
+        wt = pg.locator("#actTiles .ptile[data-k=walk]")
+        wt.locator(".ph").click(); time.sleep(0.2)
+        res(pg.locator("#actTiles .pscore:visible").count() == 1, "tap Walk opens only its row")
+        wt.locator(".as").click(); time.sleep(0.4)
+        res(pg.request.get(B + "/api/activity").json()["items"] == [], "Save without minutes logs nothing")
+        wt.locator(".am .chip", has_text="30").click(); wt.locator(".ai .chip", has_text="Moderate").click()
+        res("30 min" in wt.locator(".pv").inner_text(), "tile shows the chosen minutes")
+        wt.locator(".as").click(); time.sleep(0.8)
+        mt = pg.locator("#actTiles .ptile[data-k=meditation]")
+        res(mt.locator(".ai").count() == 0, "Meditation has no intensity")
+        mt.locator(".ph").click(); mt.locator(".am .chip", has_text="15").click(); mt.locator(".as").click(); time.sleep(0.8)
+        res(pg.locator("#actList .exrow").count() == 2 and "45 min" in pg.locator("#actSum").inner_text(),
+            "two entries listed, header 45 min")
+        res("Walk 30 min" in pg.locator("#actList").inner_text() and "moderate" in pg.locator("#actList").inner_text(),
+            "row reads Walk 30 min, moderate")
+        pg.locator("#nowAct").screenshot(path=os.path.join(HERE, "activity.png"))
+        pg.locator("#actList .exrow", has_text="Meditation").locator(".u").click(); time.sleep(0.8)
+        res(pg.locator("#actList .exrow").count() == 1 and "30 min" in pg.locator("#actSum").inner_text(),
+            "Undo removes the entry")
+        pg.click('#nav button[data-t="review"]'); time.sleep(0.6)
     pg.screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui_" + os.path.basename(app_path) + ".png"), full_page=True)
     res(not errs, "no JavaScript errors" + ("" if not errs else ": " + " | ".join(errs)))
     br.close()

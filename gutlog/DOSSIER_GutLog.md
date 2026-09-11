@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.6.0)
+# GutLog — DOSSIER (v3.7.0)
 
 Single source of truth. Update after every change.
 
@@ -131,6 +131,47 @@ Consumers follow their **live database**: a scratch database outside the app
 folder — every test suite — never reads the feed, so a test can never be
 coloured by the real diary.
 
+## Salts and medicine status — v3.7.0
+
+**Meds → Salts** lists every active medicine, the ones needing a salt first.
+Each row: salt (combinations joined with ` + `), strength, Save, and
+*Not a single drug* for mixtures and supplements (stops the prompt). Typing
+three letters asks NLM RxNorm for spelling suggestions (only the typed word
+leaves the server, no token). A name like `Brand (salt 135)` or `Salt 20`
+pre-fills a guess that is shown, never saved until Save. Adding a medicine
+from the Now tab lands on Salts.
+
+**Now banner** (`#nowMedStatus`): "N need a salt" → Salts; "N waiting for your
+review in RxGuard" / "N interactions to review" → `rx.dr-manoj.in/kb`;
+"RxGuard shows N RED" → As taken. RxGuard's counts come from its
+`/api/feed/status` (GutLog's feed token, loopback, 5-minute cache). The stack
+feed now carries `strength`, so RxGuard drafts use it.
+
+## Activity card (Now tab) — v3.7.0
+
+Tiles: Walk, Treadmill, Cycling (road), Cycling (static), Meditation. Tap a
+tile → minutes chips (10–60) and talk-test intensity (Easy / Moderate / Hard;
+none for meditation) → Save. Several a day, each with Undo; they appear in
+Day by day and can be retimed or deleted there. Header: total minutes and
+steps.
+
+Watch data comes from FitLog (`/api/feed/activity?day=`, 60-second cache):
+watch workouts show with ⌚; a watch workout of the same kind within 30
+minutes of a tap shows **once**, as *watch-confirmed*, with the watch's
+minutes and your intensity. Watch mindful minutes show only when no
+meditation was tapped. FitLog down → the tapped entries still show, with
+"Watch data not reachable right now". Deep link `/?open=act`.
+
+Outward calls (RxGuard, FitLog, NLM) follow the live-database rule: a scratch
+database never reaches out; `GUTLOG_LINKS=1/0` overrides.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/salts`, `POST /api/salt`, `GET /api/salt/suggest?q=` | Salts segment |
+| `GET /api/medstatus` | Banner counts |
+| `POST /api/activity`, `POST /api/activity/undo/<id>`, `GET /api/activity?day=` | Activity card |
+| `GET /api/feed/activities?since=` | Bearer feed for FitLog (day, time, kind, minutes, intensity) |
+
 ## Schema
 
 | Table | Purpose |
@@ -146,6 +187,8 @@ coloured by the real diary.
 | `settings` | key/value — schema_version, credential hashes, auth_epoch |
 | `stock_events` | v3.6.0. med_id, kind (COUNT / ADD / FILL), qty, at (`YYYY-MM-DD HH:MM`), note (fill batch id) |
 | `stock_meds` | v3.6.0. Per-medicine stock mode override (`pillbox` / `per_dose`) |
+| `med_salts` | v3.7.0. med_id, strength, no_salt, updated (the salt itself stays in `prnmeds.molecule`) |
+| `activities` | v3.7.0. id, day, atime, kind (walk / treadmill / cycle_road / cycle_static / meditation), minutes, intensity, notes, created |
 | `edits` | Retime audit (v3.5.0). tbl, rid, old_day, old_time, new_day, new_time, at. Created by `SCHEMA` on first request — no migration step |
 
 ### med_schedule — effective dating
@@ -217,6 +260,16 @@ Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · HTTPS liv
 via OLS reverse proxy.
 
 ## Test evidence
+- `test_phase_d.py` — **18/18 PASS** (2026-09-11, v3.7.0): tables and the
+  no-outward-call rule, salts list and banner count, save/normalise, 4 guard
+  cases, Not a single drug, strength in the stack feed, 7 activity guards,
+  add/order/undo, watch-merge rules, Day by day + retime audit + delete,
+  activities feed (token, fields, read-only), page, and against a fake local
+  server: RxGuard status, FitLog watch data, NLM suggestions without the
+  token, caching, companions down, `GUTLOG_LINKS=0`.
+- `test_ui_now.py` — 48 checks in real Chromium incl. banner → Salts, Save,
+  Not a single drug, five closed tiles, minutes required, meditation without
+  intensity, list and header, Undo, no page JS errors.
 - `test_phase_c.py` — **20/20 PASS** (2026-09-11, v3.6.0): dose-text parsing,
   default modes, 7 guard cases, count/use/undo/bought, only after-count doses
   deduct, pillbox dose not double-counted, fill and undo-fill (two fills in the
@@ -298,6 +351,10 @@ rediscovered the expensive way.
    `test_ui_now.py` before shipping any patch that touches the Now-tab script.
 
 ## What's next
+- Phase D shipped in v3.7.0 with RxGuard v1.2.0 and FitLog v1.2.0. After the
+  first source sync: fill Salts, then review drafts in RxGuard → Sources
+  review. Watch data appears on the Activity card once Health Auto Export
+  posts to FitLog.
 - Phase C shipped in v3.6.0 with RxGuard v1.1.0 and FitLog v1.1.0. The
   cardiologist BP export was dropped by the owner: the Vitals log plus
   `vitals.csv` covers it.
@@ -308,6 +365,9 @@ rediscovered the expensive way.
 - Record a molecule for every single-molecule medicine (gap 5).
 
 ## Changelog
+- **2026-09-11 v3.7.0 — Phase D (GutLog side).** Salts segment, medicine
+  status banner, Activity card with watch merge, strength in the stack feed,
+  activities feed. `patch_gutlog_v370.py`, 22 anchors.
 - **2026-09-11 v3.6.0 — Phase C (GutLog side).** Stock and refill (Meds →
   Stock, derived from events; pillbox vs per-dose; alerts + Now banner);
   Vitals log card; read-only feed for RxGuard/FitLog with a self-created

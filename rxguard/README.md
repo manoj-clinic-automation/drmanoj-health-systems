@@ -1,4 +1,4 @@
-# RxGuard v1.1.0
+# RxGuard v1.2.0
 
 `rx.dr-manoj.in` · service `rxguard` · port 8031 · `/root/rxguard`
 
@@ -72,6 +72,45 @@ named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
 days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
 GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
 
+## Sources review — v1.2.0
+
+RxGuard's curated knowledge base covers a fixed list. Medicines change, so
+v1.2.0 fills the gaps from **free, verifiable** sources and puts every result
+in front of the owner before it counts.
+
+| Source | Gives | Notes |
+|---|---|---|
+| NLM RxNorm + RxClass | Identity (brand → ingredient), ATC class, spelling suggestions | US National Library of Medicine, public API |
+| openFDA drug label | QT, sedation, serotonergic, anticholinergic, bleeding, renal/hepatic, withdrawal, interaction sentences | Every property carries its quoted sentence, label set id and date |
+| FDA CYP / transporter table | Strong/moderate/weak inhibitors and inducers, sensitive substrates | Beats label wording for the same field; cached monthly |
+| DDInter 2.0 | Pair severity (Major → RED, Moderate → AMBER) | CC BY-NC-SA 4.0 — personal, non-commercial, attributed |
+| PvPI (IPC, India) | Drug safety alert links | Links only; first run is a baseline |
+
+`kb_sync.py` runs every 30 minutes by cron (and from *Fetch now*). It reads
+what GutLog shows as current (regimen + 30 days of doses, with strength),
+builds a **draft** for each molecule RxGuard does not know (a brand already
+known under its ingredient becomes an alias), lists DDInter pairs between
+known medicines that no curated rule covers, collects PvPI alerts, and once a
+day marks approved entries whose FDA label changed as *re-review*.
+`python3 kb_sync.py --report` prints what the sources produced.
+
+**Sources review** (`/kb`): tick the properties and pairs to keep → they are
+written to `knowledge/drugs.local.json` / `rules.local.json` (never
+committed) and the engine uses them at once. The curated `drugs.json` /
+`rules.json` always win. Gaps are stated ("label silent — not proof of
+none"); still no GREEN. `/api/feed/status` (GutLog's feed token) gives GutLog
+its banner counts. Only molecule names ever leave the server. Paid and
+licensed sources (e.g. CDSCO-backed Indian compendia, commercial checkers)
+are deliberately not used.
+
+Tests: `test_kb.py` **25/25** — a fake server replaying the real formats:
+FDA table parser and outage fallback, DDInter index, RxNorm identity, label
+choice, draft properties and pairs, FDA table over label, sync + idempotency,
+review page, partial approval reaching the engine, reject, alias, pair
+decisions, curated wins, status feed, label re-verify, all sources down,
+Fetch now, login, names only, smoke untouched, terminal report (a negated
+"not a substrate of CYP" is not read as a role).
+
 ## Layout
 
 ```
@@ -84,6 +123,10 @@ validate.py               validation harness
 validation_cases.json     50 cases with pre-declared acceptance thresholds
 rxguard.service           systemd unit (port 8031)
 backup.sh                 nightly backup, GutLog cron pattern
+kb_sources.py             v1.2.0: fetchers and draft builder (free sources)
+kb_sync.py                v1.2.0: cron / Fetch now sync; --report
+test_kb.py                v1.2.0: 25 checks against a fake source server
+knowledge/cache/          downloaded source data (gitignored, rebuilt)
 ```
 
 The knowledge base is versioned separately from the code. Editing a rule

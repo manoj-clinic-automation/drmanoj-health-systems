@@ -3,6 +3,38 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-11 — Phase D: free medicine sources + Activity card (GutLog v3.7.0, RxGuard v1.2.0, FitLog v1.2.0)
+
+**Added**
+- RxGuard v1.2.0 — *Sources review*. Every molecule GutLog shows as current and
+  RxGuard does not know gets a draft from free, verifiable sources: NLM RxNorm
+  (identity, brand → ingredient) and RxClass (ATC class), openFDA label (QT,
+  sedation, serotonergic, bleeding, renal/hepatic, withdrawal — each with its
+  quoted sentence), the FDA CYP/transporter table, and DDInter 2.0
+  (interaction severity, CC BY-NC-SA, personal use). PvPI (India) alert index
+  as links. Nothing enters the engine until the owner ticks it; the curated
+  knowledge base always wins. Daily label re-check marks approved entries
+  whose FDA label changed. `kb_sources.py`, `kb_sync.py` (cron every 30 min,
+  `--report` for a terminal summary), `patch_rxguard_v120.py`,
+  `test_kb.py` 25/25. Status feed `/api/feed/status` for GutLog.
+- GutLog v3.7.0 — Meds → *Salts* (salt + strength per medicine, NLM spelling
+  suggestions, a guess from the name, "Not a single drug"); Now-tab medicine
+  status banner (needs a salt / waiting in RxGuard / RxGuard RED); *Activity*
+  card (Walk, Treadmill, Cycling road/static, Meditation; minutes + talk-test
+  intensity; Undo; Day by day + retime; watch data from FitLog merged, a
+  matching watch workout confirms a tap). Stack feed carries strength;
+  `/api/feed/activities`. `patch_gutlog_v370.py` (22 anchors),
+  `test_phase_d.py` 18/18, `test_ui_now.py` 48 checks.
+- FitLog v1.2.0 — watch mindful minutes kept; indoor workouts named
+  "(indoor)"; `classify_workout()`; `/api/feed/activity` for GutLog; Home
+  *Activity today* card. `patch_fitlog_v120.py` (2 files),
+  `test_activity_feed.py` 12/12 (real GutLog + real FitLog on loopback).
+- `gutlog/verify_phase_d.py` — live post-restart check, prints counts only.
+
+**Rule kept**: outward calls happen only from the live database (every suite
+is isolated); only molecule names ever leave the server; no paid or licensed
+source is used.
+
 ## 2026-09-11 — Phase C across GutLog v3.6.0, RxGuard v1.1.0, FitLog v1.1.0
 
 **Added**
