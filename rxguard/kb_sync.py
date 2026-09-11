@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-kb_sync.py -- RxGuard v1.2.2 background sync. Run by cron every 30 minutes
+kb_sync.py -- RxGuard v1.4.0 background sync. Run by cron every 30 minutes
 and by the "Fetch now" button. Safe to run at any time; one run at a time.
 
   1. Reads what GutLog shows is current (regimen + 30 days of doses).
@@ -11,6 +11,7 @@ and by the "Fetch now" button. Safe to run at any time; one run at a time.
      curated/approved rule covers -> interaction CANDIDATES for review.
   4. PvPI (India) alert index -> new alert links for review.
   5. Once a day: approved entries whose FDA label changed -> "re-review".
+  6. GutLog's health record -> your conditions (codes only).
 Writes nothing to the knowledge files -- only the owner's Approve does.
 Python 3.9.
 """
@@ -48,6 +49,48 @@ def gutlog_stack(days=30):
         return None, type(e).__name__
 
 
+def _feed_live():
+    """Follow the live database: a scratch copy (tests) never reads GutLog.
+    RXGUARD_GUTLOG_FEED=1/0 overrides."""
+    v = os.environ.get("RXGUARD_GUTLOG_FEED", "")
+    if v in ("0", "1"):
+        return v == "1"
+    return os.path.dirname(os.path.abspath(DB)) == HERE
+
+
+def gutlog_profile():
+    """Condition codes from GutLog's health record, or None if unavailable."""
+    if not _feed_live():
+        return None
+    try:
+        with open(rx.GUTLOG_TOKEN_FILE, encoding="utf-8") as fh:
+            tok = fh.read().strip()
+        req = urllib.request.Request(rx.GUTLOG_FEED_URL.rstrip("/") + "/api/feed/profile",
+                                     headers={"Authorization": "Bearer " + tok})
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with op.open(req, timeout=5) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        return [c for c in d.get("conditions") or [] if isinstance(c, str)] if d.get("ok") else None
+    except Exception:
+        return None
+
+
+def sync_conditions(con, codes):
+    """Tick the conditions GutLog lists; untick only those GutLog itself set
+    earlier and no longer lists. Hand-set conditions are never touched."""
+    known = [c for c in codes if c in rx.CONDITION_LABELS]
+    prev = set(get_meta(con, "profile_codes", []) or [])
+    for c in known:
+        con.execute("INSERT OR IGNORE INTO conditions (code, active) VALUES (?, 0)", (c,))
+        con.execute("UPDATE conditions SET active=1 WHERE code=?", (c,))
+    dropped = sorted(prev - set(known))
+    for c in dropped:
+        con.execute("UPDATE conditions SET active=0 WHERE code=?", (c,))
+    set_meta(con, "profile_codes", known)
+    con.commit()
+    return {"set": known, "cleared": dropped}
+
+
 def current_molecules(data):
     """[(term, strength, gutlog_name)] from regimen and recent doses."""
     out, seen = [], set()
@@ -80,10 +123,13 @@ def _stage(con, status, name):
     log("stage: " + name)
 
 
-def run(con, data=None, now=None, ddi_budget=900):
+def run(con, data=None, now=None, ddi_budget=900, profile=None):
     now = now or time.strftime("%Y-%m-%d %H:%M")
     rx.reload_overlay(force=True)
     status = {"run": now}
+    codes = profile if profile is not None else gutlog_profile()
+    if codes is not None:
+        status["conditions"] = sync_conditions(con, codes)
     if data is None:
         data, err = gutlog_stack(30)
         status["gutlog"] = err or "ok"
@@ -212,6 +258,19 @@ def report(con):
 
 
 def main():
+    if "--conditions" in sys.argv:
+        codes = gutlog_profile()
+        if codes is None:
+            print("GutLog health profile not reachable")
+            return 1
+        con = sqlite3.connect(DB)
+        con.executescript(rx.SCHEMA)
+        try:
+            st = sync_conditions(con, codes)
+        finally:
+            con.close()
+        print("conditions from GutLog: %d set, %d cleared" % (len(st["set"]), len(st["cleared"])))
+        return 0
     if "--diag" in sys.argv:
         print("Connectivity from this server (one small request each):")
         for name, code, secs, n in ks.diagnose():

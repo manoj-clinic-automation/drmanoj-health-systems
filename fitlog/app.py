@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 FITLOG_V110_GUTLOG_FEED -- FitLog v1.1.0 reads doses from GutLog.
+FITLOG_V120_ACTIVITY -- FitLog v1.2.0 activity feed + Home activity card.
 FitLog v1.0 — Personal physical capacity & recovery engine.
 Dr. Manoj Agarwal | fit.dr-manoj.in | port 8040
 Single-file Flask + SQLite. Deterministic rule engine (no LLM in decision path).
@@ -313,6 +314,159 @@ def gutlog_days(category, since):
 
 
 # ---------------- warning flags ----------------
+# ---------------- Activity feed (FITLOG_V120_ACTIVITY) ----------------
+# GutLog's Activity card reads the watch side from here; the Home card reads
+# the tapped side from GutLog. Both use GutLog's read-only feed token.
+_GA_CACHE = {}
+
+
+def _gutlog_token():
+    try:
+        with open(GUTLOG_TOKEN_FILE, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def _feed_authorised(req):
+    import hmac
+    tok = _gutlog_token()
+    h = req.headers.get("Authorization") or ""
+    return bool(tok) and h.startswith("Bearer ") and hmac.compare_digest(h[7:].strip(), tok)
+
+
+def watch_activity(day):
+    """Steps, exercise and mindful minutes, and workouts for one day, from
+    the wearable tables (best source only). Never raises."""
+    import health_ingest as hi
+    out = {"steps": 0, "exercise_minutes": 0, "mindful_min": 0, "workouts": []}
+    try:
+        conn = hi._connect()
+    except Exception:
+        return out
+    try:
+        m = hi.resolve_daily(conn, day)
+        for k in ("steps", "exercise_minutes", "mindful_min"):
+            if k in m and m[k]["value"] is not None:
+                out[k] = round(float(m[k]["value"]), 1)
+        rows = conn.execute(
+            "SELECT start_ts, end_ts, wtype, duration_s, distance_km, source FROM health_workouts "
+            "WHERE date=? ORDER BY start_ts", (day,)).fetchall()
+        srcs = [r["source"] for r in rows if r["source"] in hi.SOURCE_PRECEDENCE]
+        best = min(srcs, key=hi.SOURCE_PRECEDENCE.index) if srcs else None
+        for r in rows:
+            if r["source"] != best:
+                continue
+            out["workouts"].append({
+                "kind": hi.classify_workout(r["wtype"]), "wtype": r["wtype"] or "",
+                "start": (r["start_ts"] or "")[:19], "end": (r["end_ts"] or "")[:19],
+                "minutes": round((r["duration_s"] or 0) / 60.0, 1),
+                "distance_km": round(r["distance_km"], 2) if r["distance_km"] else None})
+    except Exception:
+        pass
+    finally:
+        conn.close()
+    return out
+
+
+@app.route("/api/feed/activity")
+def api_feed_activity():
+    if not _feed_authorised(request):
+        return {"ok": False, "error": "unauthorised"}, 401
+    day = (request.args.get("day") or "")[:10]
+    try:
+        day = date.fromisoformat(day).isoformat()
+    except ValueError:
+        day = today()
+    d = watch_activity(day)
+    d.update(ok=True, app="fitlog", day=day)
+    return d
+
+
+def gutlog_activities(day):
+    """Activities tapped in GutLog on `day`: (rows, error). Cached 60 s."""
+    import time
+    import urllib.request
+    if not gutlog_feed_enabled():
+        return [], "off"
+    hit = _GA_CACHE.get(day)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1], hit[2]
+    rows, err = [], ""
+    try:
+        req = urllib.request.Request(
+            GUTLOG_FEED_URL.rstrip("/") + "/api/feed/activities?since=" + day,
+            headers={"Authorization": "Bearer " + _gutlog_token()})
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=2) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        if isinstance(data, dict) and data.get("ok"):
+            rows = [a for a in data.get("activities") or [] if a.get("day") == day]
+        else:
+            err = "GutLog returned an unexpected answer"
+    except Exception as e:
+        err = "GutLog not reachable (" + type(e).__name__ + ")"
+    _GA_CACHE[day] = (time.time(), rows, err)
+    return rows, err
+
+
+ACT_LABEL = {"walk": "Walk", "treadmill": "Treadmill", "cycle_road": "Cycling (road)",
+             "cycle_static": "Cycling (static)", "meditation": "Meditation"}
+
+
+def _mins(hm):
+    try:
+        h, m = hm[:5].split(":")
+        return int(h) * 60 + int(m)
+    except (ValueError, AttributeError):
+        return None
+
+
+def activity_card(day):
+    import html as _html
+    w = watch_activity(day)
+    taps, err = gutlog_activities(day)
+    taps = [dict(x) for x in taps]
+    items = []
+    for x in w["workouts"]:
+        s0, e0 = _mins(x["start"][11:16]), _mins(x["end"][11:16])
+        for t in taps:
+            t0 = _mins(t.get("atime") or "")
+            if (not t.get("_used") and t.get("kind") == x["kind"] and s0 is not None and t0 is not None
+                    and s0 - 30 <= t0 <= (e0 if e0 is not None else s0) + 30):
+                t["_used"] = True
+                break
+        bits = "⌚ " + ACT_LABEL.get(x["kind"], x["wtype"] or "Workout") + " " + str(int(round(x["minutes"]))) + " min"
+        if x["distance_km"]:
+            bits += " · " + str(round(x["distance_km"], 1)) + " km"
+        items.append((x["start"][11:16], bits))
+    for t in taps:
+        if t.get("_used"):
+            continue
+        bits = ACT_LABEL.get(t.get("kind"), t.get("kind") or "") + " " + str(int(round(t.get("minutes") or 0))) + " min"
+        if t.get("intensity"):
+            bits += " · " + str(t["intensity"]).lower()
+        items.append(((t.get("atime") or "")[:5], bits + " (GutLog)"))
+    if w["mindful_min"] and not any("Meditation" in b for _, b in items):
+        items.append(("", "⌚ Mindful minutes " + str(int(round(w["mindful_min"])))))
+    items.sort(key=lambda i: (i[0] == "", i[0]))
+    head = []
+    if w["steps"]:
+        head.append("{:,} steps".format(int(w["steps"])))
+    if w["exercise_minutes"]:
+        head.append(str(int(round(w["exercise_minutes"]))) + " exercise min")
+    rows = "".join("<tr><td class=small>" + _html.escape(t) + "</td><td>" + _html.escape(b) + "</td></tr>"
+                   for t, b in items)
+    note = ""
+    if err and err != "off":
+        note = "<p class=small>" + _html.escape(err) + " — watch data only.</p>"
+    if not rows and not head and not note:
+        rows = "<tr><td class=small>Nothing yet today.</td></tr>"
+    return ('<div class="card"><h2>Activity today</h2><p class=small>' + _html.escape(" · ".join(head)) +
+            '</p><table>' + rows + '</table>' + note +
+            '<p class=small><a href="https://health.dr-manoj.in/?open=act">Log an activity in GutLog →</a></p></div>')
+
+
 def compute_flags():
     flags = []
     rows = db().execute("SELECT date,pain_max,pain_sites FROM checkins ORDER BY date DESC LIMIT 30").fetchall()
@@ -460,6 +614,7 @@ def home():
                 body += f'<p class="msg">Session: <b>{se["status"]}</b></p>'
             body += "</div>"
         body += event_cards(t)
+    body += activity_card(t)
     return page("Today", body, request.args.get("m", ""))
 
 def yesterday_quickadd(t):
@@ -743,7 +898,7 @@ def history():
 
 @app.route("/health")
 def health():
-    return {"app": "fitlog", "version": "1.0", "ok": True}
+    return {"app": "fitlog", "version": "1.2.0", "ok": True}
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=8040, debug=False)

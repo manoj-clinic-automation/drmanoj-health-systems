@@ -227,6 +227,89 @@ with sync_playwright() as p:
         res(pg.locator("#actList .exrow").count() == 1 and "30 min" in pg.locator("#actSum").inner_text(),
             "Undo removes the entry")
         pg.click('#nav button[data-t="review"]'); time.sleep(0.6)
+    # --- v3.8.0: records --------------------------------------------------
+    if pg.locator("#files-summary").count():
+        HERE = os.path.dirname(os.path.abspath(__file__))
+        import json as _js, importlib.util as _iu
+        rw = os.path.join(work, "recup"); os.makedirs(os.path.join(rw, "f", "01"), exist_ok=True)
+        open(os.path.join(rw, "f", "01", "a.pdf"), "wb").write(b"%PDF-1.4 a")
+        open(os.path.join(rw, "f", "01", "b.pdf"), "wb").write(b"%PDF-1.4 b")
+        D0 = (_dt.date.today() - _dt.timedelta(days=300)).isoformat(); D1 = (_dt.date.today() - _dt.timedelta(days=3)).isoformat()
+        _js.dump({"docs": [{"path": "01/a.pdf", "day": D0, "kind": "Blood", "title": "Panel A", "source": "Lab X", "finding": "Finding A " * 12},
+                           {"path": "01/b.pdf", "day": D1, "kind": "Imaging", "title": "Scan B", "source": "Centre Y", "finding": "Finding B"}],
+                  "labs": [{"day": D0, "test": "Testarate", "section": "S", "value": "30 **", "unit": "u", "ref": "0-20", "lab": "X"},
+                           {"day": D1, "test": "Testarate", "section": "S", "value": "12", "unit": "u", "ref": "0-20", "lab": "X"}],
+                  "plan": [{"pos": 1, "test": "Test one", "why": "because", "timing": "now"}],
+                  "profile": {"updated": D1, "key_tests": ["Testarate"], "problems": [{"name": "Synthetic problem", "since": "2020", "status": "active"}],
+                              "precautions": [{"flag": "RED", "title": "Synthetic precaution", "text": "why"}], "missing": ["Report Q"]}},
+                 open(os.path.join(rw, "f", "records_manifest.local.json"), "w"))
+        _sp = _iu.spec_from_file_location("imprec", os.path.join(os.path.dirname(os.path.abspath(app_path)), "import_records.py"))
+        _im = _iu.module_from_spec(_sp); _sp.loader.exec_module(_im)
+        m.PROFILE_FILE = os.path.join(work, "records_profile.local.json")
+        _st = _im.run(rw, db_path=os.environ["GUTLOG_DB"], uploads=os.environ["GUTLOG_UPLOADS"], profile_path=m.PROFILE_FILE)
+        res(_st.get("docs_new") == 2, "records import for UI test")
+        pg.click('#nav button[data-t="files"]'); time.sleep(0.9)
+        res(pg.locator("#nav button[data-t=files]").inner_text().strip().endswith("Records"), "nav reads Records")
+        res(pg.locator("#files-summary").is_visible() and "Synthetic problem" in pg.locator("#rsBody").inner_text(),
+            "Records opens on the Summary with problems")
+        res("RED" in pg.locator("#rsBody").inner_text() and "Testarate" in pg.locator("#rsBody").inner_text(),
+            "Summary shows precautions and key results")
+        res(pg.locator(".save").is_hidden(), "no Save button on Summary")
+        pg.locator("#files-summary").screenshot(path=os.path.join(HERE, "rec_summary.png"))
+        pg.locator('.seg[data-seg="files"] button[data-s="reports"]').click(); time.sleep(0.7)
+        res(pg.locator("#rdList .rd-row").count() == 2 and "Scan B" in pg.locator("#rdList .rd-row").first.inner_text(),
+            "Reports newest first")
+        pg.locator("#rdKinds .chip", has_text="Blood").click(); time.sleep(0.6)
+        res(pg.locator("#rdList .rd-row").count() == 1, "filter by kind")
+        res(pg.locator("#rdList a.rs-link").first.get_attribute("href").startswith("/rec/doc/"), "report opens the original")
+        pg.locator("#files-reports").screenshot(path=os.path.join(HERE, "rec_reports.png"))
+        pg.locator('.seg[data-seg="files"] button[data-s="trends"]').click(); time.sleep(0.7)
+        res(pg.locator("#rtList .rt-spark").count() == 1, "trend chart drawn")
+        pg.locator("#rtList .rt-head").first.click(); time.sleep(0.6)
+        res(pg.locator("#rtList .rt-det .rs-hi").count() == 1, "series table marks the flagged value")
+        pg.locator("#files-trends").screenshot(path=os.path.join(HERE, "rec_trends.png"))
+        pg.locator('.seg[data-seg="files"] button[data-s="plan"]').click(); time.sleep(0.6)
+        pg.locator("#rpList button").first.click(); time.sleep(0.6)
+        res("Done" in pg.locator("#rpList button").first.inner_text(), "plan item marked done")
+        pg.locator('.seg[data-seg="files"] button[data-s="vault"]').click(); time.sleep(0.4)
+        res(pg.locator("#files-vault").is_visible() and pg.locator("#files-summary").is_hidden(), "second segment row switches to Upload")
+    # --- v3.9.0: scanner ----------------------------------------------------
+    if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(app_path)), "scanner_widget.js")) and "def scan_page" in open(app_path).read():
+        HERE = os.path.dirname(os.path.abspath(__file__))
+        from PIL import Image as _Im, ImageDraw as _Dr
+        _img = _Im.new("RGB", (900, 1200), (120, 120, 120)); _d = _Dr.Draw(_img)
+        _d.rectangle([150, 200, 750, 1000], fill=(250, 250, 250))
+        for yy in range(260, 960, 40): _d.line([200, yy, 700, yy], fill=(40, 40, 40), width=3)
+        _png = os.path.join(work, "doc.png"); _img.save(_png)
+        pg.goto(B + "/scan"); pg.wait_for_load_state("networkidle"); time.sleep(0.6)
+        res(pg.locator("#scanroot #addwhole").count() == 1, "scan page mounts the clinic scanner")
+        pg.select_option("#s_type", "Imaging report")
+        pg.locator("#scanroot #cam").set_input_files(_png); time.sleep(1.5)
+        pg.locator("#scanroot #addwhole").click(); time.sleep(0.8)
+        pg.screenshot(path=os.path.join(HERE, "scan_page.png"), full_page=False)
+        pg.locator("#scanroot #savebtn").click(); time.sleep(2.0)
+        _files = pg.request.get(B + "/api/records/docs").json()["uploads"]
+        res(any(f["source"] == "Imaging report" for f in _files), "scanned page uploaded as an Imaging report")
+        _ib = os.path.join(os.environ["GUTLOG_UPLOADS"], "inbox")
+        res(os.path.isdir(_ib) and any(n.endswith((".jpg", ".pdf")) for n in os.listdir(_ib)), "scan copied to the inbox")
+        pg.goto(B + "/?open=records"); time.sleep(1.2)
+        res(pg.locator("#files-reports").is_visible() and pg.locator("#rdList .rd-row.inbox").count() >= 1,
+            "Done returns to Records, Reports with the scan waiting")
+    # --- v3.10.0: machine-read reports ----------------------------------------
+    if "def _spawn_reader" in open(app_path).read():
+        import sqlite3 as _sq3
+        _c = _sq3.connect(os.environ["GUTLOG_DB"])
+        _c.execute("INSERT INTO rec_docs(day,kind,title,source,finding,stored,orig,sha,status,created,origin,checked) "
+                   "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (_dt.date.today().isoformat(), "Blood", "Auto CBC", "Lab Z",
+                   "Flagged: Platelet Count 1.05", "", "", "shaauto1", "filed", "t", "auto", 0)); _c.commit(); _c.close()
+        pg.goto(B + "/?open=records"); time.sleep(1.2)
+        _row = pg.locator("#rdList .rd-row", has_text="Auto CBC").first
+        res(_row.locator(".rd-auto").count() == 1 and _row.locator(".rd-ok").count() == 1, "machine-read badge and Looks right")
+        pg.locator('.seg[data-seg="files"] button[data-s="summary"]').click(); time.sleep(0.9)
+        res("read automatically" in pg.locator("#rsBody").inner_text(), "Summary says a machine-read report awaits a glance")
+        pg.locator('.seg[data-seg="files"] button[data-s="reports"]').click(); time.sleep(0.8)
+        pg.locator("#rdList .rd-row", has_text="Auto CBC").first.locator(".rd-ok").click(); time.sleep(0.8)
+        res(pg.locator("#rdList .rd-row", has_text="Auto CBC").first.locator(".rd-auto").count() == 0, "Looks right clears the badge")
     pg.screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui_" + os.path.basename(app_path) + ".png"), full_page=True)
     res(not errs, "no JavaScript errors" + ("" if not errs else ": " + " | ".join(errs)))
     br.close()
