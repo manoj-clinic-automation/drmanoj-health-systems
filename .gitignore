@@ -22,5 +22,9 @@ venv/
 uploads/
 nohup.out
 
+# RxGuard source-sync cache and lock (downloaded public data, rebuilt on the server)
+knowledge/cache/
+.kb_sync.lock
+
 # Local deploy bundles (copies of files that live in the app folders)
 _deploy/

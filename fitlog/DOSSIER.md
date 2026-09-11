@@ -1,4 +1,4 @@
-# FitLog — DOSSIER (v1.1.0)
+# FitLog — DOSSIER (v1.2.0)
 
 Single source of truth. Update after every change.
 
@@ -51,6 +51,25 @@ Doses are logged in GutLog. FitLog reads them from GutLog's read-only feed
   FitLog-only counts, and the Meds page says so.
 
 No rule threshold changed.
+
+## Activity feed — v1.2.0
+
+GutLog's Now tab carries the Activity card; FitLog supplies the watch side
+and shows both on Home.
+
+- `GET /api/feed/activity?day=` — GutLog's feed token (read-only, no login):
+  steps, exercise minutes, mindful minutes (S01 best source) and that day's
+  workouts from the best source only, each with `kind` from
+  `classify_workout()` (walk / treadmill / cycle_road / cycle_static /
+  meditation / other), start/end, minutes, distance.
+- `health_ingest.py`: Health Auto Export `mindful_minutes` → `mindful_min`
+  (context only, never rule-bearing); a workout the watch marks indoor
+  (`isIndoor` or `location: Indoor`) is stored as "… (indoor)", so an indoor
+  walk reads as treadmill and indoor cycling as static.
+- Home → **Activity today**: steps and exercise minutes, ⌚ watch workouts,
+  and what was tapped in GutLog (`/api/feed/activities`), a tap the watch also
+  recorded shown once. GutLog down → watch data only, with a note. Follows
+  the live-database rule (`FITLOG_GUTLOG_FEED`).
 
 ## Wearable ingest (Phase 3.5)
 
@@ -174,6 +193,7 @@ Run all three on the server. They gate the restart.
 | `test_health_ingest.py` | 23/23 | Base ingest, auth, S01, idempotency |
 | `test_hc_ingest.py` | 36/36 | HC Webhook path, R1/R2 regressions, negative controls |
 | `test_db_pin.py` | 12/12 | Non-default DB filename resolution |
+| `test_activity_feed.py` | 12/12 | v1.2.0: real GutLog + real FitLog on loopback — workout classes, mindful + indoor ingest, feed auth and content (best source only), GutLog pulling watch data (merge), Home card, escaping, cache not mutated, scratch-DB isolation, GutLog down, token file missing |
 | `test_gutlog_feed.py` | 10/10 | v1.1.0: real GutLog on loopback — W03 from GutLog alone, sleep and unmatched negatives, union dedupe, FitLog-only unchanged, window, Meds page, escaping, scratch-DB isolation, GutLog down |
 
 `test_health_ingest.py` does **not** exercise the HC path — every
@@ -182,6 +202,7 @@ healthconnect case in it uses the legacy shape, so `is_hc` is false. It scored
 on HC changes.
 
 ## Changelog
+- 2026-09-11 v1.2.0 — activity feed for GutLog, Home *Activity today* card, mindful minutes, indoor workouts (`patch_fitlog_v120.py`, app.py + health_ingest.py). All earlier suites unchanged; `test_activity_feed.py` 12/12.
 - 2026-09-11 v1.1.0 — DEPLOYED 07:37 IST. W03 and the Meds page read doses from GutLog's feed (`patch_fitlog_v110.py`, 4 anchors). Suites: smoke 53/53, kb_lint, 23/23, 36/36, 12/12 unchanged; new `test_gutlog_feed.py` 10/10 (0/10 against v1.0.1, as it should). On-server: all suites green, `verify_phase_c.py` 9/9. Rollback: `app.py.bak-v110-20260911_073740`.
 - 2026-09-10 Phase 3.5b — DEPLOYED. HC Webhook support (`patch_hc_support.py`) + `FITLOG_DB` pinning (`patch_db_pin.py`). Separate URL-borne token for the healthconnect feed, scope-verified in production. Record-level ingest with interval-keyed upsert. Suites: 23/23, 36/36, 12/12 on Python 3.9.25. Live probe through OLS confirmed R1: a redelivered interval grown 600→900 resolved to 900, not 1500. Probe removed, all four ingest tables back to 0. `app.py` untouched (MD5 `fb8520e5…`, unchanged since Phase 3.5). Rollback: `health_ingest.py.bak_20260910_083629` (pre-HC), `health_ingest.py.bak_20260910_084058` (pre-pin), `fitlog.db.bak_20260910_083629`.
 - 2026-09-10 Phase 3.5 — DEPLOYED. Wearable ingest: `health_ingest.py` blueprint + `health_metrics`/`health_workouts`/`health_raw` tables + rule S01. Registered via anchor-verified patcher (`patch_register_ingest.py`, anchor = Flask() at line 16); diff vs pre-deploy backup is exactly 4 added lines, nothing else. On-server smoke 23/23 on Python 3.9.25. Public verification through OLS: unauth 401, auth 200, end-to-end write + S01 read-back, probe rows removed (all three tables back to 0). No owner-key exemption needed — gate is a per-route decorator, not `before_request`. Verdict logic untouched. Rollback: `app.py.bak_20260910_075535`, `fitlog.db.bak_20260910_075503`.
