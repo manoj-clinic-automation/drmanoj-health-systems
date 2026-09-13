@@ -68,6 +68,15 @@ IOS_BODY = {
         {"start_time": "2026-09-09T10:30:00.000Z",
          "end_time": "2026-09-09T11:30:00.000Z", "meters": 1000},
     ],
+    # A metric only this feed ever carried. Auto Export has no
+    # equivalent, so it is the marker for whether the retired bodies
+    # were replayed at all.
+    "heart_rate": [
+        {"start_time": "2026-09-09T04:30:00.000Z",
+         "end_time": "2026-09-09T05:30:00.000Z", "bpm": 96},
+        {"start_time": "2026-09-09T10:30:00.000Z",
+         "end_time": "2026-09-09T11:30:00.000Z", "bpm": 104},
+    ],
 }
 
 # --- Auto Export: daily rollups for three days ----------------------------
@@ -157,11 +166,30 @@ check("09-11 is NOT hourly+rollup doubled to 9828",
 check("09-10 steps from the rollup", value("2026-09-10", "steps") == 5100,
       str(value("2026-09-10", "steps")))
 
-print("\n[3] the retired ios feed is compared, never added")
+print("\n[3] the retired ios feed is skipped by default")
+# Its bodies are mid-day snapshots. Replaying them would re-create
+# half-finished days under metrics Auto Export never sends - and the
+# watch strip prefers move_energy_kcal over active_energy_kcal, so the
+# Move ring would go backwards.
+check("retired bodies reported as skipped", "Skipped :" in r.stdout,
+      r.stdout[:400])
+check("an ios-only metric is NOT resurrected",
+      value("2026-09-09", "hr") is None, str(value("2026-09-09", "hr")))
+check("09-09 steps still from Auto Export", value("2026-09-09", "steps") == 4200,
+      str(value("2026-09-09", "steps")))
+
+print("\n[3b] --replay-retired-ios compares feeds, never adds them")
 # ios reported 3000 steps for 09-09, Auto Export 4200. S02 keeps the
 # fuller view; summing would have given 7200.
+rio = run("--replay-retired-ios")
+check("exits 0", rio.returncode == 0, rio.stdout[-400:])
 check("09-09 steps is 4200, not 7200", value("2026-09-09", "steps") == 4200,
       str(value("2026-09-09", "steps")))
+check("the ios-only metric appears when asked for",
+      value("2026-09-09", "hr") == 100.0, str(value("2026-09-09", "hr")))
+check("distance still the fuller Auto Export figure",
+      abs(value("2026-09-09", "distance_km") - 3.1) < 1e-9,
+      str(value("2026-09-09", "distance_km")))
 
 print("\n[4] distance restored")
 check("09-09 distance is the Auto Export 3.1, not the stale ios 2.5",

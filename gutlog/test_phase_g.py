@@ -212,12 +212,65 @@ def main():
         assert cz(R()) == d and cz({"result": d}) == d and cz([json.dumps(d)]) == d and cz("not json") is None
         return "the reader's answer is found in any of the SDK's shapes"
 
+    def t12_schema_descriptions():
+        """The service rejects the WHOLE schema -- SCHEMA_INVALID, 400, before it
+        ever looks at the file -- if any field, or the item object inside an
+        array, has no description. A missing one on `results.items` is what made
+        every uploaded PDF come back "reader error (BadRequestError)"."""
+        bad = []
+
+        def walk(node, path):
+            if not isinstance(node, dict):
+                return
+            for name, f in (node.get("properties") or {}).items():
+                if not str(f.get("description") or "").strip():
+                    bad.append(path + "/" + name)
+                walk(f, path + "/" + name)
+            it = node.get("items")
+            if isinstance(it, dict):
+                if not str(it.get("description") or "").strip():
+                    bad.append(path + "/items")
+                walk(it, path + "/items")
+
+        walk(W.LAB_SCHEMA, "")
+        assert not bad, "no description on: " + ", ".join(bad)
+        return "every field and every array item carries a description"
+
+    def t13_error_keeps_the_message():
+        """A bare exception class name in ocr_note cost a round trip to the
+        server to learn that the schema, not the file, was wrong."""
+        class Boom(Exception):
+            body = {"detail": "SCHEMA_INVALID: field \"results\": needs a description"}
+
+        def raiser(*a, **k):
+            raise Boom()
+
+        real = W.sarvam_key
+        W.sarvam_key = lambda: "x"
+        try:
+            import sarvamai
+            realc = sarvamai.SarvamAI
+            sarvamai.SarvamAI = lambda **k: type("C", (), {"doc_ai": type("D", (), {"extract": raiser})()})()
+            try:
+                out, note = W.sarvam_extract(__file__, W.LAB_SCHEMA)
+            finally:
+                sarvamai.SarvamAI = realc
+        except ImportError:
+            return "reader library absent, skipped"
+        finally:
+            W.sarvam_key = real
+        assert out is None, "should not have produced a reading"
+        assert "SCHEMA_INVALID" in note, "note lost the service's message: " + note
+        return "the note carries what the service actually said"
+
     tests = [("00 scratch never spawns", t00_no_spawn_on_scratch), ("01 read and file", t01_read_and_file),
              ("02 test names matched", t02_names_matched), ("03 plan ticked", t03_plan_ticked),
              ("04 inbox cleared", t04_inbox_cleared), ("05 looks right", t05_looks_right),
              ("06 idempotent", t06_idempotent), ("07 wrong patient", t07_wrong_patient),
              ("08 failures and retries", t08_failures), ("09 dates", t09_dates),
-             ("10 key from env file", t10_key_from_env_file), ("11 answer shapes", t11_coerce)]
+             ("10 key from env file", t10_key_from_env_file), ("11 answer shapes", t11_coerce),
+             ("12 schema descriptions", t12_schema_descriptions),
+             ("13 error keeps the message", t13_error_keeps_the_message)]
     print("=" * 66)
     print("GutLog v3.10.0 Phase G - automatic reading test")
     print("=" * 66)

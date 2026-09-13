@@ -54,7 +54,12 @@ LAB_SCHEMA = {
         "title": {"type": "string", "description": "short title, e.g. Complete blood count, USG abdomen, Lipid profile"},
         "results": {
             "type": "array", "description": "every test result row in the report",
-            "items": {"type": "object", "properties": {
+            # The reader rejects the whole schema with SCHEMA_INVALID unless the
+            # array's item object carries a description of its own -- the
+            # descriptions on the properties inside it are not enough. That one
+            # missing line is why every PDF came back "reader error".
+            "items": {"type": "object", "description": "one test result row",
+                      "properties": {
                 "test": {"type": "string", "description": "test or parameter name exactly as printed"},
                 "value": {"type": "string", "description": "result exactly as printed, including < or > signs"},
                 "unit": {"type": "string", "description": "unit as printed"},
@@ -164,7 +169,16 @@ def sarvam_extract(path, schema):
         res = client.doc_ai.get_results(job_id=jid)
         return coerce(res), ""
     except Exception as e:
-        return None, "reader error (%s)" % type(e).__name__
+        # Keep what the service actually said, not just the exception class --
+        # a bare "BadRequestError" cost a round trip to the server to find out
+        # that the schema, not the file, was the problem.
+        b = getattr(e, "body", None)
+        msg = ""
+        if isinstance(b, dict):
+            msg = str(b.get("detail") or b.get("message") or "")
+        if not msg:
+            msg = str(e).replace("\n", " ")
+        return None, ("reader error (%s): %s" % (type(e).__name__, msg))[:300]
 
 
 def coerce(res):

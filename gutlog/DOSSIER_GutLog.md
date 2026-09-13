@@ -237,6 +237,18 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-12 v3.11.1 — the reader's schema.** Every uploaded PDF came back
+  `reader error (BadRequestError)` and none were read. The file was never the
+  problem: Sarvam rejects the whole extraction schema with `SCHEMA_INVALID`,
+  400, before it looks at the document, unless the object inside an array
+  carries a description of its own — descriptions on the properties within it
+  are not enough. `LAB_SCHEMA`'s `results.items` had none. One line fixed it and
+  the same report then read cleanly. Two guards added: `ocr_note` now keeps what
+  the service actually said (a bare exception class name cost a round trip to
+  the server to learn the schema was at fault), and `test_phase_g.py` walks
+  `LAB_SCHEMA` and fails if any field or array item lacks a description —
+  now 14/14.
+
 - **2026-09-12 v3.11.0 — scan quality.** The scanner is the clinic's widget
   (S219 v2.3, the newest of the three versions), and it was tuned for pharmacy
   bills: half A4, large print, lying on a desk. A pathology report is the
