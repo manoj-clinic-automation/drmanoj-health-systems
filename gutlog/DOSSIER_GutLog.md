@@ -334,6 +334,29 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-14 v3.12.0 — DEPLOYED 04:40 IST.** `app.py` sha256 `f6c169ed…`,
+  **260,086 bytes, byte-identical to the repo build** — the `newline=""`
+  handling means the same patcher produces the same bytes on Windows and on
+  the server. 26/26 anchors, compile check OK.
+  **The migration behaved exactly as gap 2 says it does**, and this is the
+  first time it has been watched happen: `schema_version` was still `3.3.2`
+  immediately after `systemctl restart`, and only became `3.3.3` after one
+  `GET /login`. Never conclude a migration ran because the service came back
+  up. `episodes` now carries `treatments` and `radiates`; 8 episode rows and
+  37 dose rows preserved. Both analgesic chips resolve **by molecule** to real
+  `prnmeds` rows, so a tap writes a properly linked dose.
+  `regimen.local.json` was merged rather than overwritten: a key-by-key
+  before/after comparison showed **nothing lost**, `_meta` changed only by the
+  documentation line, and `pain_analgesics` added.
+  Suites on the server before the restart: `test_phase_i.py` **18/18** (and
+  18/18 again at a faked 00:02, 05:02 and 23:02), phase A 18/18, B 16/16,
+  **C 20/20**, D 18/18, **E 13/13**, F 8/8, G 14/14, plus the cross-app
+  `test_analgesic_mirror.py` **8/8** against the two live-patched files.
+  Rollback: `app.py.bak-v3120-20260914_044056`, or the pre-deploy pair
+  `app.py.predeploy-phaseI-20260914_043720` and
+  `/root/backups/gutlog/health3.db.predeploy-phaseI-20260914_043720`
+  (`sqlite3.backup()`, integrity ok). The patcher is reversible: reversing all
+  26 anchors reproduces v3.11.0 at exactly 241,645 bytes.
 - **2026-09-13 v3.12.0 — Phase I: the pain entry surface.** A "Pain now" card
   of nine tiles (hero: both hips + anterior thighs), three questions a tile
   and no more, writing one `episodes` row with the new `treatments` and

@@ -33,6 +33,13 @@ GutLog v3.11.0 -> v3.12.0  ::  Phase I -- the pain entry surface
 
 Requires v3.11.0 (GUTLOG_V3110_SCANQ). Anchor-verified, idempotent,
 compile-checked, Jinja-safe, .bak before write, self-restoring. Python 3.9.
+
+Reversible, and checked rather than assumed: reversing all 26 anchors out of
+the patched file reproduces v3.11.0 at exactly 241,645 bytes (owner,
+2026-09-14). Every edit is therefore a clean substitution with no overlap,
+which is what makes the .bak a formality rather than the only way back.
+
+Deployment history lives in DOSSIER_GutLog.md, not here.
 """
 import argparse
 import datetime

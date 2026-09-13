@@ -235,7 +235,62 @@ def main():
     check(8, "Unknown molecule returns UNKNOWN, not silence",
           unk["flag"] == "UNKNOWN" and not unk["known"])
 
+    # 9 ------------------------------------------- keys the KB cannot resolve
+    # A drug_key that does not resolve contributes to NOTHING -- no pairwise
+    # rule, no CYP derivation, no burden, no QT sum, no condition rule -- and
+    # the screen looks exactly as it would if the drug were safe. On
+    # 2026-09-14 one missing letter had been doing that unnoticed in the real
+    # list. First the mechanism, on the synthetic fixture:
+    with application.app_context():
+        rxguard.g.db_path = path
+        db = rxguard.get_db()
+        db.execute("INSERT INTO medications (drug_key, raw_name, dose, kind, status, "
+                   "start_date) VALUES ('zzzfakedrug','Zzzfake 10','10 mg','chronic',"
+                   "'active','2026-01-01')")
+        db.execute("INSERT INTO medications (drug_key, raw_name, dose, kind, status, "
+                   "start_date) VALUES ('drug_a_+_drug_b','Drug A + Drug B','1','chronic',"
+                   "'stopped','2026-01-01')")
+        db.commit()
+        u = rxguard.unresolved_keys()
+        by = dict((x["key"], x) for x in u)
+    check(9, "A misspelled ACTIVE key is reported, not swallowed",
+          "zzzfakedrug" in by and by["zzzfakedrug"]["live"] is True)
+    check(9, "A combination key says one row per molecule",
+          "drug_a_+_drug_b" in by and by["drug_a_+_drug_b"]["combination"] is True
+          and "one row per molecule" in by["drug_a_+_drug_b"]["why"])
+    check(9, "Resolvable keys are not reported",
+          not [x for x in u if x["key"] in ("paroxetine", "nortriptyline", "diltiazem")])
+    check(9, "Live rows are listed before stopped ones", u and u[0]["live"] is True)
+    r = c.get("/")
+    body = r.get_data(as_text=True)
+    check(9, "The Dashboard names it, above the medication table",
+          "cannot resolve" in body and "zzzfakedrug" in body
+          and (body.find("Active medications") == -1
+               or body.find("cannot resolve") < body.find("Active medications")))
+
     os.unlink(path)
+
+    # ...and then the gate that matters: the LIVE list must have none. This is
+    # the check that turns a future typo into a failed deploy instead of a
+    # drug quietly missing from every screen. Skipped out loud, never
+    # silently, when the live database is not on this machine.
+    live = os.environ.get("RXGUARD_DB") or rxguard.DEFAULT_DB
+    if os.path.exists(live):
+        live_app = rxguard.create_app(db_path=live, secret="smoke-read-only")
+        with live_app.app_context():
+            rxguard.g.db_path = live
+            lu = rxguard.unresolved_keys()
+        bad = [x for x in lu if x["live"]]
+        check(9, "LIVE list: every active key resolves", not bad,
+              "" if not bad else "UNCHECKED BY THE ENGINE: "
+              + ", ".join(x["key"] for x in bad))
+        stopped_bad = [x for x in lu if not x["live"]]
+        check(9, "LIVE list: stopped keys resolve too", not stopped_bad,
+              "" if not stopped_bad else "record will mislead later: "
+              + ", ".join(x["key"] for x in stopped_bad))
+    else:
+        check(9, "LIVE list checked", True,
+              "SKIPPED - no live database at " + live + " (expected off-server)")
 
     # ------------------------------------------------------------- report
     width = 66

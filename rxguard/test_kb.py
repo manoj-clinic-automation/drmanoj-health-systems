@@ -10,6 +10,8 @@ exercise the parser, not quoted from any real label. Scratch database,
 scratch knowledge folder; nothing live is touched. Python 3.9.
 
   python3 test_kb.py        -> must print 32/32 passed
+
+Needs `fcntl`: POSIX only. Run it on the server, not on Windows.
 """
 import json
 import os
@@ -451,10 +453,25 @@ def main():
         return "only molecule names are put in outgoing URLs"
 
     def t23_smoke_untouched():
+        """The curated smoke suite must still pass whole.
+
+        Two things this used to get wrong. It pinned the literal "42 passed",
+        so adding a check to smoke_test.py turned this red for no reason --
+        the question is whether anything FAILED, not how many ran. And it
+        inherited the live medication list, because smoke_test's v1.6.0 gate
+        reads the real database when one is present: a knowledge-base suite
+        must never be coloured by the owner's data (CLAUDE.md 5a). Pointing
+        RXGUARD_DB at a path that does not exist makes that gate report
+        SKIPPED, which is what isolation looks like here.
+        """
         import subprocess
-        out = subprocess.run([sys.executable, "smoke_test.py"], cwd=HERE, capture_output=True, text=True).stdout
-        assert "42 passed" in out, out[-300:]
-        return "curated smoke suite still 42/42"
+        env = dict(os.environ)
+        env["RXGUARD_DB"] = os.path.join(HERE, "_no_such_live_db_for_test_kb.db")
+        out = subprocess.run([sys.executable, "smoke_test.py"], cwd=HERE,
+                             capture_output=True, text=True, env=env).stdout
+        assert "0 failed" in out, out[-400:]
+        n = [l for l in out.splitlines() if "checks," in l]
+        return "curated smoke suite clean: " + (n[-1].strip() if n else "?")
 
     def t24_report():
         import io

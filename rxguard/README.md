@@ -1,4 +1,4 @@
-# RxGuard v1.5.0
+# RxGuard v1.6.0
 
 `rx.dr-manoj.in` · service `rxguard` · port 8031 · `/root/rxguard`
 
@@ -72,7 +72,22 @@ named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
 days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
 GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
 
-## Reconciliation — v1.5.0
+## Reconciliation — v1.5.0 (deployed 2026-09-14 04:42 IST)
+
+`app.py` sha256 `26d6ae8b…`, 136,485 bytes, byte-identical to the repo build;
+8/8 anchors. Suites on the server before the restart: `test_reconcile.py`
+13/13, `test_astaken.py` 15/15, `smoke_test.py` 42/42, `test_kb.py` 32/32,
+`test_conditions.py` 10/10, `validate.py` 50/50. `/healthz` reports `ok 1.5.0`;
+`medications` and `med_events` untouched by the deploy (16 and 22 rows), which
+is the point — nothing writes without a tap. Rollback:
+`app.py.bak-v150-20260914_044233`, or `app.py.predeploy-phaseI-20260914_043720`
+and `/root/backups/rxguard/rxguard.db.predeploy-phaseI-20260914_043720`.
+
+### What it found on the first run
+
+Both REDs rest on a drug GutLog has not seen, and **both are now marked
+possibly stale** — see "First findings" below.
+
 
 The v1.1.0 page above *showed* the mismatch; the engine never saw it. It runs
 on `active_meds()` — RxGuard's own `medications` table — and nothing updated
@@ -106,6 +121,86 @@ Requires GutLog **v3.12.0**, which added `valid_from` on each regimen line and
 an `ended` list of recently closed schedules with their `valid_to` to
 `/api/feed/stack`. Against an older GutLog the lines still appear; only the
 one-tap stop date is unavailable.
+
+## Keys the knowledge base cannot resolve — v1.6.0 (deployed 2026-09-14 05:08 IST)
+
+A `drug_key` that does not resolve contributes to **nothing**: no pairwise
+rule, no CYP derivation, no class duplication, no burden, no QT sum, no
+condition rule. The drug is absent from every check on every screen, and the
+screen looks exactly as it would if the drug were safe. That is the worst
+failure this application has, and one missing letter was enough to cause it.
+
+- `unresolved_keys()` checks every row. The **Dashboard carries a banner at
+  the top** when any row is unresolved — above the medication table, naming
+  each key and why it fails — and `show_reds.py` leads with the same list
+  before printing a single finding.
+- Active and tapering rows are called out as the live gap they are; stopped
+  rows are reported too, more quietly, because a record that misleads later is
+  still a defect.
+- A key containing `+` gets its own message: RxGuard holds **one row per
+  molecule**, so a combination belongs on two lines.
+- **It is a gate.** `smoke_test.py` step 9 proves the mechanism on its own
+  synthetic fixture and then asserts that the **live** list has no unresolved
+  key, so a future typo fails the pre-restart gate instead of hiding. When the
+  live database is not on the machine the check reports SKIPPED out loud,
+  never silently. `test_kb.py` runs the smoke suite with `RXGUARD_DB` pointed
+  at a non-existent path, so a knowledge-base suite is never coloured by the
+  owner's list (CLAUDE.md 5a) — and it now asserts *nothing failed* rather
+  than pinning a check count that adding a check would break.
+- `fix_drug_keys.py` corrects one: `--rename OLD NEW` moves `medications` and
+  `med_events` together and refuses a NEW that does not resolve either;
+  `--split OLD A B` turns a combination row into one row per molecule, keeping
+  the dates, status and notes. Dry-run by default, takes its own
+  `sqlite3.backup()` first, and records a `key-corrected` event so the change
+  is visible rather than mysterious.
+
+### Reconciliation is for chronic drugs only — v1.6.0
+
+"Not taken for 7 days" means something for a drug meant to be taken daily and
+nothing at all for an as-needed analgesic. `medications.kind` already carried
+this, so the "still active here" test now skips anything that is not
+`chronic`. On the real list that took the reconciliation lines from four to
+one, and the one left is a genuine mirror case.
+
+### Staleness says which kind of stale — v1.6.0
+
+The same 14-day silence means two different things, and one sentence for both
+was wrong:
+
+- chronic, absent from the regimen → *may have been stopped — reconcile*;
+- as-needed, not taken recently → *this burden may be theoretical rather than
+  current*.
+
+A finding resting on both gets both sentences, chronic first. Nothing is
+dropped either way. Verbs agree with the number of drugs, because "a, b, c
+**is** as-needed and **has** not been taken" is how a clinical screen starts
+looking unmaintained.
+
+### First findings (2026-09-14, 10 active/tapering)
+
+Recorded as a shape, not as values — the values are the health record and stay
+on the server. Run `show_reds.py` for the current picture.
+
+- **Both REDs are cumulative-burden findings, and both are marked possibly
+  stale.** Each rests on three molecules, and in each case one of them has had
+  no dose in GutLog for 14+ days and is absent from its regimen. So the answer
+  to "is at least one RED resting on a drug already stopped?" is: *possibly
+  both* — which is exactly the state the old page could not express.
+- 11 AMBER, **8 of the 13 findings marked stale**. The marking is doing real
+  work rather than decorating.
+- **The reconciliation caught a spelling mistake from both directions at
+  once.** One molecule was misspelled in the RxGuard list, so it had no
+  knowledge-base entry and contributed to no finding at all; meanwhile the
+  correctly-spelled molecule arrived from GutLog and read as "taken but not on
+  your list". Two lines, one cause. **Three such keys were found in all** —
+  one active, two stopped, one of those a combination — and all three are now
+  corrected. Fixing the active one made the engine see **10 molecules instead
+  of 9** and moved the **constipating burden from 5 to 6**; no other burden
+  changed, and the RED and AMBER counts held at 2 and 11. So the RED was
+  right, but it had been computed on a shorter list than the screen implied.
+- **Both REDs are stale for PRN reasons.** After v1.6.0 they read *"may be
+  theoretical rather than current"* rather than *"may have been stopped"* —
+  the distinction that was missing when this was first reported.
 
 `show_reds.py` answers the question from the terminal, read-only, without
 changing anything: every RED and AMBER, the molecules each rests on, and

@@ -1,7 +1,19 @@
 """test_ui_now.py -- OFFLINE ONLY (needs Playwright + Chromium; never run on the server).
 Usage: python3 test_ui_now.py path/to/app.py
 Real-browser test of the Now tab: tap the variant row, pick a dose, log it,
-then tap the logged row and check the action strip. Runs the page's own JS."""
+then tap the logged row and check the action strip. Runs the page's own JS.
+
+Needs `import_records.py` beside the app.py you point it at, or the v3.8.0
+records block dies partway through with FileNotFoundError -- after a run of
+green results, which makes it look like a late regression rather than a
+missing file. `records_worker.py` is wanted from v3.10.0 onward for the same
+reason. Both live beside app.py in the repo, so pointing this at a checkout
+is enough; pointing it at a bare copy of app.py is not.
+
+From v3.12.0 the activity block asserts six tiles and checks the operating-day
+tile in full: hours not minutes, no intensity, and the logged entry staying
+out of the day's exercise minutes. Against v3.11.0 that tile does not exist,
+so the block reports named failures rather than a traceback."""
 import importlib.util, os, sys, tempfile, threading, time
 from werkzeug.serving import make_server
 from playwright.sync_api import sync_playwright

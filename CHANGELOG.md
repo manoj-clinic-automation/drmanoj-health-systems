@@ -3,11 +3,94 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-14 — RxGuard v1.6.0: a typo was deleting a drug from every check
+
+Everything below came out of what v1.5.0 found on its first run against the
+real list, hours after it was deployed. **DEPLOYED 05:08 IST**, `app.py`
+sha256 `731f48e9…`, 142,717 bytes, byte-identical to the repo build.
+
+**Fixed — a `drug_key` the knowledge base cannot resolve contributed to
+nothing.** No pairwise rule, no CYP derivation, no class duplication, no
+burden, no QT sum, no condition rule. The drug was absent from every check on
+every screen and the screen looked exactly as it would if the drug were safe.
+One missing letter was enough. `unresolved_keys()` now checks every row; the
+Dashboard carries a banner **above the medication table** naming each key and
+why it fails, and `show_reds.py` leads with the same list before printing a
+single finding. Live rows are called out as the gap they are; stopped rows are
+reported more quietly, because a record that misleads later is still a defect.
+A key containing `+` gets its own message — RxGuard holds one row per
+molecule, so a combination belongs on two lines.
+
+**And it is a gate, not a notice.** `smoke_test.py` step 9 proves the
+mechanism on its own synthetic fixture and then asserts the **live** list has
+no unresolved key, so the next typo fails the pre-restart gate instead of
+hiding. It reports SKIPPED out loud when the live database is not on the
+machine. Two things had to be fixed to make that honest: `test_kb.py` pinned
+the literal `"42 passed"`, so adding a check to the smoke suite turned it red
+for no reason — it now asserts *nothing failed*; and it inherited the live
+list through that subprocess, so it now points `RXGUARD_DB` at a non-existent
+path. **A knowledge-base suite must never be coloured by the owner's data**
+(CLAUDE.md 5a), and it quietly was.
+
+**Fixed — three unresolved keys in the live list**, with `fix_drug_keys.py`
+(dry-run by default, takes its own `sqlite3.backup()`, moves `medications` and
+`med_events` together, refuses a replacement that does not resolve either, and
+records a `key-corrected` event so the change is visible). One active
+misspelling, one stopped misspelling, and one stopped combination row split
+into one row per molecule. **What changed, measured on a copy before anything
+was written:** the engine now sees **10 molecules instead of 9**, and the
+**constipating burden moved 5 → 6** as the newly-visible molecule joined its
+contributors. No other burden moved; RED held at 2 and AMBER at 11. The RED
+was right — it had simply been computed on a shorter list than the screen
+implied. The "2 taken medicines not on your list" AMBER became 1, and the
+UNKNOWN coverage finding disappeared.
+
+**Changed — reconciliation is for chronic drugs only.** "Not taken for 7 days"
+means something for a drug meant to be taken daily and nothing for an
+as-needed analgesic. `medications.kind` already carried this. On the real list
+the reconciliation lines went from **four to one**, and the one left is a
+genuine mirror case.
+
+**Changed — staleness says which kind of stale.** The same 14-day silence
+meant two different things and one sentence for both was wrong: chronic and
+absent from the regimen → *may have been stopped, reconcile*; as-needed and
+not taken recently → *this burden may be theoretical rather than current*. A
+finding resting on both gets both sentences, chronic first. Verbs agree with
+the number of drugs — the first live run read "a, b, c **is** as-needed and
+**has** not been taken", caught and fixed before that wording was left in
+place rather than after. Both live REDs now read as
+theoretical-PRN rather than possibly-stopped, which is the distinction that
+was missing when they were first reported.
+
+**Tests** — `test_reconcile.py` **18/18** (12/18 against v1.5.0): the PRN
+exclusion, both staleness labels checked on separate findings so neither can
+pass by leaning on the other, a **forced** both-labels case because the
+fixture happens to raise none naturally and "no case arose" is not a pass, and
+the unresolved-key detection including the live/stopped split and the
+combination message. `smoke_test.py` **49/49** including the live gate — which
+failed with all three keys named before the data fix, then went green after
+it. `test_kb.py` 32/32, `test_astaken.py` 15/15, `test_conditions.py` 10/10,
+`validate.py` 50/50.
+
 ## 2026-09-13 — Phase I: the pain entry surface, and closing the GutLog → RxGuard disconnect
 
-Three apps, one change. **Not yet deployed** — patchers, suites and docs are
-in the repo; the server is still on GutLog v3.11.1 / FitLog v1.3.3 /
-RxGuard v1.4.0.
+Three apps, one change. **DEPLOYED 2026-09-14, 04:38–04:42 IST**, in the order
+FitLog → GutLog → RxGuard, each verified before the next. All three `app.py`
+files on the server are **byte-identical to the repo build** (`f6c169ed…`
+260,086 · `7a5f6549…` 69,652 · `26d6ae8b…` 136,485), which is what the
+`newline=""` handling in the patchers is for. Pre-deploy `sqlite3.backup()`
+copies of all three databases, integrity-checked, plus `app.py` rollback
+copies, under `predeploy-phaseI-20260914_043720`.
+
+Two things worth keeping from the deploy itself. **The GutLog migration was
+watched rather than assumed**: `schema_version` was still `3.3.2` immediately
+after `systemctl restart` and only became `3.3.3` after one `GET /login` —
+exactly what DOSSIER gap 2 says, seen happening. And `regimen.local.json` was
+**merged, not overwritten**: a key-by-key before/after comparison proved
+nothing was lost, with `_meta` changed only by a documentation line. The
+cross-app mirror suite was deliberately deferred from the FitLog step to the
+GutLog step, because it drives pain tiles that did not exist until GutLog was
+patched; verifying it earlier would have meant verifying nothing.
 
 **Added — GutLog v3.12.0** (`patch_gutlog_v3120.py`, 26 anchors)
 - **Pain now**, a collapsed card on the Now tab beside blood pressure and
@@ -111,6 +194,25 @@ suite under a faked clock — both suites verified at 00:00, 00:02, 01:10,
 05:05, 12:00, 18:30 and 23:58, `test_reconcile.py` at four of those. It must
 patch the clock before the suite *and* the app import it, or the two disagree
 and the failures are artefacts of the harness; that is written into the file.
+
+**What RxGuard's two REDs turned out to be** — both are **cumulative-burden**
+findings, each resting on three molecules, and **both are now marked possibly
+stale** because one molecule in each has had no dose in GutLog for 14+ days
+and is absent from its regimen. 11 AMBER alongside them, 8 of the 13 findings
+marked. The question the prompt asked — does at least one RED rest on a drug
+already stopped — answers *possibly both*, which is a state the old page could
+not express at all. The reconciliation also caught **a misspelled molecule in
+the RxGuard list from both directions at once**: the typo has no
+knowledge-base entry so contributes to no check, while the correct spelling
+arrives from GutLog as "taken but not on your list". A typo silently deleting
+a drug from every safety check was previously invisible. Values stay on the
+server; `rxguard/show_reds.py` prints the current picture, read-only.
+**One judgement left open, deliberately:** three of the four "still active
+here" lines are `kind='episodic'` PRN analgesics, and both stale REDs are
+stale *because of* PRN drugs. For a PRN, "no dose in 7 days" is normal and
+says nothing about stopping. `medications.kind` could narrow both tests to
+`chronic` — but whether a PRN untaken for a fortnight still belongs on the
+list is a clinical call, not a coding one.
 
 **Deploy order** — FitLog, then GutLog, then RxGuard. Each degrades safely
 against an unpatched neighbour, so the order is a preference rather than a

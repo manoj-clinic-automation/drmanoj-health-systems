@@ -116,10 +116,26 @@ def main():
     rc.post("/login", data={"password": "testpassword1"})
 
     con = sqlite3.connect(rdb)
-    for k, dose in (("ciprofloxacin", "500 mg"), ("tizanidine", "2 mg"),
-                    ("ramipril", "5 mg"), ("domperidone", "10 mg")):
-        con.execute("INSERT INTO medications(drug_key,raw_name,dose,status,start_date) "
-                    "VALUES(?,?,?,'active',?)", (k, k, dose, Y30))
+    # kind is the whole point of the v1.6.0 half: "not taken for 7 days" means
+    # something for a chronic drug and nothing for an as-needed one. fluconazole
+    # is here because PW023 is defined on fluconazole + domperidone, so it is
+    # guaranteed to carry a finding whose staleness wording can be checked; and
+    # it is episodic, so that finding must read differently from the chronic one.
+    for k, dose, kind in (("ciprofloxacin", "500 mg", "chronic"),
+                          ("tizanidine", "2 mg", "chronic"),
+                          ("ramipril", "5 mg", "chronic"),
+                          ("domperidone", "10 mg", "chronic"),
+                          ("fluconazole", "150 mg", "episodic")):
+        con.execute("INSERT INTO medications(drug_key,raw_name,dose,kind,status,start_date) "
+                    "VALUES(?,?,?,?,'active',?)", (k, k, dose, kind, Y30))
+    # a misspelling the knowledge base cannot resolve -- the v1.6.0 check exists
+    # because one of these was sitting in the real list, silently absent from
+    # every check, and nothing said so
+    con.execute("INSERT INTO medications(drug_key,raw_name,dose,kind,status,start_date) "
+                "VALUES('ciproflox_acin','Ciproflox acin','500 mg','chronic','active',?)", (Y30,))
+    con.execute("INSERT INTO medications(drug_key,raw_name,dose,kind,status,start_date,stop_date) "
+                "VALUES('propranolol_+_unobtainium','propranolol + unobtainium','40 + 1',"
+                "'chronic','stopped',?,?)", (Y30, Y8))
     con.commit()
     con.close()
 
@@ -143,6 +159,7 @@ def main():
     def t00_feed_carries_the_end_date():
         v, data = view()
         ctx["v"] = v
+        ctx["data"] = data
         assert data.get("ended") is not None, \
             "GutLog is older than v3.12.0: no `ended` list on the feed"
         ends = dict((e["molecule"], e["valid_to"]) for e in data["ended"])
@@ -161,7 +178,10 @@ def main():
         assert "ciprofloxacin" not in keys, "a current regimen medicine raised a line"
         assert "domperidone" not in keys, \
             "a medicine dosed 2 days ago raised a line -- the 7-day test is not applied"
-        return "2 of 4 fire: ended + never-seen; current and recently-dosed do not"
+        assert "fluconazole" not in keys, \
+            "an as-needed medicine raised a stopped? line -- a PRN that has not " \
+            "been taken is not evidence of stopping (v1.6.0)"
+        return "ended + never-seen fire; current, recently-dosed and as-needed do not"
 
     def t02_the_line_carries_gutlogs_date():
         row = [r for r in ctx["v"]["rec"]["stopped"] if r["key"] == "tizanidine"][0]
@@ -187,8 +207,10 @@ def main():
             "tizanidine findings not marked: " + str([f["title"] for f in stale])
         for f in stale:
             assert f["flag"] in ("RED", "AMBER"), f["flag"]
-        # the two GutLog has not seen: one ended 8 days ago, one it never had
-        gone = {"tizanidine", "ramipril"}
+        # everything GutLog has not seen: one ended 8 days ago, two it never had
+        # (fluconazole among them -- as-needed is still stale, it just reads
+        # differently; see the label test below)
+        gone = {"tizanidine", "ramipril", "fluconazole"}
         involving = [f for f in fs if f["flag"] in ("RED", "AMBER")
                      and (set(f.get("involves") or []) & gone)]
         assert involving, "the fixture raised no finding on a stale drug at all"
@@ -207,7 +229,9 @@ def main():
         rows = dict((r["drug_key"], r["status"]) for r in
                     rq("SELECT drug_key, status FROM medications"))
         assert rows == {"ciprofloxacin": "active", "tizanidine": "active",
-                        "ramipril": "active", "domperidone": "active"}, str(rows)
+                        "ramipril": "active", "domperidone": "active",
+                        "fluconazole": "active", "ciproflox_acin": "active",
+                        "propranolol_+_unobtainium": "stopped"}, str(rows)
         assert not rq("SELECT * FROM med_events"), "an event was written without a tap"
         return "reading the mismatch changed nothing: a drug record must not edit itself"
 
@@ -292,12 +316,120 @@ def main():
             "a stale marking survived the reconciliation"
         return "the engine runs on active_meds(), and active_meds() has moved"
 
+    # ------------------------------------------- v1.6.0: the two stale labels
+    def t13_chronic_staleness_says_reconcile():
+        """A chronic drug missing from the regimen may have been stopped, and
+        the finding should be reconciled. Checked on its own finding, so the
+        two labels cannot pass by leaning on each other."""
+        f = [x for x in ctx["v"]["findings"]
+             if "tizanidine" in (x.get("involves") or []) and x.get("gut_stale")]
+        assert f, "no marked finding rests on the chronic stale drug"
+        for x in f:
+            assert "may have been stopped" in x["gut_stale"], x["gut_stale"]
+            assert "reconcile" in x["gut_stale"].lower(), x["gut_stale"]
+            assert "as-needed" not in x["gut_stale"], \
+                "a chronic drug was described as as-needed: " + x["gut_stale"]
+            assert x.get("gut_stale_kinds") == ["chronic"], str(x.get("gut_stale_kinds"))
+            # one drug, singular verbs
+            assert "it is not in the regimen" in x["gut_stale"], x["gut_stale"]
+        return str(len(f)) + " chronic-stale finding(s) read 'may have been stopped'"
+
+    def t14_prn_staleness_says_theoretical():
+        """An as-needed drug has simply not been needed. The burden it carries
+        is theoretical rather than current, and must not be written up as a
+        possible discontinuation."""
+        f = [x for x in ctx["v"]["findings"]
+             if "fluconazole" in (x.get("involves") or []) and x.get("gut_stale")]
+        assert f, "no marked finding rests on the as-needed drug -- the fixture " \
+                  "expects PW023 (fluconazole + domperidone)"
+        for x in f:
+            assert "as-needed" in x["gut_stale"], x["gut_stale"]
+            assert "theoretical rather than current" in x["gut_stale"], x["gut_stale"]
+            assert "prn" in (x.get("gut_stale_kinds") or []), str(x.get("gut_stale_kinds"))
+            if "chronic" not in (x.get("gut_stale_kinds") or []):
+                assert "may have been stopped" not in x["gut_stale"], \
+                    "an as-needed drug was described as possibly stopped: " + x["gut_stale"]
+        # and the verbs agree with the number of drugs, singular or plural
+        for x in f:
+            one = len([k for k in (x.get("involves") or [])
+                       if k in x["gut_stale"]]) == 1
+            if one and "fluconazole is as-needed" in x["gut_stale"]:
+                assert "has not been taken" in x["gut_stale"], x["gut_stale"]
+            assert " is as-needed and have " not in x["gut_stale"], \
+                "verb disagreement: " + x["gut_stale"]
+            assert " are as-needed and has " not in x["gut_stale"], \
+                "verb disagreement: " + x["gut_stale"]
+        red = [x for x in f if x["flag"] == "RED"]
+        return str(len(f)) + " as-needed finding(s) read 'theoretical rather than " \
+               "current'" + (", incl. a RED" if red else "")
+
+    def t15_both_labels_on_one_finding_when_both_apply():
+        """Forced rather than hoped for: this fixture happens to raise no
+        finding resting on one of each, and "no case arose" is not a pass. A
+        finding standing on both must carry both sentences, not whichever
+        branch is written first."""
+        f = {"flag": "RED", "category": "Synthetic", "title": "both kinds at once",
+             "involves": ["tizanidine", "fluconazole"]}
+        with rapp.test_request_context():
+            from flask import g
+            g.db_path = rdb
+            n = rx.mark_gut_stale([f], ctx["data"])
+        assert n == 1, "the finding was not marked at all"
+        assert sorted(f.get("gut_stale_kinds") or []) == ["chronic", "prn"], \
+            str(f.get("gut_stale_kinds"))
+        assert "may have been stopped" in f["gut_stale"], f["gut_stale"]
+        assert "theoretical rather than current" in f["gut_stale"], f["gut_stale"]
+        assert f["gut_stale"].index("tizanidine") < f["gut_stale"].index("fluconazole"), \
+            "the chronic sentence must come first: " + f["gut_stale"]
+        natural = [x for x in ctx["v"]["findings"]
+                   if sorted(x.get("gut_stale_kinds") or []) == ["chronic", "prn"]]
+        return "both sentences, chronic first" + (
+            "; %d also arise naturally" % len(natural) if natural else
+            "; none arises naturally here, hence the forced case")
+
+    # -------------------------------------- v1.6.0: keys the KB cannot resolve
+    def t16_unresolved_keys_are_found():
+        with rapp.test_request_context():
+            from flask import g
+            g.db_path = rdb
+            u = rx.unresolved_keys()
+        by = dict((x["key"], x) for x in u)
+        assert "ciproflox_acin" in by, \
+            "a misspelled ACTIVE key was not reported: " + str(sorted(by))
+        assert by["ciproflox_acin"]["live"] is True, "an active row was not called live"
+        assert "spelling" in by["ciproflox_acin"]["why"], by["ciproflox_acin"]["why"]
+        assert "propranolol_+_unobtainium" in by, "a stopped unresolved key was not reported"
+        assert by["propranolol_+_unobtainium"]["live"] is False
+        assert by["propranolol_+_unobtainium"]["combination"] is True
+        assert "one row per molecule" in by["propranolol_+_unobtainium"]["why"], \
+            by["propranolol_+_unobtainium"]["why"]
+        for good in ("ciprofloxacin", "tizanidine", "domperidone", "fluconazole"):
+            assert good not in by, good + " resolves, but was reported as unresolved"
+        assert u[0]["live"] is True, "live rows must be listed first, not buried"
+        return "2 found (1 live, 1 stopped combination); 4 resolvable keys untouched"
+
+    def t17_the_dashboard_says_so_loudly():
+        h = rc.get("/").get_data(as_text=True)
+        assert "cannot resolve" in h, "the Dashboard does not mention unresolved keys"
+        assert "ciproflox_acin" in h, "the offending key is not named on the Dashboard"
+        i_banner = h.find("cannot resolve")
+        i_meds = h.find("Active medications")
+        assert i_meds == -1 or i_banner < i_meds, \
+            "the warning sits below the medication table instead of at the top"
+        assert "left out of" in h, "the consequence is not spelled out"
+        return "named at the top of the Dashboard, above the medication table"
+
     tests = [
         ("00 feed carries GutLog's end date", t00_feed_carries_the_end_date),
         ("01 fires on all three conditions only", t01_fires_on_all_three_conditions_only),
         ("02 the line carries GutLog's date", t02_the_line_carries_gutlogs_date),
         ("03 the mirror case, inverted", t03_the_mirror_case),
         ("04 stale findings marked, not dropped", t04_findings_on_a_stale_drug_are_marked_not_dropped),
+        # the label tests read the pre-reconciliation snapshot, so they run
+        # before the taps below move anything
+        ("04a chronic stale: may have been stopped", t13_chronic_staleness_says_reconcile),
+        ("04b as-needed stale: theoretical, not current", t14_prn_staleness_says_theoretical),
+        ("04c both labels when both apply", t15_both_labels_on_one_finding_when_both_apply),
         ("05 nothing written without a tap", t05_nothing_was_written_by_itself),
         ("06 the page offers the tap", t06_the_page_offers_the_tap),
         ("07 one tap stops it on GutLog's date", t07_one_tap_stops_it_on_gutlogs_date),
@@ -306,6 +438,8 @@ def main():
         ("10 applied lines clear", t10_the_lines_clear_once_applied),
         ("11 a second tap changes nothing", t11_a_second_tap_changes_nothing),
         ("12 the engine now sees the change", t12_engine_now_sees_the_change),
+        ("13 unresolved drug keys are found", t16_unresolved_keys_are_found),
+        ("14 the Dashboard says so loudly", t17_the_dashboard_says_so_loudly),
     ]
     print("=" * 70)
     print("RxGuard v1.5.0 - GutLog reconciliation (real GutLog on loopback)")

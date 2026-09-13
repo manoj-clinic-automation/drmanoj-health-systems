@@ -53,6 +53,31 @@ def main():
         print("active / tapering on this list: " + str(len(listed)))
         print("=" * 72)
 
+        # First, before anything else: a key the knowledge base cannot resolve
+        # means that drug is absent from every finding printed below. Reading
+        # the REDs without knowing this is reading an answer to a question
+        # about a shorter list than you think you have.
+        unresolved = rx.unresolved_keys() if hasattr(rx, "unresolved_keys") else []
+        if unresolved:
+            live = [u for u in unresolved if u["live"]]
+            print("")
+            print("!! " + str(len(unresolved)) + " DRUG KEY(S) THE KNOWLEDGE BASE CANNOT RESOLVE")
+            print("-" * 72)
+            print("   These contribute to NOTHING: no interaction, CYP, duplication,")
+            print("   burden, QT or condition check. Everything below is computed")
+            print("   without them, and looks the same as if they were safe.")
+            print("")
+            for u in unresolved:
+                print("   %-9s %-34s %s" % (
+                    ("ACTIVE" if u["live"] else "stopped"), u["key"] or "(no key)", u["why"]))
+                if u["raw"]:
+                    print("             on the list as: " + u["raw"])
+            print("")
+            if live:
+                print("   " + str(len(live)) + " of these is/are LIVE - a real gap in today's checks.")
+            print("   Fix with: python3 fix_drug_keys.py --rename OLD NEW   (dry-run by default)")
+            print("")
+
         data, err = rx.gutlog_stack(args.days)
         if err or not data:
             print("GutLog feed unavailable: " + str(err))
