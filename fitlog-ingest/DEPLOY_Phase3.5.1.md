@@ -4,6 +4,14 @@ Closes the partial-export overwrite, restores `distance_km`, drops
 `total_energy_kcal`. Nothing here touches the rule engine; no F-rule
 reads an ingested metric.
 
+> **Deployed 2026-09-12 05:46 IST.** All nine suites green on the server
+> (Python 3.9.25) before the restart; recompute committed at 05:50.
+> Rollback points, if ever needed:
+> `health_ingest.py.bak_20260912_054555_888002` and
+> `fitlog.db.bak_20260912_055021_222661`.
+> As-deployed figures and the one deviation from this plan are recorded
+> at the bottom.
+
 ---
 
 ## Rule S02 Day-Grain Precedence
@@ -156,16 +164,87 @@ done
 
 ---
 
-## Repo hygiene — outstanding
+## As deployed — 2026-09-12
 
-`fitlog-ingest/health_ingest.py` in this repo is the **pre-Phase-3.5
-base**. It is missing every patch that has been applied on the server:
-`patch_db_pin`, `patch_hc_support`, `patch_ios_payload`,
-`patch_ios_source_isolation`, `patch_apple_aggregation` — and now
-`patch_apple_records`. Per the repo sync rule, pull the real
-`/root/fitlog/health_ingest.py` back into the repo after this deploy
-rather than trusting the copy that is here.
+### Anchor drift found before applying
 
-Still to sync after deploy: `fitlog/DOSSIER.md` (S02, the `grain`/`feed`
-columns, the dropped metric), `CHANGELOG.md`, and the Notion Tech &
-Systems Register row for FitLog.
+The repo copy of `health_ingest.py` was the pre-Phase-3.5 base, so the
+anchors were first built against a reconstruction. The live file turned
+out to carry two out-of-band additions — `mindful_minutes` /
+`mindful_session` in `METRIC_MAP`, and a `FITLOG_V120_ACTIVITY` block
+(`_wname`, `classify_workout`) — plus `patch_ios_ring_goals`. One of the
+twelve anchors (`METRIC_MAP`) straddled the mindful lines and would have
+refused to match. It was narrowed to key off the
+`# Health Connect / generic aliases` comment instead. The other eleven
+were unaffected. Suites were then re-run against the **real** server
+file, not the reconstruction.
+
+### Deviation from the plan: the retired ios bodies are not replayed
+
+The first dry-run showed the recompute restoring `hr` and
+`move_energy_kcal` from the retired iOS Health Webhook bodies still
+sitting in `health_raw`. Those bodies are **mid-day snapshots**: body 11
+landed at 16:56 on 09-11 carrying 2.5805 km and a 319 kcal move ring for
+a day that finished at 3.2947 km and 441 kcal. The watch strip prefers
+`move_energy_kcal` over `active_energy_kcal`, so replaying them would
+have pushed the 09-11 Move ring backwards from 441 to 319 — the same
+staleness this deploy exists to remove.
+
+`recompute_apple_daily.py` now skips retired-feed bodies by default and
+counts them; `--replay-retired-ios` opts back in. Covered by
+`test_recompute_apple.py` [3] and [3b] (36/36).
+
+### Distance, cross-checked before committing
+
+Auto Export's per-minute bodies and its daily rollup bodies were parsed
+by different code paths and agree to four decimals, units declared `km`
+throughout:
+
+| date | HAE per-minute sum | HAE daily rollup | iOS (retired) | committed |
+|---|---|---|---|---|
+| 2026-09-09 | 0.6557 | 0.6557 | 0.3028 | **0.6557** |
+| 2026-09-10 | 1.5955 | 1.5955 | 1.5955 | 1.5955 *(unchanged)* |
+| 2026-09-11 | 3.2947 | 3.2947 | 2.5805 *(16:56 snapshot)* | **3.2947** |
+
+### What the recompute actually changed
+
+Five figures out of 41 in range. Every other value — including both
+`healthconnect` rows and every Auto Export figure — reproduced
+bit-for-bit, which is the evidence that the new path did not perturb
+anything that was already right.
+
+| date | metric | before | after |
+|---|---|---|---|
+| 2026-09-09 | `distance_km` | 0.3028 | **0.6557** |
+| 2026-09-11 | `distance_km` | 2.5805 | **3.2947** |
+| 2026-09-09 | `total_energy_kcal` | 573.0496 | *removed* |
+| 2026-09-10 | `total_energy_kcal` | 1923.4415 | *removed* |
+| 2026-09-11 | `total_energy_kcal` | 1578.0768 | *removed* |
+
+Steps held at 951 / 2305 / **4914**, stand hours at 7 / 11 / 19,
+exercise minutes at 0 / 11 / 17. `rule_bearing` is still true for
+exactly `steps`, `exercise_minutes`, `stand_hours`, `flights`;
+`distance_km` is context-only.
+
+### Helper scripts left on the server
+
+`run_gate.sh` (runs all nine suites, one line each) and `verify_live.sh`
+(GET-only post-deploy check) are worth keeping. `inspect_state.py` and
+`inspect_distance.py` were one-off read-only diagnostics — delete at
+will.
+
+## Repo hygiene
+
+`fitlog-ingest/health_ingest.py` has been pulled back from
+`/root/fitlog/health_ingest.py` and verified by sha256
+(`a7db0ae5…0e324fd6`). Every other patcher, suite and migration in this
+folder was checked against the server and is in sync.
+
+Not in this folder and not pulled: `patch_fitlog_v120.py`,
+`patch_fitlog_redact.py`, `test_activity_feed.py`, `test_gutlog_feed.py`
+live on the server and belong to the `fitlog/` app rather than to
+ingest.
+
+Still to sync: `fitlog/DOSSIER.md` (S02, the `grain`/`feed` columns, the
+dropped metric), `CHANGELOG.md`, and the Notion Tech & Systems Register
+row for FitLog.

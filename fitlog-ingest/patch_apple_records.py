@@ -102,18 +102,15 @@ A1_NEW = '''    S01 Source Precedence
 
 # -- 2. METRIC_MAP: distance in, total calories out -----------------------
 
-A2_OLD = '''    "weight_body_mass": "weight_kg",
-    "blood_oxygen_saturation": "spo2_pct",
-    # Health Connect / generic aliases
+# Anchored on the alias comment rather than on the line above it. The
+# live file carries mindful_minutes/mindful_session between
+# blood_oxygen_saturation and this comment (patch added out of band);
+# a wider anchor would refuse to match the server.
+A2_OLD = '''    # Health Connect / generic aliases
     "steps": "steps",
-    "total_calories_burned": "active_energy_kcal",
-    "resting_heart_rate_bpm": "resting_hr",
-    "sleep_session": "sleep_hours",
-}'''
+    "total_calories_burned": "active_energy_kcal",'''
 
-A2_NEW = '''    "weight_body_mass": "weight_kg",
-    "blood_oxygen_saturation": "spo2_pct",
-    # Distance. Orphaned when the ios feed was retired - Auto Export
+A2_NEW = '''    # Distance. Orphaned when the ios feed was retired - Auto Export
     # calls it walking_running_distance and nothing mapped that name, so
     # distance_km kept whatever the dead feed last wrote.
     "walking_running_distance": "distance_km",
@@ -122,10 +119,7 @@ A2_NEW = '''    "weight_body_mass": "weight_kg",
     "steps": "steps",
     # total_calories_burned deliberately absent: it is active + basal,
     # not active, and mapping it onto active_energy_kcal inflated that
-    # metric by the whole basal rate. See total_energy_kcal, dropped.
-    "resting_heart_rate_bpm": "resting_hr",
-    "sleep_session": "sleep_hours",
-}'''
+    # metric by the whole basal rate. See total_energy_kcal, dropped.'''
 
 # -- 3. unit normalisation for distance -----------------------------------
 

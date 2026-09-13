@@ -26,6 +26,22 @@ It reproduces exactly what a fresh POST of the same body would compute:
   healthconnect         HC_SUMMED, pinned to the HC Webhook feed, which
                         is what store_hc does on the live path
 
+The retired ios feed is NOT replayed by default
+-----------------------------------------------
+The iOS Health Webhook bodies are still in health_raw, but that feed
+posted mid-day SNAPSHOTS, not day totals: body 11 landed at 16:56 on
+2026-09-11 carrying 2.5805 km and a 319 kcal move ring for a day that
+finished at 3.2947 km and 441 kcal. Replaying it would re-create
+`move_energy_kcal` and `hr` rows holding a half-finished day - and the
+watch strip prefers move_energy_kcal over active_energy_kcal, so the
+Move ring would go backwards. That is the same staleness this script
+exists to remove, so those bodies are skipped and counted.
+
+Pass --replay-retired-ios to include them anyway. Under S02 they are
+compared, never added, so the fuller feed still wins for any metric
+Auto Export also reports; the difference is the metrics only that feed
+ever carried.
+
 Safety
 ------
   * --dry-run works on a throwaway copy of the database and writes
@@ -66,7 +82,10 @@ USAGE = """usage: recompute_apple_daily.py [options]
   --to DATE        last date to rebuild,  YYYY-MM-DD (default %s)
   --source NAME    source to rebuild, repeatable (default: every source
                    that appears in health_raw)
-  --keep-total-energy   leave the dropped total_energy_kcal rows in place
+  --keep-total-energy    leave the dropped total_energy_kcal rows in place
+  --replay-retired-ios   also replay the retired iOS Health Webhook
+                         bodies. They carry mid-day snapshots; skipped
+                         by default. See the module docstring.
   --dry-run        work on a copy, write nothing, print the same table
 """ % (DEFAULT_FROM, DEFAULT_TO)
 
@@ -107,29 +126,31 @@ def snapshot(conn, date_from, date_to):
 def classify(hi, payload, source):
     """
     Route a stored body the same way api_ingest routes a live one.
-    Returns (records, feed) where a record is
-    (key, date, metric, value, unit, grain).
+    Returns (records, feed, kind) where a record is
+    (key, date, metric, value, unit, grain) and kind is one of
+    "ios" (retired), "hc", "hae".
     """
     if isinstance(payload, dict) and payload.get("platform") == "ios":
         records, _workouts = hi.parse_ios_payload(payload)
         return ([(k, d, m, v, u, "interval") for k, d, m, v, u in records],
-                "")
+                "", "ios")
     if source == "healthconnect" and isinstance(payload, dict) \
             and "data" not in payload:
         records = hi.parse_hc_payload(payload)
         return ([(k, d, m, v, u, "interval") for k, d, m, v, u in records],
-                "")
+                "", "hc")
     records, _workouts, _skipped = hi.parse_apple_records(payload)
-    return records, hi.FEED_HAE
+    return records, hi.FEED_HAE, "hae"
 
 
-def replay(hi, conn, date_from, date_to, sources, drop_dead):
+def replay(hi, conn, date_from, date_to, sources, drop_dead,
+           replay_ios=False):
     """
     Re-parse every stored body into health_hc_records.
 
     Records keep the receipt time of the body that carried them, so the
     ordering the recompute sees is the ordering the ingest saw.
-    Returns (touched, n_bodies, n_records, n_unparseable).
+    Returns (touched, n_bodies, n_records, n_unparseable, n_retired).
     """
     hi._ensure_hc_record_columns(conn)
     cur = conn.cursor()
@@ -143,6 +164,7 @@ def replay(hi, conn, date_from, date_to, sources, drop_dead):
     n_bodies = 0
     n_records = 0
     n_bad = 0
+    n_retired = 0
     for _rid, received_at, source, raw in bodies:
         source = (source or "").strip().lower() or "applewatch"
         if sources and source not in sources:
@@ -156,7 +178,11 @@ def replay(hi, conn, date_from, date_to, sources, drop_dead):
             n_bad = n_bad + 1
             continue
 
-        records, feed = classify(hi, payload, source)
+        records, feed, kind = classify(hi, payload, source)
+        if kind == "ios" and not replay_ios:
+            # Retired feed, mid-day snapshots. See the module docstring.
+            n_retired = n_retired + 1
+            continue
         used = False
         for key, date, metric, value, unit, grain in records:
             if date < date_from or date > date_to:
@@ -181,7 +207,7 @@ def replay(hi, conn, date_from, date_to, sources, drop_dead):
         if used:
             n_bodies = n_bodies + 1
 
-    return touched, n_bodies, n_records, n_bad
+    return touched, n_bodies, n_records, n_bad, n_retired
 
 
 def recompute(hi, conn, touched):
@@ -265,6 +291,7 @@ def main():
     sources = set()
     dry = False
     drop_dead = True
+    replay_ios = False
 
     idx = 0
     while idx < len(argv):
@@ -278,6 +305,10 @@ def main():
             continue
         if item == "--keep-total-energy":
             drop_dead = False
+            idx = idx + 1
+            continue
+        if item == "--replay-retired-ios":
+            replay_ios = True
             idx = idx + 1
             continue
         if item in ("--db", "--from", "--to", "--source"):
@@ -325,6 +356,8 @@ def main():
     print("DB      : " + db_path)
     print("Range   : " + date_from + " .. " + date_to)
     print("Sources : " + (", ".join(sorted(sources)) if sources else "all"))
+    print("Retired : " + ("ios bodies REPLAYED (--replay-retired-ios)"
+                          if replay_ios else "ios bodies skipped"))
     print("Mode    : " + ("DRY RUN (working on a copy)" if dry else "LIVE"))
 
     work_dir = None
@@ -345,8 +378,8 @@ def main():
     conn = sqlite3.connect(work_db, timeout=15)
     try:
         before = snapshot(conn, date_from, date_to)
-        touched, n_bodies, n_records, n_bad = replay(
-            hi, conn, date_from, date_to, sources, drop_dead)
+        touched, n_bodies, n_records, n_bad, n_retired = replay(
+            hi, conn, date_from, date_to, sources, drop_dead, replay_ios)
         written = recompute(hi, conn, touched)
         removed = {}
         if drop_dead:
@@ -370,6 +403,9 @@ def main():
     print("Bodies  : " + str(n_bodies) + " contributed records in range"
           + (("  (" + str(n_bad) + " unparseable, skipped)") if n_bad else ""))
     print("Records : " + str(n_records) + " replayed")
+    if n_retired:
+        print("Skipped : " + str(n_retired) + " retired ios bodies "
+              "(mid-day snapshots; --replay-retired-ios to include)")
     print("Rebuilt : " + str(written) + " daily figures")
     for metric in sorted(removed):
         n1, n2 = removed[metric]
