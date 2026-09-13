@@ -33,7 +33,8 @@ Clinic automation lives separately in `drmanoj-clinic-automation` — do not mix
 ## Repo layout
 ```
 CLAUDE.md            <- this file
-fitlog/              <- complete: app.py (v1.0.1), knowledge/, tests/, DOSSIER.md, service, backup, patcher, spec
+fitlog/              <- AUTHORITATIVE for FitLog: app.py, health_ingest.py, tests, DOSSIER.md, service, backup, patchers, spec. Patch and test here; this is what must match the server.
+fitlog-ingest/       <- the owner's WORKING folder (holds gutlog/ copies too). Duplicate copies are deliberate, drift is not: PUBLISH_HEALTH.bat runs tools/CHECK_FOLDER_PARITY.py and REFUSES if a file here differs from the one app folder that also holds it, line endings included.
 rxguard/             <- COMPLETE: app.py (incl. switcher), knowledge/, validation_cases, tests, service, backup.sh, env.example
 gutlog/              <- COMPLETE: app.py (v3.2 incl. switcher), gutlog.service, backup.sh, requirements, README
 ops/                 <- cross-app patchers (patch_switcher.py)

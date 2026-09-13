@@ -43,16 +43,43 @@ both failed there. New `test_workout_day_ist.py` 12/12, with the old
 slicing expression kept as a negative control. Whole FitLog gate green on
 the server (10 suites) before the restart.
 
-**Also**
-- `.gitignore`: added `*.bak.*`. The patchers stamp rollback copies
-  `.bak.<stamp>`; neither `*.bak-*`/`*.bak_*` nor the `findstr` gate in
-  `PUBLISH_HEALTH.bat` matches that spelling, so a `.bak` of a sensitive
-  file would have been committed to a **public** repository.
-- `patch_workout_day_ist.py` opens with `newline=""`. Without it, running a
-  patcher on Windows against an LF file rewrites every line ending; the
-  content is identical and every test still passes, but the repo copy stops
-  being byte-identical to the server's — the invariant the sync rule rests
-  on. `patch_fitlog_ist_and_steps.py` still has this; see the DOSSIER note.
+**Repo hygiene, same day**
+- **The publish gate only half-worked.** `PUBLISH_HEALTH.bat` matched
+  `.bak_` and `.bak-`, but the patchers in this repo write *five* spellings
+  — `.bak`, `.bak.STAMP`, `.bak_STAMP`, `.bak-LABEL-STAMP` and
+  `.bak-YYYY-MM-DD` — so a `.bak.` copy of `app.py` sailed straight through
+  into a **public** repository. The pattern is now one `%BADPAT%` variable
+  used by both the test and the failure listing (they had been two copies,
+  which is how they drifted), reading
+  `[.]db$ [.]db[.] [.]env$ [.]bak [.]deployed [.]tmp$ [.]token [.]secret ingest[.]env`.
+  `[.]bak` catches every spelling; `[.]db[.]` catches `fitlog.db.bak_…`,
+  which `\.db$` missed. Validated both ways: 15/15 backup- and
+  secret-shaped names caught, **0 false positives across 216 publishable
+  repo paths**. `.gitignore` gained `*.bak.*` and `*.tmp`.
+- **Text-mode patchers silently rewrite line endings.** Run on Windows
+  against an LF file they convert the whole file to CRLF: content
+  identical, every test still green, but the repo copy stops being
+  byte-identical to the server's — the invariant the sync rule rests on.
+  `newline=""` on every read and write in `patch_workout_day_ist.py`,
+  `patch_fitlog_ist_and_steps.py` and GutLog's
+  `patch_doses_export_status.py`. Proved rather than asserted: each
+  pre-patch LF file was pulled off the server, patched **on Windows**, and
+  came back byte-identical to the live file (`96e6254d…` for FitLog,
+  `e6e2bc85…` for GutLog), 0 CRLF pairs.
+- **A stale duplicate is silent, so the publish now blocks on it.** New
+  `tools/CHECK_FOLDER_PARITY.py`, wired into `PUBLISH_HEALTH.bat` on the
+  main path after the secrets gate. `fitlog-ingest/` is the working folder;
+  `fitlog/`, `gutlog/`, `rxguard/`, `ops/` are authoritative. A file in the
+  working folder and in exactly **one** app folder must match byte-for-byte,
+  line endings included. Directional on purpose: `app.py` exists in three
+  app folders and legitimately differs, so a flat "same name must match"
+  rule would have blocked every publish forever — an ambiguous home warns
+  and carries on. 22 paired files checked and green. Tested four ways:
+  identical passes, line-endings-only fails under its own heading, real
+  content drift fails, ambiguous home warns.
+- `gutlog/patch_doses_export_status.py` added to the repo — it had existed
+  only in `D:\Downloads` and on the server. `CLAUDE.md` gains two lines
+  naming `fitlog/` authoritative and `fitlog-ingest/` the working folder.
 
 ## 2026-09-13 — GutLog CSV kept the dose status (GutLog)
 

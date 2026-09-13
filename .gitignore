@@ -20,6 +20,9 @@ ingest.env
 # .bak of a sensitive file would have been committed to a PUBLIC repo.
 *.bak.*
 *.deployed-*
+# a patcher's half-written copy of the file it was patching, if os.replace
+# never ran. Same hazard class as a .bak.
+*.tmp
 # Runtime junk
 __pycache__/
 *.pyc

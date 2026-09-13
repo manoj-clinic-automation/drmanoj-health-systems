@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.5.0)
+# GutLog — DOSSIER (v3.11.1)
 
 Single source of truth. Update after every change.
 
@@ -245,9 +245,11 @@ rediscovered the expensive way.
   carried to a consultation. Applied and verified live on the server; pulled
   back into the repo the same day (`app.py` sha256 `e6e2bc85…a256457e`,
   241,645 bytes).
-  *Note:* this file's title still reads **v3.5.0** while the changelog is at
-  v3.11.1 — the header has not been moved since Phase B and is the version
-  number to correct next.
+  *Fixed 13-Sep:* this file's title had read **v3.5.0** since Phase B while
+  the changelog had reached v3.11.1; the header now matches. The Register's
+  "Where it lives" had also pointed at `drmanoj-clinic-automation` — the
+  separate clinic repo CLAUDE.md says not to mix with this one — and now
+  reads `drmanoj-health-systems`.
 - **2026-09-12 v3.11.1 — the reader's schema.** Every uploaded PDF came back
   `reader error (BadRequestError)` and none were read. The file was never the
   problem: Sarvam rejects the whole extraction schema with `SCHEMA_INVALID`,

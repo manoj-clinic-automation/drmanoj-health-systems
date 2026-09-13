@@ -85,7 +85,12 @@ def once(src, anchor, label):
 def main():
     if not os.path.exists(APP):
         fail("app not found at " + APP)
-    src = open(APP, "r", encoding="utf-8").read()
+    # newline="" on every read and write below. Without it, running this on
+    # Windows against an LF file rewrites every line ending to CRLF. The
+    # content is identical and every test still passes, but the repo copy
+    # stops being byte-identical to the server's -- the invariant the sync
+    # rule in CLAUDE.md rests on.
+    src = open(APP, "r", encoding="utf-8", newline="").read()
 
     done_helper = HELPER_NAME in src
     done_times = NEW_TIMES in src
@@ -115,13 +120,13 @@ def main():
     bak = APP + ".bak." + time.strftime("%Y%m%d-%H%M%S")
     shutil.copy2(APP, bak)
     tmp = APP + ".tmp"
-    f = open(tmp, "w", encoding="utf-8")
+    f = open(tmp, "w", encoding="utf-8", newline="")
     f.write(out)
     f.close()
     os.replace(tmp, APP)
     print("written; rollback copy at " + bak)
 
-    check = open(APP, "r", encoding="utf-8").read()
+    check = open(APP, "r", encoding="utf-8", newline="").read()
     if HELPER_NAME not in check or NEW_TIMES not in check:
         fail("read-back mismatch - restore with: cp " + bak + " " + APP)
     print("read-back OK")

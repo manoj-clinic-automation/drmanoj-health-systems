@@ -19,9 +19,17 @@ REM   - after pushing, VERIFIES origin HEAD == local HEAD or refuses to
 REM     print success. The projection is the check.
 REM
 REM  Gate added for this repo:
-REM   - refuses if a live database, an env file or a .bak snapshot is staged.
+REM   - refuses if a live database, an env file or a backup snapshot is staged.
 REM     THIS REPOSITORY IS PUBLIC. health3.db and fitlog.db are the diary and
 REM     ingest.env holds the bearer tokens; none of it may ever be committed.
+REM
+REM  2026-09-13: the backup half of that gate matched only .bak_ and .bak- .
+REM  The patchers in this repo write FIVE spellings - .bak , .bak.STAMP ,
+REM  .bak_STAMP , .bak-LABEL-STAMP and .bak-YYYY-MM-DD - so a .bak. copy of
+REM  app.py sailed straight through. One pattern, [.]bak , now catches every
+REM  variant; .deployed and a leftover .tmp write target are caught too.
+REM  Square brackets are safe here: batch only treats ( ) ^& ^| ^< ^> as
+REM  special, and [.] is findstr's unambiguous way to mean a literal dot.
 REM
 REM  Message lines below deliberately contain no ( ) ^& ^| ^< ^> characters:
 REM  a bare bracket inside an if-block closes it early and everything after
@@ -84,9 +92,13 @@ echo Checking what is pending...
 %GIT% add -A . || ( echo !! git add FAILED & pause & exit /b 1 )
 
 REM ---- secret and live-data gate -------------------------------------------
+REM  One definition, used by both the test and the listing below, so the two
+REM  can never drift apart again.
+set "BADPAT=[.]db$ [.]db[.] [.]env$ [.]bak [.]deployed [.]tmp$ [.]token [.]secret ingest[.]env"
+
 echo Checking staged files for databases, env files and snapshots...
 %GIT% diff --cached --name-only > "%TEMP%\_health_staged.txt"
-findstr /i /r "\.db$ \.env$ \.bak_ \.bak- ingest\.env" "%TEMP%\_health_staged.txt" >nul
+findstr /i /r "%BADPAT%" "%TEMP%\_health_staged.txt" >nul
 if not errorlevel 1 goto :secret_gate_failed
 
 REM  tools\NO_SECRETS.py adds a clinical-disclosure NOTE on top of the path
@@ -109,12 +121,15 @@ echo.
 echo !! REFUSING - something staged looks like live data or a secret.
 echo    THIS REPOSITORY IS PUBLIC. The offending entries are listed below.
 echo.
-findstr /i /r "\.db$ \.env$ \.bak_ \.bak- ingest\.env" "%TEMP%\_health_staged.txt"
+findstr /i /r "%BADPAT%" "%TEMP%\_health_staged.txt"
 echo.
 echo    A DATABASE is the diary itself - health3.db, fitlog.db. Never commit it.
 echo    An ENV FILE holds bearer tokens - ingest.env. Never commit it.
 echo            If one was ever committed, the token must also be ROTATED.
-echo    A .bak SNAPSHOT is a copy of one of the above.
+echo    A BACKUP is a copy of one of the above. Every spelling the patchers
+echo            write is caught: .bak , .bak.STAMP , .bak_STAMP ,
+echo            .bak-LABEL-STAMP , .bak-YYYY-MM-DD , .deployed-STAMP
+echo    A .tmp is a patcher's half-written copy of the file it was patching.
 echo.
 echo    Fix .gitignore, run: git reset, then run this again.
 echo    NOTHING committed or pushed.
@@ -124,9 +139,36 @@ exit /b 1
 :secret_gate_done
 del /q "%TEMP%\_health_staged.txt" 2>nul
 
+REM ---- working-folder parity gate ------------------------------------------
+REM  fitlog-ingest\ is the working folder; fitlog\ gutlog\ rxguard\ ops\ are
+REM  authoritative. A file in the working folder and in exactly ONE app folder
+REM  must be byte-identical, line endings included. This BLOCKS, because a
+REM  stale copy is silent: fitlog\test_activity_feed.py imports health_ingest
+REM  from its OWN folder, so it will happily pass against a module that is not
+REM  the one on the server. That nearly happened on 13-Sep-2026.
+echo Checking the working folder agrees with the app folders...
+if not exist "tools\CHECK_FOLDER_PARITY.py" goto :parity_missing
+python -B "tools\CHECK_FOLDER_PARITY.py" "%REPO_DIR%"
+if errorlevel 1 goto :parity_failed
+goto :parity_done
+
+:parity_missing
+echo    !! tools\CHECK_FOLDER_PARITY.py NOT FOUND - the parity check did NOT
+echo       run. Publishing anyway, and saying so rather than staying quiet.
+goto :parity_done
+
+:parity_failed
+echo.
+echo    A working copy has drifted - see the list above. Copy the right file
+echo    over the other, then run this again. NOTHING committed or pushed.
+pause
+exit /b 1
+
+:parity_done
+
 REM ---- silent .gitignore drop gate -----------------------------------------
 set DROPPED=
-for /f "delims=" %%F in ('%GIT% ls-files --others --ignored --exclude-standard -- fitlog gutlog rxguard ops 2^>nul') do (
+for /f "delims=" %%F in ('%GIT% ls-files --others --ignored --exclude-standard -- fitlog fitlog-ingest gutlog rxguard ops 2^>nul') do (
   echo    !! EXCLUDED BY .gitignore: %%F
   set DROPPED=1
 )
