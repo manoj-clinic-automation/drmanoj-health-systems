@@ -271,7 +271,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.2"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ
+SCHEMA_VERSION = "3.3.3"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -290,6 +290,8 @@ _V330_COLS = [
     ("doses", "sched_id", "INTEGER"),
     ("doses", "dose_text", "TEXT DEFAULT ''"),
     ("episodes", "bristol", "TEXT DEFAULT ''"),
+    ("episodes", "treatments", "TEXT DEFAULT ''"),
+    ("episodes", "radiates", "INTEGER DEFAULT 0"),
     ("med_schedule", "variants", "TEXT DEFAULT ''"),
     ("files", "sha", "TEXT DEFAULT ''"),
     ("files", "ocr_status", "TEXT DEFAULT ''"),
@@ -1002,10 +1004,13 @@ def api_courses_active():
 def api_episodes():
     d = J()
     if not d.get("etype"): return jsonify(ok=False, err="Pick an episode type."), 400
-    insert("episodes", ["day","etime","category","etype","side","severity","duration","notes","bristol"],
+    tr = d.get("treatments")
+    tr = "|".join(tr) if isinstance(tr, list) else (tr or "")
+    insert("episodes", ["day","etime","category","etype","side","severity","duration","notes","bristol","treatments","radiates"],
            [d.get("day") or today(), d.get("etime") or now_hm(),
             d.get("category"), d["etype"], d.get("side"), d.get("severity"),
-            d.get("duration"), note(d), (d.get("bristol") or "")[:4]])
+            d.get("duration"), note(d), (d.get("bristol") or "")[:4],
+            tr[:200], 1 if d.get("radiates") else 0])
     return jsonify(ok=True)
 
 @app.route("/api/vitals", methods=["POST"])
@@ -1166,10 +1171,12 @@ def api_dayview():
         "SELECT DISTINCT tbl, rid FROM edits").fetchall())
     out = []
 
-    def add(tbl, rid, t, kind, title, sub):
-        out.append({"tbl": tbl, "id": rid, "time": t or "", "kind": kind,
-                    "title": title or "", "sub": sub,
-                    "edited": (tbl, rid) in edited})
+    def add(tbl, rid, t, kind, title, sub, **extra):
+        e = {"tbl": tbl, "id": rid, "time": t or "", "kind": kind,
+             "title": title or "", "sub": sub,
+             "edited": (tbl, rid) in edited}
+        e.update(extra)
+        out.append(e)
 
     for r in db().execute(
             "SELECT id, dtime, medicine, status, sched_id, dose_text "
@@ -1181,7 +1188,8 @@ def api_dayview():
                 "Dose" if r["sched_id"] else "Extra",
                 r["medicine"], r["dose_text"] or "")
     for r in db().execute(
-            "SELECT id, etime, etype, side, severity, bristol "
+            "SELECT id, etime, etype, side, severity, bristol, category, duration, "
+            "COALESCE(treatments,'') AS treatments, COALESCE(radiates,0) AS radiates "
             "FROM episodes WHERE day=?", (day,)).fetchall():
         parts = []
         if r["severity"] not in (None, ""):
@@ -1190,7 +1198,19 @@ def api_dayview():
             parts.append("Bristol " + str(r["bristol"]))
         if r["side"]:
             parts.append(str(r["side"]))
-        add("episodes", r["id"], r["etime"], "Symptom", r["etype"], " · ".join(parts))
+        pain = (r["category"] or "") == "pain"
+        title = r["etype"]
+        if pain:
+            meta = PAIN_SITE_MAP.get(r["etype"])
+            title = meta[1] if meta else r["etype"]
+            if r["radiates"]:
+                parts.append("below the knee")
+            if r["treatments"]:
+                parts.append(r["treatments"].replace("|", ", "))
+            if r["duration"]:
+                parts.append("eased after " + str(r["duration"]))
+        add("episodes", r["id"], r["etime"], "Pain" if pain else "Symptom",
+            title, " · ".join(parts), pain=pain, eased=bool(r["duration"]))
     for r in db().execute(
             "SELECT id, vtime, sys, dia, pulse, weight, temp "
             "FROM vitals WHERE day=?", (day,)).fetchall():
@@ -1220,9 +1240,15 @@ def api_dayview():
 
     for r in db().execute("SELECT id, atime, kind, minutes, intensity FROM activities WHERE day=?",
                           (day,)).fetchall():
-        add("activities", r["id"], r["atime"], "Activity",
-            ACT_KINDS.get(r["kind"], r["kind"]) + " " + str(int(round(r["minutes"] or 0))) + " min",
-            (r["intensity"] or "").lower())
+        mins = int(round(r["minutes"] or 0))
+        if r["kind"] in LOAD_KINDS:
+            add("activities", r["id"], r["atime"], "Load",
+                ACT_KINDS.get(r["kind"], r["kind"]) + " " + str(round(mins / 60.0, 1)) + " h",
+                "load, not exercise", load=True)
+        else:
+            add("activities", r["id"], r["atime"], "Activity",
+                ACT_KINDS.get(r["kind"], r["kind"]) + " " + str(mins) + " min",
+                (r["intensity"] or "").lower())
     out.sort(key=lambda e: (e["time"] == "", e["time"], e["tbl"], e["id"]))
     return jsonify(day=day, today=today(), entries=out)
 
@@ -1605,11 +1631,24 @@ def api_feed_stack():
     tday = today()
     regimen = [dict(r) for r in db().execute(
         "SELECT p.id AS med_id, p.name, p.molecule, COALESCE(ms.strength,'') AS strength, "
-        "s.slot, s.dose_text, s.variants "
+        "s.slot, s.dose_text, s.variants, s.valid_from "
         "FROM med_schedule s JOIN prnmeds p ON p.id=s.med_id "
         "LEFT JOIN med_salts ms ON ms.med_id=p.id WHERE s.valid_from<=? "
         "AND (s.valid_to='' OR s.valid_to IS NULL OR s.valid_to>=?) ORDER BY p.sort, p.id",
         (tday, tday)).fetchall()]
+    # GUTLOG_V3120_PAIN -- schedules that have ENDED, with the date they
+    # ended. api_feed_stack drops them from `regimen`, correctly; but a
+    # consumer that wants to stop its own record needs the date GutLog
+    # ended it, not today.
+    floor = (date.today() - timedelta(days=180)).isoformat()
+    ended = [dict(r) for r in db().execute(
+        "SELECT p.id AS med_id, p.name, p.molecule, s.slot, MAX(s.valid_to) AS valid_to "
+        "FROM med_schedule s JOIN prnmeds p ON p.id=s.med_id "
+        "WHERE COALESCE(s.valid_to,'')<>'' AND s.valid_to<? AND s.valid_to>=? "
+        "AND p.id NOT IN (SELECT med_id FROM med_schedule "
+        "WHERE valid_to='' OR valid_to IS NULL OR valid_to>=?) "
+        "GROUP BY p.id ORDER BY valid_to DESC",
+        (tday, floor, tday)).fetchall()]
     taken = {}
     for e in _feed_events(since):
         k = e["med_id"] or e["name"]
@@ -1627,7 +1666,7 @@ def api_feed_stack():
         out.append(t)
     out.sort(key=lambda t: (-t["days"], t["name"]))
     return jsonify(ok=True, app="gutlog", since=since, days=days, today=tday,
-                   regimen=regimen, taken=out)
+                   regimen=regimen, ended=ended, taken=out)
 
 
 # ------------------------------------------------------------------ salts, status, activity
@@ -1751,7 +1790,13 @@ def api_medstatus():
 
 
 ACT_KINDS = {"walk": "Walk", "treadmill": "Treadmill", "cycle_road": "Cycling (road)",
-             "cycle_static": "Cycling (static)", "meditation": "Meditation"}
+             "cycle_static": "Cycling (static)", "meditation": "Meditation",
+             "ot_day": "Operating day"}
+# GUTLOG_V3120_PAIN -- hours on his legs are LOAD, not training. The same
+# hip/glute/thigh complex appears on long operating days, so the hours
+# have to be recorded or every walking-versus-pain comparison is
+# confounded by his work. Never counted as exercise minutes.
+LOAD_KINDS = ("ot_day",)
 
 
 @app.route("/api/activity", methods=["POST"])
@@ -1838,6 +1883,8 @@ def merge_activity(manual, watch):
         items.append({"time": "", "kind": "meditation", "label": "Mindful minutes",
                       "minutes": int(round(mm)), "distance_km": None, "intensity": "",
                       "source": "watch", "confirmed": False, "id": None})
+    for i in items:
+        i["load"] = i.get("kind") in LOAD_KINDS
     items.sort(key=lambda i: (i["time"] == "", i["time"]))
     return items
 
@@ -1854,7 +1901,11 @@ def api_activity():
     steps = int((watch or {}).get("steps") or 0) if (watch or {}).get("ok") else 0
     return jsonify(day=day, items=items,
                    watch=({"ok": bool((watch or {}).get("ok"))} if _links_enabled() else None),
-                   summary={"minutes": sum(i["minutes"] for i in items), "steps": steps})
+                   summary={"minutes": sum(i["minutes"] for i in items
+                                           if i["kind"] not in LOAD_KINDS),
+                            "load_minutes": sum(i["minutes"] for i in items
+                                                if i["kind"] in LOAD_KINDS),
+                            "steps": steps})
 
 
 @app.route("/api/feed/activities")
@@ -1865,6 +1916,192 @@ def api_feed_activities():
         "SELECT day, atime, kind, minutes, intensity FROM activities WHERE day>=? "
         "ORDER BY day, atime", (since,)).fetchall()]
     return jsonify(ok=True, app="gutlog", since=since, activities=rows)
+
+
+# ------------------------------------------------------------------ pain
+# GUTLOG_V3120_PAIN -- musculoskeletal pain goes into `episodes`, the table
+# that already carries every within-day event. There is no second pain table
+# and no second medicine record: an analgesic tapped on a pain tile writes a
+# real `doses` row exactly as an ad-hoc dose does, and the same event is
+# mirrored to FitLog's analgesic_log carrying the score that was just entered.
+# A medicine logged in two places is a record that disagrees with itself.
+#
+# Sides are never averaged: right is the THR side, left is the native
+# arthritic hip, and the tiles keep them apart by construction.
+PAIN_SITES_MSK = [
+    ("hip_thigh_both", "Both hips + anterior thighs", "both", 1),
+    ("hip_thigh_r", "Hip / thigh - R", "R", 1),
+    ("hip_thigh_l", "Hip / thigh - L", "L", 1),
+    ("glute_both", "Glutes - both", "both", 1),
+    ("glute_r", "Glute - R", "R", 1),
+    ("glute_l", "Glute - L", "L", 1),
+    ("low_back", "Low back", "", 0),
+    ("neck_arm_r", "Neck to R arm", "R", 0),
+    ("neck_arm_l", "Neck to L arm", "L", 0),
+]
+PAIN_SITE_MAP = dict((s[0], s) for s in PAIN_SITES_MSK)
+
+# The non-medicine half of the treatment chips. Safe to keep here: nobody's
+# private record is a hot shower.
+PAIN_TREATMENTS_BASE = ["Heat pad", "Hot shower", "NormaTec", "Rest"]
+
+# The analgesic chips are medicine names, and this repository is public, so
+# they live in regimen.local.json beside app.py with every other medicine name
+# (see _local_seed, 2026-09-10). Each entry is [chip label, molecule]. A clone
+# without that file gets the four physical measures and no drug chips, which
+# is the right default for someone else's pain.
+PAIN_ANALGESICS = {}
+PAIN_TREATMENTS = list(PAIN_TREATMENTS_BASE)
+for _pa in _local_seed("pain_analgesics"):
+    if isinstance(_pa, list) and len(_pa) >= 2 and _pa[0]:
+        # chip label -> (molecule, name to fall back on when GutLog carries
+        # no such medicine; the dose is still recorded, under its label)
+        PAIN_ANALGESICS[_pa[0]] = (str(_pa[1]).strip().lower(), _pa[0])
+        PAIN_TREATMENTS.append(_pa[0])
+
+
+def _link_post(url, payload, timeout=3):
+    """POST JSON to a companion app carrying the feed token. Never raises;
+    returns the decoded answer, or None when links are off or the other app
+    refused. The write that matters has already happened locally."""
+    import urllib.request
+    if not _links_enabled():
+        return None
+    hdr = {"Content-Type": "application/json"}
+    if _FEED_TOKEN:
+        hdr["Authorization"] = "Bearer " + _FEED_TOKEN
+    try:
+        local = url.startswith("http://127.")
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({})) if local \
+            else urllib.request.build_opener()
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
+                                     headers=hdr, method="POST")
+        with op.open(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _pain_med(molecule, fallback):
+    """The prnmeds row for an analgesic chip: by molecule first, by name
+    second. Returns (med_id, name). med_id is None when GutLog carries no such
+    medicine -- the dose is still recorded under its label rather than lost."""
+    mol = (molecule or "").strip().lower()
+    r = db().execute("SELECT id, name FROM prnmeds WHERE active=1 AND "
+                     "LOWER(COALESCE(molecule,''))=? ORDER BY sort, id",
+                     (mol,)).fetchone()
+    if not r:
+        r = db().execute("SELECT id, name FROM prnmeds WHERE active=1 AND "
+                         "LOWER(name) LIKE ? ORDER BY sort, id",
+                         (mol + "%",)).fetchone()
+    if r:
+        return r["id"], r["name"]
+    return None, fallback
+
+
+def _dur_text(mins):
+    if mins < 60:
+        return str(mins) + " min"
+    return str(mins // 60) + " h " + ("%02d" % (mins % 60)) + " min"
+
+
+@app.route("/api/pain", methods=["GET", "POST"])
+@login_required
+def api_pain():
+    if request.method == "GET":
+        day = _valid_day(request.args.get("day")) or today()
+        rows = []
+        for r in db().execute(
+                "SELECT id, etime, etype, side, severity, duration, "
+                "COALESCE(treatments,'') AS treatments, COALESCE(radiates,0) AS radiates "
+                "FROM episodes WHERE day=? AND category='pain' ORDER BY etime, id",
+                (day,)).fetchall():
+            d = dict(r)
+            meta = PAIN_SITE_MAP.get(d["etype"])
+            d["label"] = meta[1] if meta else d["etype"]
+            rows.append(d)
+        return jsonify(day=day, rows=rows, sites=[
+            {"slug": s[0], "label": s[1], "side": s[2], "radiates": bool(s[3])}
+            for s in PAIN_SITES_MSK], treatments=PAIN_TREATMENTS)
+
+    d = J()
+    meta = PAIN_SITE_MAP.get((d.get("site") or "").strip())
+    if not meta:
+        return jsonify(ok=False, err="Pick a site."), 400
+    try:
+        score = int(d.get("score"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, err="Give it a score out of 10."), 400
+    if not 0 <= score <= 10:
+        return jsonify(ok=False, err="Score must be 0 to 10."), 400
+    treats = [t for t in (d.get("treatments") or []) if t in PAIN_TREATMENTS]
+    radiates = 1 if (meta[3] and d.get("radiates")) else 0
+    day = d.get("day") or today()
+    etime = d.get("etime") or now_hm()
+    if not _valid_day(day):
+        return jsonify(ok=False, err="Pick a real date, not in the future."), 400
+    if not _valid_hm(etime):
+        return jsonify(ok=False, err="Time must be HH:MM."), 400
+    if day == today() and etime > now_hm():
+        return jsonify(ok=False, err="That time has not come yet today."), 400
+
+    # duration is left empty on purpose: nothing is asked at the moment of
+    # pain, and the "eased" tap stamps it later from etime to then.
+    insert("episodes",
+           ["day", "etime", "category", "etype", "side", "severity", "duration",
+            "notes", "bristol", "treatments", "radiates"],
+           [day, etime, "pain", meta[0], meta[2], score, "", note(d), "",
+            "|".join(treats), radiates])
+    eid = db().execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
+
+    doses, mirrored, missed = [], [], []
+    linked = _links_enabled()
+    for t in treats:
+        if t not in PAIN_ANALGESICS:
+            continue
+        mol, fallback = PAIN_ANALGESICS[t]
+        mid, name = _pain_med(mol, fallback)
+        db().execute(
+            "INSERT INTO doses(day,dtime,medicine,reason,effect,notes,created,"
+            "status,med_id,sched_id,dose_text) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (day, etime, name, meta[1], None, "", now_s(), "EXTRA", mid, None, ""))
+        db().commit()
+        doses.append(name)
+        if not linked:
+            continue
+        ans = _link_post(FITLOG_URL + "/api/analgesic",
+                         {"dt": day + "T" + etime, "molecule": mol, "name": name,
+                          "dose_label": name, "pain_at_time": score,
+                          "notes": "GutLog: " + meta[1], "source": "gutlog",
+                          "ref": "gutlog-episode-" + str(eid)})
+        (mirrored if (ans or {}).get("ok") else missed).append(name)
+    return jsonify(ok=True, id=eid, site=meta[1], side=meta[2], radiates=radiates,
+                   doses=doses, mirrored=mirrored, not_mirrored=missed, linked=linked)
+
+
+@app.route("/api/episode/eased/<int:eid>", methods=["POST"])
+@login_required
+def api_episode_eased(eid):
+    """One tap, hours later. Duration is measured from etime to now instead of
+    being guessed from a bucket chosen while it still hurts."""
+    r = db().execute("SELECT id, day, etime, duration FROM episodes WHERE id=?",
+                     (eid,)).fetchone()
+    if not r:
+        return jsonify(ok=False, err="Entry not found."), 404
+    start = _valid_hm(r["etime"])
+    if not start:
+        return jsonify(ok=False, err="That entry has no start time."), 400
+    try:
+        t0 = datetime.strptime((r["day"] or today()) + " " + start, "%Y-%m-%d %H:%M")
+    except ValueError:
+        return jsonify(ok=False, err="That entry has no usable time."), 400
+    mins = int(round((datetime.now() - t0).total_seconds() / 60.0))
+    if mins < 0:
+        return jsonify(ok=False, err="That entry starts in the future."), 400
+    txt = _dur_text(mins)
+    db().execute("UPDATE episodes SET duration=? WHERE id=?", (txt, eid))
+    db().commit()
+    return jsonify(ok=True, id=eid, minutes=mins, duration=txt)
 
 
 # ------------------------------------------------------------------ records
@@ -2202,7 +2439,7 @@ def export_csv(table):
         "meals": "day,mtime,slot,items,protein,kcal,fibre,fscore,notes",
         "doses": "day,dtime,medicine,status,reason,effect,notes",
         "patches": "strength,day_on,time_on,day_off,time_off,notes",
-        "episodes": "day,etime,category,etype,side,severity,duration,notes",
+        "episodes": "day,etime,category,etype,side,severity,duration,treatments,radiates,notes",
         "vitals": "day,vtime,sys,dia,pulse,temp,weight,waist,notes",
         "foodtests": "day,food,portion,symptoms,severity,verdict,notes",
         "courses": "drug,start_day,end_day,response,notes",
@@ -2754,6 +2991,21 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 .rd-auto{background:#FFF3DC;color:#8A5A00;border-radius:6px;padding:1px 6px;font-weight:700}
 #tab-files .rd-ok{margin-top:8px;margin-right:10px;border:1.5px solid var(--teal);color:var(--teal);background:#fff}
 .rs-auto{background:#FFF8EA;border-radius:10px;padding:8px 10px;margin:0 0 10px}
+/* GUTLOG_V3120_PAIN -- musculoskeletal pain tiles, operating-day load */
+.ptile.pain .pscore{display:none;padding:0 12px 12px}
+.ptile.pain.open .pscore{display:block}
+.ptile.pain.hero .ph{font-size:17.5px;font-weight:800;padding:16px 14px}
+.ptile.pain.hero{border-color:#BAD2C8}
+.ptile.pain .chips{display:flex;flex-wrap:wrap;gap:7px}
+.ptile.pain .lbl{margin:0 0 6px}
+.ptile.pain .prad{margin-top:12px}
+.ptile.pain .chip.rad{border-color:#EBCB8B}
+.ptile.pain .chip.rad.sel{background:#FFF3DC;color:#7A5200;border-color:#EBCB8B}
+.ptile.act.load{border-style:dashed}
+#painList .exrow.load,.exrow.load{opacity:.95}
+.tag.k-pain{background:#FBEDEC;color:var(--err)}
+.tag.k-load{background:#EFE7F8;color:#6A3FA8}
+@media (max-width:430px){ #n_msk .chip.num{padding:8px 0;min-width:30px;text-align:center} }
 @media (prefers-reduced-motion:reduce){.toast,.pbar i,.chip{transition:none}}
 </style></head><body>
 <div style="display:flex;gap:8px;padding:8px 12px 4px;font-size:13.5px">
@@ -2830,6 +3082,18 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
       <p class="lbl" style="margin-top:14px">Bristol (optional)</p>
       <div class="chips" id="n_symBristol"></div>
       <button type="button" class="btn primary" id="n_symSave" style="margin-top:14px">Save episode</button>
+    </div>
+  </div>
+
+  <div class="card fold" id="nowPain">
+    <button type="button" class="fold-h">
+      <span class="ft">Pain now</span><span class="fs" id="painSum">tap to open</span><span class="fc"></span>
+    </button>
+    <div class="cbody">
+      <p class="hint" style="margin:0 0 10px">Tap the site, score it, say what you did.
+        Tap <b>eased</b> when it settles and the duration is measured, not guessed.</p>
+      <div id="n_msk"></div>
+      <div id="painList"></div>
     </div>
   </div>
 </section>
@@ -3742,25 +4006,30 @@ async function loadSalts(){
   });
 }
 const ACT=[['walk','Walk'],['treadmill','Treadmill'],['cycle_road','Cycling (road)'],
-           ['cycle_static','Cycling (static)'],['meditation','Meditation']];
+           ['cycle_static','Cycling (static)'],['meditation','Meditation'],
+           ['ot_day','Operating day']];
+const ACT_LOAD=['ot_day'];
+const ACT_HOURS=[2,4,6,8,10];
 function buildActTiles(){
   const box=$('#actTiles');if(!box||box.dataset.built)return;box.dataset.built='1';
   ACT.forEach(a=>{
     const k=a[0],label=a[1];
-    const w=document.createElement('div');w.className='ptile act';w.dataset.k=k;
+    const isLoad=ACT_LOAD.indexOf(k)>=0;
+    const w=document.createElement('div');w.className='ptile act'+(isLoad?' load':'');w.dataset.k=k;
     w.innerHTML='<button type="button" class="ph"><span class="pn"></span><span class="pv"></span></button>'+
       '<div class="pscore"><div class="chips am"></div><div class="chips ai"></div>'+
       '<button type="button" class="btn primary as">Save</button></div>';
     w.querySelector('.pn').textContent=label;
     const st={min:null,int:''};
     const am=w.querySelector('.am'),ai=w.querySelector('.ai');
-    [10,15,20,30,45,60].forEach(v=>{
-      const b=document.createElement('div');b.className='chip num';b.textContent=v;
-      b.onclick=()=>{st.min=v;[...am.children].forEach(c=>c.classList.toggle('sel',c===b));
-        w.querySelector('.pv').textContent=v+' min';};
+    (isLoad?ACT_HOURS:[10,15,20,30,45,60]).forEach(v=>{
+      const b=document.createElement('div');b.className='chip num';
+      b.textContent=isLoad?(v+' h'):v;
+      b.onclick=()=>{st.min=isLoad?v*60:v;[...am.children].forEach(c=>c.classList.toggle('sel',c===b));
+        w.querySelector('.pv').textContent=isLoad?(v+' h on your legs'):(v+' min');};
       am.appendChild(b);
     });
-    if(k!=='meditation'){
+    if(k!=='meditation'&&!isLoad){
       ['Easy','Moderate','Hard'].forEach(v=>{
         const b=document.createElement('div');b.className='chip';b.textContent=v;
         b.onclick=()=>{st.int=(st.int===v?'':v);[...ai.children].forEach(c=>c.classList.toggle('sel',c.textContent===st.int));};
@@ -3772,7 +4041,8 @@ function buildActTiles(){
       if(!st.min){toast('Pick the minutes');return;}
       try{
         await post('/api/activity',{kind:k,minutes:st.min,intensity:st.int,day:todayISO});
-        toast('Logged '+label.toLowerCase()+', '+st.min+' min');
+        toast(isLoad?('Operating day logged, '+(st.min/60)+' h on your legs')
+                    :('Logged '+label.toLowerCase()+', '+st.min+' min'));
         st.min=null;st.int='';w.classList.remove('open');w.querySelector('.pv').textContent='';
         w.querySelectorAll('.chip').forEach(c=>c.classList.remove('sel'));
         loadActivity();
@@ -3786,14 +4056,22 @@ async function loadActivity(){
   const el=$('#actList');if(!el)return;
   const j=await jget('/api/activity?day='+todayISO);
   const s=j.summary||{};
-  $('#actSum').textContent=(s.minutes?(s.minutes+' min'):'none yet')+
+  const lh=s.load_minutes?(Math.round(s.load_minutes/6)/10):0;
+  $('#actSum').textContent=(s.minutes?(s.minutes+' min'):(lh?'no exercise':'none yet'))+
+    (lh?(' · '+lh+' h on legs'):'')+
     (s.steps?(' · '+Number(s.steps).toLocaleString('en-IN')+' steps'):'');
   el.innerHTML='';
   (j.items||[]).forEach(i=>{
-    const row=document.createElement('div');row.className='exrow';
+    const row=document.createElement('div');row.className='exrow'+(i.load?' load':'');
     row.innerHTML='<span class="t"></span><span class="m"></span>';
     row.querySelector('.t').textContent=i.time||'';
-    const bits=[(i.source==='watch'?'⌚ ':'')+i.label+' '+i.minutes+' min'];
+    const bits=[];
+    if(i.load){
+      bits.push(i.label+' '+(Math.round(i.minutes/6)/10)+' h on your legs');
+      bits.push('load, not exercise');
+    } else {
+      bits.push((i.source==='watch'?'⌚ ':'')+i.label+' '+i.minutes+' min');
+    }
     if(i.distance_km)bits.push((Math.round(i.distance_km*10)/10)+' km');
     if(i.intensity)bits.push(i.intensity.toLowerCase());
     if(i.confirmed)bits.push('watch-confirmed');
@@ -3953,7 +4231,7 @@ function renderVitals(rows){
    entry to move it to the time (or day) it really happened, or delete it.
    Below: that day's scheduled doses never logged, for backfilling. */
 let dvDay=todayISO;
-const DV_TAG={Dose:'dose',Extra:'extra',Skipped:'skip',Symptom:'sym',BP:'bp',Vitals:'bp',Meal:'meal',Activity:'act'};
+const DV_TAG={Dose:'dose',Extra:'extra',Skipped:'skip',Symptom:'sym',BP:'bp',Vitals:'bp',Meal:'meal',Activity:'act',Pain:'pain',Load:'load'};
 function dvShift(n){
   const d=new Date(dvDay+'T12:00:00');d.setDate(d.getDate()+n);
   const s=d.toLocaleDateString('en-CA');
@@ -4007,6 +4285,21 @@ function dvEdit(rowEl,e){
     try{await post('/api/delete/'+e.tbl+'/'+e.id,{});toast('Deleted');loadDayView();}
     catch(err){toast(err.message);}
   };
+  if(e.pain&&!e.eased){
+    const eb=document.createElement('button');
+    eb.type='button';
+    eb.className='ea';
+    eb.textContent='Eased now';
+    eb.onclick=async()=>{
+      try{
+        const a=await post('/api/episode/eased/'+e.id,{});
+        toast('Lasted '+a.duration);
+        box.remove();
+        loadDayView();
+      }catch(err){toast(err.message);}
+    };
+    box.querySelector('.vb').insertBefore(eb,box.querySelector('.go'));
+  }
   rowEl.parentNode.insertBefore(box,rowEl.nextSibling);
   box.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
@@ -4362,6 +4655,7 @@ async function loadNow(){
   loadStockAlerts();
   loadMedStatus();
   loadActivity();
+  loadPain();
   nowData=await jget('/api/now?day='+todayISO);
   const box=$('#nowSched');box.innerHTML='';
   let done=0,total=0;
@@ -4414,6 +4708,126 @@ async function loadNow(){
     row.querySelector('.m').textContent=e.medicine;
     row.querySelector('.u').onclick=async()=>{
       await post('/api/now/undo/'+e.id,{});toast('Removed');loadNow();};
+    el.appendChild(row);
+  });
+}
+
+/* GUTLOG_V3120_PAIN -- pain tiles. One tile, one tap, three questions and
+   no more: how bad, what was done, and whether it goes below the knee. The
+   tile writes one episodes row; an analgesic chip additionally writes a real
+   dose row and mirrors it to FitLog with the score.
+   The sites and the chips come from the server, so the medicine names stay in
+   regimen.local.json with every other medicine name and never reach this
+   page. */
+const PAIN_SCORE=['0','1','2','3','4','5','6','7','8','9','10'];
+
+function buildPainTiles(sites,treats){
+  const box=$('#n_msk');
+  if(!box||box.dataset.built||!sites||!sites.length)return;
+  box.dataset.built='1';
+  sites.forEach((t,idx)=>{
+    const slug=t.slug,label=t.label,canRad=t.radiates,hero=(idx===0);
+    const w=document.createElement('div');
+    w.className='ptile pain'+(hero?' hero':'');
+    w.dataset.k=slug;
+    w.innerHTML='<button type="button" class="ph"><span class="pn"></span><span class="pv"></span></button>'+
+      '<div class="pscore"><p class="lbl">Score 0-10</p><div class="chips ps"></div>'+
+      '<p class="lbl" style="margin-top:12px">What did you do</p><div class="chips pt"></div>'+
+      '<div class="prad"></div>'+
+      '<button type="button" class="btn primary pgo" style="margin-top:12px">Save</button></div>';
+    w.querySelector('.pn').textContent=label;
+    const st={score:null,treats:[],rad:0};
+    const pv=w.querySelector('.pv'),ps=w.querySelector('.ps'),pt=w.querySelector('.pt');
+    PAIN_SCORE.forEach(v=>{
+      const b=document.createElement('div');
+      b.className='chip num';
+      b.textContent=v;
+      b.onclick=()=>{
+        st.score=v;
+        pv.textContent=v+'/10';
+        [...ps.children].forEach(c=>c.classList.toggle('sel',c===b));
+      };
+      ps.appendChild(b);
+    });
+    (treats||[]).forEach(v=>{
+      const b=document.createElement('div');
+      b.className='chip';
+      b.textContent=v;
+      b.onclick=()=>{
+        const i=st.treats.indexOf(v);
+        if(i>=0)st.treats.splice(i,1); else st.treats.push(v);
+        b.classList.toggle('sel',st.treats.indexOf(v)>=0);
+      };
+      pt.appendChild(b);
+    });
+    if(canRad){
+      const rb=document.createElement('div');
+      rb.className='chip rad';
+      rb.textContent='goes below the knee';
+      rb.onclick=()=>{
+        st.rad=st.rad?0:1;
+        rb.classList.toggle('sel',!!st.rad);
+      };
+      w.querySelector('.prad').appendChild(rb);
+    }
+    w.querySelector('.ph').onclick=()=>w.classList.toggle('open');
+    w.querySelector('.pgo').onclick=async()=>{
+      if(st.score===null){toast('Give it a score');return;}
+      try{
+        const r=await post('/api/pain',{site:slug,score:st.score,
+          treatments:st.treats,radiates:st.rad,day:todayISO});
+        let msg=label+' '+st.score+'/10 logged';
+        if(r.doses&&r.doses.length)msg+=' \u00b7 '+r.doses.join(' + ')+' recorded';
+        toast(msg);
+        if(r.not_mirrored&&r.not_mirrored.length)
+          toast('FitLog did not take '+r.not_mirrored.join(', '));
+        st.score=null;st.treats=[];st.rad=0;
+        w.classList.remove('open');
+        pv.textContent='';
+        w.querySelectorAll('.chip').forEach(c=>c.classList.remove('sel'));
+        loadPain();
+        loadNow();
+      }catch(err){toast(err.message);}
+    };
+    box.appendChild(w);
+  });
+}
+
+/* Today's pain, and the one tap that turns a start time into a duration. */
+async function loadPain(){
+  const el=$('#painList');
+  if(!el)return;
+  const j=await jget('/api/pain?day='+todayISO);
+  buildPainTiles(j.sites,j.treatments);
+  const rows=j.rows||[];
+  const open=rows.filter(r=>!r.duration).length;
+  $('#painSum').textContent=rows.length?
+    (rows.length+' logged today'+(open?(' \u00b7 '+open+' unresolved'):'')):'tap to open';
+  el.innerHTML='';
+  rows.forEach(r=>{
+    const row=document.createElement('div');
+    row.className='exrow';
+    row.innerHTML='<span class="t"></span><span class="m"></span>';
+    row.querySelector('.t').textContent=r.etime||'';
+    const bits=[r.label+' '+r.severity+'/10'];
+    if(r.radiates)bits.push('below the knee');
+    if(r.treatments)bits.push(r.treatments.split('|').join(', '));
+    if(r.duration)bits.push('eased after '+r.duration);
+    row.querySelector('.m').textContent=bits.join(' \u00b7 ');
+    if(!r.duration){
+      const e=document.createElement('button');
+      e.type='button';
+      e.className='btn tiny u';
+      e.textContent='eased';
+      e.onclick=async()=>{
+        try{
+          const a=await post('/api/episode/eased/'+r.id,{});
+          toast('Lasted '+a.duration);
+          loadPain();
+        }catch(err){toast(err.message);}
+      };
+      row.appendChild(e);
+    }
     el.appendChild(row);
   });
 }

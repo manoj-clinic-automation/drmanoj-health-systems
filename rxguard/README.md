@@ -1,4 +1,4 @@
-# RxGuard v1.4.0
+# RxGuard v1.5.0
 
 `rx.dr-manoj.in` · service `rxguard` · port 8031 · `/root/rxguard`
 
@@ -71,6 +71,61 @@ token, RxGuard on a scratch database; covers reconciliation both ways, the
 named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
 days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
 GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
+
+## Reconciliation — v1.5.0
+
+The v1.1.0 page above *showed* the mismatch; the engine never saw it. It runs
+on `active_meds()` — RxGuard's own `medications` table — and nothing updated
+that table. So a medicine ended in GutLog stayed active here, and every check
+kept counting it, until the list was edited by hand days later.
+
+**It still does not auto-write.** Status here carries clinical meaning GutLog
+does not have — tapering is not stopped, and "not logged" is not "not taken"
+for a patch or an eye drop — and a drug record that rewrites itself from a
+logging action is untrustworthy. Instead:
+
+- **a)** A reconciliation line whenever a medicine is *active* or *tapering*
+  here **and** absent from GutLog's regimen **and** has had no dose for
+  `RECONCILE_GAP_DAYS` (7) or more. All three, or no line. One tap sets status
+  and `stop_date` **from GutLog's `valid_to`** — not from today, because the
+  day a mismatch is noticed is not the day the drug changed. Where GutLog
+  records no end date there is no one-tap stop: the line says so and points at
+  the Medications page.
+- **b)** The mirror case, inverted: in GutLog's regimen, unknown here. One tap
+  adds it as active from GutLog's `valid_from`.
+- **c)** Any RED or AMBER finding resting on a drug GutLog has not seen for
+  `GUT_STALE_DAYS` (14) or more is marked **possibly stale** on the finding
+  itself — the same discipline the knowledge base already applies to its own
+  review dates. The finding is never silently dropped: a RED that may be about
+  a stopped drug is still a RED until someone decides otherwise.
+
+Every applied line disappears on the next read, and a repeated tap writes
+nothing. The Dashboard carries a one-line count.
+
+Requires GutLog **v3.12.0**, which added `valid_from` on each regimen line and
+an `ended` list of recently closed schedules with their `valid_to` to
+`/api/feed/stack`. Against an older GutLog the lines still appear; only the
+one-tap stop date is unavailable.
+
+`show_reds.py` answers the question from the terminal, read-only, without
+changing anything: every RED and AMBER, the molecules each rests on, and
+whether the staleness test marks it — plus the reconciliation lines.
+`python3 show_reds.py` on the server. Its output **is** the health record, so
+it goes to the terminal and nowhere else; never redirect it into the repo.
+
+Tests: `test_reconcile.py` **13/13** (2/13 against v1.4.0) — a real GutLog on
+loopback with four medicines arranged to exercise each condition separately:
+one current in the regimen, one whose schedule ended 8 days ago, one in
+GutLog's regimen but absent here, and one dosed 2 days ago. Covers the feed
+carrying the end date, firing on all three conditions and on none of the
+others, the date coming from `valid_to` and never from today, the undated case
+refusing rather than guessing, the inverted case, a RED marked possibly-stale
+while findings on current drugs are not, nothing written without a tap, the
+page offering the tap, idempotency, and `active_meds()` afterwards reflecting
+the change — which is the whole point. Clock-independent: verified under
+`tools/RUN_AT_TIME.py` at 00:00, 00:05, 05:05 and 23:58. `smoke_test.py`
+42/42, `test_astaken.py` 15/15, `test_kb.py` 32/32 and `test_conditions.py`
+10/10 unchanged.
 
 ## Sources review — v1.2.0
 

@@ -3,6 +3,135 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-13 — Phase I: the pain entry surface, and closing the GutLog → RxGuard disconnect
+
+Three apps, one change. **Not yet deployed** — patchers, suites and docs are
+in the repo; the server is still on GutLog v3.11.1 / FitLog v1.3.3 /
+RxGuard v1.4.0.
+
+**Added — GutLog v3.12.0** (`patch_gutlog_v3120.py`, 26 anchors)
+- **Pain now**, a collapsed card on the Now tab beside blood pressure and
+  today's doses. Nine tiles, hero first: both hips + anterior thighs, then
+  hip/thigh R and L, glutes both/R/L, low back, neck → R arm, neck → L arm.
+  R is the THR side and L the native arthritic hip, so **side is never
+  averaged away** — separate tiles, separate rows.
+- A tile asks three things and no more: score 0–10, treatment chips, and (hip
+  and glute tiles only) one optional *goes below the knee* tap. Each tap
+  writes **one row to `episodes`** — the table that already carries every
+  within-day event. No second pain table. Two new columns through the existing
+  idempotent `_migrate` ALTER pattern, the one that added `bristol`:
+  `treatments` (pipe-joined, the `days.syms` convention) and `radiates`.
+  `SCHEMA_VERSION` 3.3.2 → 3.3.3, so the migration actually runs — and it runs
+  on the first request, not on restart, so verify with `schema_version`.
+- **An analgesic chip does not create a parallel medicine record.** Tapping one
+  writes a real `doses` row (`status='EXTRA'`, `reason` = the pain site,
+  `med_id` resolved from `prnmeds`) exactly as an ad-hoc dose does, and posts
+  to FitLog so the same event reaches `analgesic_log` with `pain_at_time` = the
+  score just entered. A medicine logged in two places is a record that
+  disagrees with itself.
+- **"eased"** — one tap, no dialog, hours later, stamping `duration` from
+  `etime` to now. Nothing is asked at the moment of pain, so `duration` is
+  measured rather than picked from a bucket while it still hurts. Offered on
+  the Pain card and in the day-view row-action strip.
+- **`ot_day` ("Operating day")** with an hours picker (2·4·6·8·10 h), stored as
+  minutes like every other activity. The same hip/glute/thigh complex appears
+  on long operating days, so the hours must be recorded or every
+  walking-versus-pain comparison is confounded by his work. `LOAD_KINDS` keeps
+  it out of exercise minutes everywhere; it reaches FitLog through
+  `/api/feed/activities` with no new write path.
+- `/api/feed/stack` additionally reports each regimen line's `valid_from` and
+  an `ended` list of recently closed schedules with their `valid_to`.
+
+**Added — FitLog v1.4.0** (`patch_fitlog_v140.py`, 5 anchors)
+- `POST /api/analgesic`, the one inbound write path for `analgesic_log`,
+  bearer-gated on GutLog's existing read-only feed token — no new secret,
+  machine-to-machine, never session-authenticated (CLAUDE.md rule 5).
+  Idempotent on a retry. A molecule the stack does not carry is refused and
+  said so, never filed under a chance substring of another generic.
+- `ot_day` rendered as **Standing load** in hours, apart from exercise and
+  never counted as exercise minutes.
+
+**Fixed — RxGuard v1.5.0** (`patch_rxguard_v150.py`, 8 anchors)
+- The GutLog → RxGuard disconnect. Cause, verified in the code:
+  `api_feed_stack` correctly drops an ended schedule from `regimen`, and
+  `astaken_view` already computed the mismatch — but the engine runs on
+  `active_meds()`, RxGuard's own `medications` table, **which nothing
+  updated**. A medicine ended in GutLog therefore kept being counted until the
+  list was edited by hand.
+- It still does not auto-write. Status here carries clinical meaning GutLog
+  lacks (tapering is not stopped) and a drug record that changes itself from a
+  logging action is untrustworthy. Instead: a reconciliation line when a
+  medicine is active/tapering here **and** absent from GutLog's regimen **and**
+  has had no dose for 7+ days — all three or nothing; one tap sets status and
+  `stop_date` **from GutLog's `valid_to`, not from today**; the mirror case
+  inverted, adding from `valid_from`; and any RED or AMBER resting on a drug
+  GutLog has not seen for 14+ days marked **possibly stale** rather than
+  silently dropped.
+
+**Tests** — three new suites, each verified to fail before the change
+(CLAUDE.md rule 2): `gutlog/test_phase_i.py` **18/18** (**0/18** against
+v3.11.0), `fitlog/test_analgesic_mirror.py` **8/8** (1/8 before — it runs a
+real GutLog and a real FitLog on two loopback ports and proves one tile tap
+makes exactly one `doses` row and exactly one `analgesic_log` row),
+`rxguard/test_reconcile.py` **13/13** (2/13 before). Regression sweep green:
+GutLog phase A/B/C/D/E/F/G, FitLog 23/23 · 36/36 · 18/18 · 19/19 · 29/29 ·
+39/39 · 52/52 · 12/12 · 10/10 · 14/14 · kb_lint · smoke 53/53, RxGuard smoke
+42/42, `test_astaken.py` 15/15, `test_kb.py` 32/32, `test_conditions.py`
+10/10. Phase C 20/20, E 13/13 and G 14/14 and the `fcntl` suites were run on
+Linux by the owner; the Windows shortfalls on C and E were file-mode
+artefacts, as expected. `test_ui_now.py` green in real Chromium, **no page JS
+errors** — rule 5b satisfied.
+
+**`test_ui_now.py` — the operating-day tile.** Its activity check asserted
+five tiles and there are now six. Changed to six, and then given the eight
+checks the tile actually needs, since a count is not evidence of behaviour:
+the `ot_day` tile is present and carries the load class; tapping it offers
+**2·4·6·8·10 h and no minutes picker**; it has no intensity row; the tile
+reads back in hours; and after saving, `/api/activity` reports **30 exercise
+minutes and 480 load minutes** with the entry flagged `load`, the row reads
+*Operating day 8 h on your legs · load, not exercise* rather than 480 min, and
+the header keeps the two apart. Against v3.11.0 the tile does not exist, so
+the count fails and the block emits eight named failures instead of a
+traceback. Server suites never run page JS, and the server has no Playwright,
+so `test_phase_i.py` case 17 pins the same constants offline — change the
+picker and the offline suite fails too.
+
+**A test defect worth recording: both new suites were clock-dependent.** They
+wrote literal times — 08:00, 08:30, 07:00, 18:00 — to *today*. GutLog
+correctly refuses a time that has not come yet, so the suites were green after
+18:00 and **red at 03:48**, which is when this was noticed. A suite whose
+result depends on the hour it is run is not evidence, and 5am logging is the
+stated reason this app has the shape it does. Every time written to today is
+now derived from the clock and clamped to midnight; the eased-tap arithmetic
+is tested as a pure function on nine fixed durations (both sides of the hour
+boundary) instead of leaning on elapsed real time; and one time-keyed row
+count became a delta, because inside the first 90 minutes after midnight every
+derived time clamps to 00:00 and collides. New `tools/RUN_AT_TIME.py` runs any
+suite under a faked clock — both suites verified at 00:00, 00:02, 01:10,
+05:05, 12:00, 18:30 and 23:58, `test_reconcile.py` at four of those. It must
+patch the clock before the suite *and* the app import it, or the two disagree
+and the failures are artefacts of the harness; that is written into the file.
+
+**Deploy order** — FitLog, then GutLog, then RxGuard. Each degrades safely
+against an unpatched neighbour, so the order is a preference rather than a
+constraint: GutLog against an old FitLog simply reports the dose as not
+mirrored and keeps its own row; RxGuard against an old GutLog still raises the
+lines, only without a one-tap stop date. Per app: WinSCP the files up, run the
+patcher with `--check` first, run its suite, restart, then verify. GutLog's
+migration runs on the **first request**, not on restart — check
+`schema_version` = `3.3.3`, never `systemctl status`. Copy the updated
+`regimen.local.json` (it now carries `pain_analgesics`) up beside `app.py`, or
+the analgesic chips will not appear.
+
+**Repo hygiene** — the analgesic chip labels are medicine names and this
+repository is public, so they are read from `regimen.local.json` →
+`pain_analgesics` by `_local_seed`, like `prn_seed`; a clone without that file
+gets the four physical measures and no drug chips, and the page never carries
+them either (the tiles and chips are built from `/api/pain`). All three test
+fixtures are synthetic. `NO_SECRETS.py` reports **no new drug name** in any
+changed file; `CHECK_FOLDER_PARITY.py` green; all three patched files are
+LF-only, so the same patcher run on the server produces identical bytes.
+
 ## 2026-09-13 — workout times in IST, steps take the larger source (FitLog)
 
 **Fixed**

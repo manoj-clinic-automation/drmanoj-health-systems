@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.11.1)
+# GutLog — DOSSIER (v3.12.0)
 
 Single source of truth. Update after every change.
 
@@ -59,6 +59,70 @@ Doses, extras and symptoms are collapsible; each header carries its own summary
 (`3 of 8 taken`, `2 logged today`) so state is readable without expanding
 anything. Blood pressure does not collapse.
 
+## Pain now (Now tab) — v3.12.0
+
+A collapsed card under *Symptom now*, beside blood pressure and today's doses.
+Nine tiles, the commonest first and larger: **both hips + anterior thighs**,
+then hip/thigh R and L, glutes both / R / L, low back, neck → R arm, neck → L
+arm. Tapping a tile expands it — the same pattern as the gut pain-by-site tiles
+— and asks **three things and no more**:
+
+1. a score, 0–10;
+2. treatment chips, multi-select — four physical measures plus the analgesic
+   chips from `regimen.local.json`;
+3. hip and glute tiles only: one optional tap, *goes below the knee*.
+
+**Sides are never averaged.** Right is the THR side (2010), left is the native
+arthritic hip, so R, L and both are separate tiles writing separate rows.
+
+Each tap writes **one row to `episodes`** — the table that already holds every
+within-day event. `category='pain'`, `etype` = the site slug, `side`,
+`severity` = the score, `treatments` pipe-joined (the `days.syms` convention),
+`radiates` 0/1. **No second pain table.**
+
+### The analgesic chips must not create a parallel medicine record
+
+Tapping an analgesic writes a **real `doses` row** — `status='EXTRA'`,
+`reason` = the pain site, `med_id` resolved from `prnmeds` by molecule then by
+name — exactly as an ad-hoc dose does, **and** posts to FitLog
+`/api/analgesic` so the same event reaches `analgesic_log` with
+`pain_at_time` = the score just entered. That score is the whole reason for
+the push: the dose feed can tell FitLog a drug was taken, never how bad it was
+when he took it. A medicine logged in two places is a record that disagrees
+with itself.
+
+If GutLog carries no such medicine the dose is still recorded under its chip
+label with `med_id` NULL. If FitLog is unreachable or has no matching stack
+row, the local dose row stands and the answer names what was not mirrored.
+
+The chip labels are medicine names and this repository is public, so they are
+read at import from `regimen.local.json` → `pain_analgesics` (`[label,
+molecule]` pairs) by `_local_seed`, like `prn_seed`. A clone without that file
+gets the four physical measures and no drug chips. The page never carries them
+either: `/api/pain` GET serves the sites and the chips, and the JS builds the
+tiles from that answer.
+
+### "eased" — so duration is real
+
+Nothing is asked at the moment of pain: `duration` is written empty. A logged
+pain row carries an **eased** tap — on the Pain card for today's rows, and in
+the day-view row-action strip — which stamps `duration` from `etime` to now.
+One tap, no dialog. Under an hour reads `47 min`; over, `2 h 05 min`.
+
+## The operating day — v3.12.0
+
+`ACT_KINDS` gains `ot_day` ("Operating day") with an **hours** picker
+(2·4·6·8·10 h), stored as minutes like every other activity. The same
+hip/glute/thigh complex appears on long operating days, so the hours on his
+legs must be recorded or every walking-versus-pain comparison is confounded
+by his work.
+
+It is **load, not training**, and `LOAD_KINDS` keeps it out of exercise
+minutes everywhere: `/api/activity` reports `minutes` (exercise) and
+`load_minutes` separately, the Activity card shows it apart, and the day view
+tags it `Load` in hours. It reaches FitLog through `/api/feed/activities`
+with no new write path; FitLog renders it under *Standing load*.
+
 ## Day by day (Review tab, first card) — v3.5.0
 
 One day at a time: every dose, extra, skip, symptom, BP reading and meal,
@@ -83,7 +147,7 @@ silently cannot be trusted later; one that changed visibly can.
 | `prnmeds` | Medicine catalogue. id, name, sort, molecule, form, pack_size, stock, active, **scheduled** |
 | `med_schedule` | Effective-dated regimen lines. id, med_id, slot, dose_text, with_food, valid_from, valid_to, **epoch**, notes, created, **variants** |
 | `doses` | Every dose event. id, day, dtime, medicine, reason, effect, notes, created, **status**, med_id, sched_id, dose_text |
-| `episodes` | Symptom events. id, day, etime, category, etype, side, severity, duration, notes, created, **bristol** |
+| `episodes` | Symptom **and pain** events. id, day, etime, category, etype, side, severity, duration, notes, created, **bristol**, **treatments**, **radiates**. `category='pain'` rows come from the Pain now tiles (v3.12.0); `treatments` is pipe-joined, `radiates` is 0/1 |
 | `vitals` | id, day, vtime, sys, dia, pulse, weight, waist, notes, created, temp |
 | `days` | Daily rollup — syms, pain, pain_site, bristol, stools, tea, coffee, sleep, walk, treadmill, meditation, notes |
 | `meals` · `library` · `foodtests` | Food logging, item library, food challenge results |
@@ -160,13 +224,46 @@ Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · HTTPS liv
 via OLS reverse proxy.
 
 ## Test evidence
+- `test_phase_i.py` — **18/18 PASS** (2026-09-14, v3.12.0), **0/18 against
+  v3.11.0**, so every case enters a v3.12.0 path (CLAUDE.md §2). Covers the
+  migration (both columns + `schema_version`, checked by reading
+  `schema_version`, never `systemctl status`), tile order with the hero first,
+  the row shape of all nine tiles with L/R/both kept apart, below-the-knee
+  accepted only on hip and glute tiles, treatments pipe-joined with an unknown
+  chip dropped, **an analgesic chip writing exactly one `doses` row** with
+  reason = the pain site and exactly one episode row, a dose still recorded
+  when GutLog carries no such medicine, six refused payloads, the eased tap
+  computing 95 min → `1 h 35 min` and short durations in minutes, the pain
+  list and day view, the operating day stored as minutes but picked in hours,
+  `ot_day` excluded from exercise minutes and reported as `load_minutes`,
+  `ot_day` on `/api/feed/activities`, `valid_from` and the `ended` list on
+  `/api/feed/stack`, 3.9 syntax with no PEP 701 f-string anywhere, the page
+  rendering with the gut tiles still at two, the new JS free of Jinja tokens
+  and brace-balanced, no medicine name baked into the page, and (case 17) the
+  activity picker constants pinned so a change fails offline as well as in
+  `test_ui_now.py`. The eased-tap duration is tested twice: once as a pure
+  function on nine fixed durations either side of the hour boundary, once as a
+  real round trip. **Clock-independent** — verified under
+  `tools/RUN_AT_TIME.py` at 00:00, 00:02, 01:10, 05:05, 12:00, 18:30, 23:58.
+- `fitlog/test_analgesic_mirror.py` — **8/8**, and **1/8 before**. Runs a real
+  GutLog and a real FitLog on two loopback ports and proves the thing neither
+  single-app suite can: one tile tap → exactly one `doses` row here and
+  exactly one `analgesic_log` row there, carrying the score.
 - `test_phase_b.py` — **16/16 PASS** (2026-09-11, v3.5.0): backfill (plain,
   variant, skip), future/bad-time refusal writing nothing, retime + audit row,
   no-op retime writes no audit, 7 guard cases, no move onto a logged day or
   outside the regimen, extras move freely, symptom/BP/meal retime, day view
   merge order and edited flags. Against v3.4.2 it scores 4/16, as it should.
-- `test_ui_now.py` — **27/27** in real Chromium (offline only), incl. strip
-  retime, change-dose-keeps-time, day-view edit, backfill of both kinds.
+- `test_ui_now.py` — real Chromium, offline only, and **no page JS errors**
+  (rule 5b). Strip retime, change-dose-keeps-time, day-view edit, backfill of
+  both kinds; and from v3.12.0 nine checks on the **operating-day tile**: six
+  tiles all closed, `ot_day` present and marked as load, the hours picker
+  offering 2·4·6·8·10 and no minutes, no intensity row, the tile reading back
+  in hours, and after saving — 30 exercise minutes against 480 load minutes,
+  the entry flagged `load`, the row reading *Operating day 8 h on your legs ·
+  load, not exercise* and never 480 min, and the header keeping the two apart.
+  Against v3.11.0 the tile is absent, so the block reports eight named
+  failures rather than a traceback.
 - `test_phase_a.py` — **18/18 PASS** (2026-09-10, post-v3.4.0). Covers
   authenticated boot, empty schedule, regimen add, slot render, one-tap TAKEN,
   re-tap correction without duplication, skip-as-data, extra dose path, mistap
@@ -237,6 +334,26 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-13 v3.12.0 — Phase I: the pain entry surface.** A "Pain now" card
+  of nine tiles (hero: both hips + anterior thighs), three questions a tile
+  and no more, writing one `episodes` row with the new `treatments` and
+  `radiates` columns — added through the existing idempotent `_migrate` ALTER
+  pattern, `SCHEMA_VERSION` 3.3.2 → 3.3.3. An analgesic chip writes a real
+  `doses` row with reason = the pain site **and** mirrors to FitLog's
+  `analgesic_log` with `pain_at_time`; the chip labels live in
+  `regimen.local.json`, never in this repository. An **eased** tap stamps
+  `duration` from `etime` to now, so duration is measured rather than guessed.
+  `ACT_KINDS` gains `ot_day` with an hours picker, kept out of exercise
+  minutes by `LOAD_KINDS`. `/api/feed/stack` additionally reports each regimen
+  line's `valid_from` and an `ended` list with `valid_to`, which is what lets
+  RxGuard stop a medicine on the date GutLog ended it.
+  `patch_gutlog_v3120.py`, 26 anchors. `test_phase_i.py` 18/18 (0/18 before);
+  `test_ui_now.py` extended with nine checks on the operating-day tile.
+  *2026-09-14:* both new suites were clock-dependent — literal times written to
+  today, which GutLog rightly refuses before they arrive, so they were green
+  after 18:00 and red at 03:48. Every such time is now derived from the clock
+  and clamped to midnight, and `tools/RUN_AT_TIME.py` checks a suite at any
+  hour. A suite that only passes in the evening is not evidence.
 - **2026-09-13 — the dose export kept its status.** `export_csv()` now emits
   `day,dtime,medicine,status,reason,effect,notes` for the `doses` table. The
   `status` and `reason` columns had been missing, so a SKIPPED or EXTRA dose

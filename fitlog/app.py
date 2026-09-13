@@ -2,6 +2,7 @@
 """
 FITLOG_V110_GUTLOG_FEED -- FitLog v1.1.0 reads doses from GutLog.
 FITLOG_V120_ACTIVITY -- FitLog v1.2.0 activity feed + Home activity card.
+FITLOG_V140_PAIN -- FitLog v1.4.0 analgesic mirror + operating-day load.
 FitLog v1.0 — Personal physical capacity & recovery engine.
 Dr. Manoj Agarwal | fit.dr-manoj.in | port 8040
 Single-file Flask + SQLite. Deterministic rule engine (no LLM in decision path).
@@ -313,6 +314,69 @@ def gutlog_days(category, since):
     return set(e.get("day") for e in events if e.get("day") and cat(e.get("molecule")) == category)
 
 
+# ---------------- analgesic mirror (FITLOG_V140_PAIN) ----------------
+# GutLog owns the medicine record. When a pain tile there logs an analgesic it
+# writes its own `doses` row AND calls this, so the same event exists here with
+# the pain score attached. Nothing else may write analgesic_log from outside:
+# a medicine logged in two places is a record that disagrees with itself.
+def _stack_match(molecule, name):
+    """The med_stack row for a molecule GutLog names: exact generic first, then
+    a combination product carrying it as a whole component, then the display
+    name. Components, never substrings -- a substring match would file a single
+    molecule under the first combination whose name happens to contain those
+    letters. None when the stack carries nothing for it: the caller is told,
+    rather than a medicine being invented to hold the row."""
+    rows = db().execute("SELECT id, name, generic, category FROM med_stack "
+                        "WHERE active=1 ORDER BY id").fetchall()
+    mol = (molecule or "").strip().lower()
+    if mol:
+        for r in rows:
+            if (r["generic"] or "").strip().lower() == mol:
+                return r
+        for r in rows:
+            parts = [p.strip() for p in
+                     (r["generic"] or "").lower().replace("+", ",").split(",")]
+            if mol in parts:
+                return r
+    nm = (name or "").strip().lower()
+    if nm:
+        for r in rows:
+            if (r["name"] or "").strip().lower() == nm:
+                return r
+    return None
+
+
+@app.route("/api/analgesic", methods=["POST"])
+def api_analgesic():
+    if not _feed_authorised(request):
+        return {"ok": False, "error": "unauthorised"}, 401
+    d = request.get_json(silent=True) or {}
+    row = _stack_match(d.get("molecule"), d.get("name"))
+    if not row:
+        return {"ok": False, "error": "no matching medicine in the FitLog stack",
+                "molecule": str(d.get("molecule") or "")}
+    dt = str(d.get("dt") or "")[:16] or datetime.now().isoformat(timespec="minutes")
+    try:
+        pain = int(d.get("pain_at_time"))
+    except (TypeError, ValueError):
+        pain = None
+    notes = str(d.get("notes") or "")[:200]
+    ref = str(d.get("ref") or "")[:60]
+    if ref:
+        notes = (notes + " [" + ref + "]").strip()
+    ex = db().execute("SELECT id FROM analgesic_log WHERE med_id=? AND dt=? "
+                      "AND COALESCE(notes,'')=?", (row["id"], dt, notes)).fetchone()
+    if ex:
+        return {"ok": True, "id": ex["id"], "med": row["name"], "duplicate": True}
+    db().execute("INSERT INTO analgesic_log(dt,med_id,dose_label,context_event_id,"
+                 "pain_at_time,notes) VALUES(?,?,?,?,?,?)",
+                 (dt, row["id"], str(d.get("dose_label") or row["name"])[:60],
+                  None, pain, notes))
+    db().commit()
+    rid = db().execute("SELECT last_insert_rowid() i").fetchone()["i"]
+    return {"ok": True, "id": rid, "med": row["name"], "pain_at_time": pain}
+
+
 # ---------------- warning flags ----------------
 # ---------------- Activity feed (FITLOG_V120_ACTIVITY) ----------------
 # GutLog's Activity card reads the watch side from here; the Home card reads
@@ -439,7 +503,10 @@ def gutlog_activities(day):
 
 
 ACT_LABEL = {"walk": "Walk", "treadmill": "Treadmill", "cycle_road": "Cycling (road)",
-             "cycle_static": "Cycling (static)", "meditation": "Meditation"}
+             "cycle_static": "Cycling (static)", "meditation": "Meditation",
+             "ot_day": "Operating day"}
+# FITLOG_V140_PAIN -- load, not training. Never counted as exercise.
+LOAD_KINDS = ("ot_day",)
 
 
 def _mins(hm):
@@ -468,8 +535,14 @@ def activity_card(day):
         if x["distance_km"]:
             bits += " · " + str(round(x["distance_km"], 1)) + " km"
         items.append((x["start"][11:16], bits))
+    load = []
     for t in taps:
         if t.get("_used"):
+            continue
+        if t.get("kind") in LOAD_KINDS:
+            load.append(((t.get("atime") or "")[:5],
+                         ACT_LABEL.get(t["kind"], t["kind"]) + " · "
+                         + str(round((t.get("minutes") or 0) / 60.0, 1)) + " h on his legs"))
             continue
         bits = ACT_LABEL.get(t.get("kind"), t.get("kind") or "") + " " + str(int(round(t.get("minutes") or 0))) + " min"
         if t.get("intensity"):
@@ -488,10 +561,18 @@ def activity_card(day):
     note = ""
     if err and err != "off":
         note = "<p class=small>" + _html.escape(err) + " — watch data only.</p>"
-    if not rows and not head and not note:
+    if not rows and not head and not note and not load:
         rows = "<tr><td class=small>Nothing yet today.</td></tr>"
+    loadrows = "".join("<tr><td class=small>" + _html.escape(t) + "</td><td>" +
+                       _html.escape(b) + "</td></tr>" for t, b in load)
+    loadblock = ""
+    if loadrows:
+        loadblock = ('<p class=small style="margin-top:10px"><b>Standing load</b> &mdash; hours on '
+                     'his legs, not exercise, and never counted as exercise minutes. Recorded so '
+                     'a walking-versus-pain comparison is not confounded by the operating '
+                     'list.</p><table>' + loadrows + "</table>")
     return ('<div class="card"><h2>Activity today</h2><p class=small>' + _html.escape(" · ".join(head)) +
-            '</p><table>' + rows + '</table>' + note +
+            '</p><table>' + rows + '</table>' + loadblock + note +
             '<p class=small><a href="https://health.dr-manoj.in/?open=act">Log an activity in GutLog →</a></p></div>')
 
 

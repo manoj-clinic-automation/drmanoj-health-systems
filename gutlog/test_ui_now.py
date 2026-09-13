@@ -205,8 +205,8 @@ with sync_playwright() as p:
         pg.click('#nav button[data-t="now"]'); time.sleep(0.8)
         pg.click("#nowAct .fold-h"); time.sleep(0.3)
         tiles = pg.locator("#actTiles .ptile")
-        res(tiles.count() == 5 and pg.locator("#actTiles .pscore:visible").count() == 0,
-            "Activity: five tiles, all closed")
+        res(tiles.count() == 6 and pg.locator("#actTiles .pscore:visible").count() == 0,
+            "Activity: six tiles, all closed")
         wt = pg.locator("#actTiles .ptile[data-k=walk]")
         wt.locator(".ph").click(); time.sleep(0.2)
         res(pg.locator("#actTiles .pscore:visible").count() == 1, "tap Walk opens only its row")
@@ -226,6 +226,52 @@ with sync_playwright() as p:
         pg.locator("#actList .exrow", has_text="Meditation").locator(".u").click(); time.sleep(0.8)
         res(pg.locator("#actList .exrow").count() == 1 and "30 min" in pg.locator("#actSum").inner_text(),
             "Undo removes the entry")
+        # --- v3.12.0: the operating day is LOAD, and load is not training ----
+        # Hours on his legs have to be recorded or every walking-versus-pain
+        # comparison is confounded by the operating list -- but the moment they
+        # are counted as exercise the same comparison breaks the other way.
+        # One exercise entry (Walk 30 min) is already logged above, so the
+        # exercise total is a known 30 before the operating day is added.
+        ot = pg.locator("#actTiles .ptile[data-k=ot_day]")
+        otn = ot.count()
+        res(otn == 1 and "load" in ((ot.first.get_attribute("class") or "") if otn else ""),
+            "operating-day tile is present and marked as load")
+        if not otn:
+            for m in ("operating day offers hours, not minutes",
+                      "operating day has no intensity",
+                      "tile reads back in hours",
+                      "operating hours are NOT exercise minutes",
+                      "the hours are counted as load instead",
+                      "the feed marks the entry as load",
+                      "the row reads as standing load, in hours",
+                      "the header keeps exercise and load apart"):
+                res(False, m + " -- no ot_day tile on this build")
+        else:
+            ot.locator(".ph").click(); time.sleep(0.25)
+            picker = [t.strip() for t in ot.locator(".am .chip").all_inner_texts()]
+            res(picker == ["2 h", "4 h", "6 h", "8 h", "10 h"],
+                "operating day offers hours, not minutes: " + str(picker))
+            res(ot.locator(".ai").count() == 0, "operating day has no intensity")
+            ot.locator(".am .chip", has_text="8 h").first.click(); time.sleep(0.2)
+            res("8 h" in ot.locator(".pv").inner_text(), "tile reads back in hours: "
+                + ot.locator(".pv").inner_text())
+            ot.locator(".as").click(); time.sleep(0.9)
+            j = pg.request.get(B + "/api/activity").json()
+            s = j["summary"]
+            res(s["minutes"] == 30,
+                "operating hours are NOT exercise minutes: " + str(s["minutes"]) + " min")
+            res(s.get("load_minutes") == 480,
+                "the hours are counted as load instead: " + str(s.get("load_minutes")))
+            oti = [i for i in j["items"] if i["kind"] == "ot_day"]
+            res(len(oti) == 1 and oti[0]["load"] is True and oti[0]["minutes"] == 480,
+                "the feed marks the entry as load: " + str(oti[:1]))
+            txt = pg.locator("#actList").inner_text()
+            res("Operating day 8 h on your legs" in txt and "load, not exercise" in txt
+                and "Operating day 480 min" not in txt,
+                "the row reads as standing load, in hours")
+            hdr = pg.locator("#actSum").inner_text()
+            res("30 min" in hdr and "8 h on legs" in hdr,
+                "the header keeps exercise and load apart: " + hdr)
         pg.click('#nav button[data-t="review"]'); time.sleep(0.6)
     # --- v3.8.0: records --------------------------------------------------
     if pg.locator("#files-summary").count():
