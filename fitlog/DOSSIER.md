@@ -1,4 +1,4 @@
-# FitLog — DOSSIER (v1.3.2)
+# FitLog — DOSSIER (v1.3.3)
 
 Single source of truth. Update after every change.
 
@@ -245,6 +245,63 @@ Context-only (`rule_bearing: false`): `resting_hr`, `walking_hr_avg`, `hrv_ms`,
 `spo2_pct`, `resp_rate` — HR is unreliable during medication titration, so
 aerobic intensity stays governed by talk-test only.
 
+### Steps are the one exception to S01 — v1.3.3
+
+S01 ranks sources by **sensor quality**, which is right for a reading: a
+wrist HR beats a phone's guess at it. It is wrong for a **coverage** metric.
+Steps are only counted while the device is carried, so the better number is
+whichever device was carried more — not whichever device is nominally better.
+
+On 12-Sep `applewatch` held 301 steps and `healthconnect` held 2,430; S01
+returned 301 and the 2,430 was discarded. `watch_activity()` now takes
+`MAX(value)` across sources for `steps` only, after `resolve_daily()` has run.
+
+Deliberately narrow:
+- **Only `steps`, and only in `watch_activity()`.** `resolve_daily()` and
+  S01 itself are untouched, so `/api/health/daily` still answers by
+  precedence and the rule layer sees no change.
+- Every other metric keeps precedence. `healthconnect` supplies steps
+  alone; `resting_hr`, `hrv_ms`, `spo2_pct`, `exercise_minutes` and
+  `stand_hours` have only ever had `applewatch` as a source, so there is
+  nothing for a max to pick between.
+- A day with one source is unchanged — 06 and 07 Sep stay at 18 and 13.
+
+Audited across all 10 days holding step data before applying: **only 12-Sep
+changes** (301 → 2,430). `audit_steps_delta.py` prints the comparison.
+
+### Workout times are stored in UTC and converted at read-out — v1.3.3
+
+Apple sends `2026-09-11T01:41:29.553Z`. `watch_activity()` used to do
+`[:19]`, which silently dropped the `Z`, and GutLog then rendered the result
+as local time: a 07:11 IST walk displayed as 01:41.
+
+`_ist()` in `app.py` converts a Z-stamp to IST and passes anything else
+through unchanged. The stored `start_ts` keeps the stamp **exactly as
+delivered** — `health_raw` and `health_workouts` are the record of what
+arrived; the display layer is where a timezone belongs. Both stored walks
+now read 07:11:29 and 21:58:41.
+
+The **calendar day** is a separate problem and lives in the ingest path, not
+here — see below.
+
+### The day a workout is filed under — v1.3.3
+
+`_apple_samples()` dated an Auto Export workout with
+`_parse_date(start_raw)`, the first ten characters of the stamp. IST is
+UTC+5:30, so a `Z` stamp starting before 05:30 IST resolves to the
+**previous** calendar day. His walks are 05:00–07:30, squarely inside that
+window. `parse_ios_payload()` never had the defect — it already used
+`_to_ist_date()`. The Auto Export workout loop now uses it too; a `+0530`
+stamp reaches `_parse_date()` unchanged, so the shape in use today behaves
+exactly as before.
+
+**No history was rewritten.** Audited live on 2026-09-13 first:
+`health_workouts` holds 2 rows, both from the retired ios feed and both
+already correctly dated, and none of the 8 stored Auto Export bodies carries
+a `workouts` array — so no workout has ever come through the slicing path
+and **zero existing rows are mis-dated**. If that ever changes, a backfill
+belongs in `recompute_apple_daily.py`, not in the ingest patcher.
+
 ### Schemas
 - `health_metrics` — id, date, metric, value, unit, source, ingested_at ·
   `UNIQUE(date, metric, source)` → repeat POSTs upsert, never duplicate
@@ -421,7 +478,10 @@ Run all three on the server. They gate the restart.
 | `test_watch_strip.py` | 52/52 | v1.3.1: renders `/` — empty day, data-but-not-today, exact freshness stamp, stale marker, badge provenance from the engine, strip shape and position, read-only, `/watch` untouched |
 | `test_hc_ingest.py` | 36/36 | HC Webhook path, R1/R2 regressions, negative controls |
 | `test_db_pin.py` | 12/12 | Non-default DB filename resolution |
-| `test_activity_feed.py` | 12/12 | v1.2.0: real GutLog + real FitLog on loopback — workout classes, mindful + indoor ingest, feed auth and content (best source only), GutLog pulling watch data (merge), Home card, escaping, cache not mutated, scratch-DB isolation, GutLog down, token file missing |
+| `test_activity_feed.py` | 14/14 | v1.2.0: real GutLog + real FitLog on loopback — workout classes, mindful + indoor ingest, feed auth and content (best source only), GutLog pulling watch data (merge), Home card, escaping, cache not mutated, scratch-DB isolation, GutLog down, token file missing. **v1.3.3 adds cases 12 and 13** — UTC→IST at read-out (including a 23:30Z stamp that rolls the day) and steps taking the larger source while `exercise_minutes` stays with the watch. Both fail against the unpatched `app.py` |
+| `test_workout_day_ist.py` | 12/12 | v1.3.3: the calendar day an Auto Export workout is filed under. A pre-05:30-IST `Z` stamp must keep its own day; a `+0530` stamp must behave exactly as before; the old slicing expression is kept as a **negative control**. 9/12 against the unfixed parser |
+| `test_apple_records.py` | 56/56 | Phase 3.5.1: record-level Auto Export ingest under rule S02 — per-hour with no rollup, partial after full, rollup before per-hour, cross-feed comparison, distance units. Negative control replays the unfixed paths in-process |
+| `test_recompute_apple.py` | 36/36 | Phase 3.5.1: `recompute_apple_daily.py` — dry-run isolation, retired-feed skip and opt-in, range and argument handling |
 | `test_gutlog_feed.py` | 10/10 | v1.1.0: real GutLog on loopback — W03 from GutLog alone, sleep and unmatched negatives, union dedupe, FitLog-only unchanged, window, Meds page, escaping, scratch-DB isolation, GutLog down |
 
 `test_health_ingest.py` does **not** exercise the HC path — every
@@ -430,6 +490,7 @@ healthconnect case in it uses the legacy shape, so `is_hc` is false. It scored
 on HC changes.
 
 ## Changelog
+- 2026-09-13 v1.3.3 — DEPLOYED 19:25 IST. **Workout times in IST; steps take the larger source; workout day fixed forward.** Two anchor-verified patchers, each dry-run first. `patch_fitlog_ist_and_steps.py` (3 anchors, `app.py`): `_ist()` converts a Z-stamp at read-out — the watch sends `2026-09-11T01:41:29.553Z` and the old `[:19]` dropped the `Z`, so GutLog rendered a 07:11 walk as 01:41; and `watch_activity()` now takes `MAX(value)` for `steps` only, because steps are a coverage metric, not a sensor-quality one. `patch_workout_day_ist.py` (1 anchor, `health_ingest.py`): the Auto Export workout loop dates through `_to_ist_date()` instead of slicing, so a walk starting before 05:30 IST keeps its own day. Suites: `test_activity_feed.py` **14/14** (was 12/12 — two cases added, both failing against the unpatched file), new `test_workout_day_ist.py` **12/12** (9/12 against the unfixed parser), plus 23/23, 36/36, 18/18, 19/19, 29/29, 12/12, 56/56, 36/36 — whole gate green on the server before the restart. Live after: the two stored walks read **07:11:29** and **21:58:41**; 12-Sep steps **301 → 2,430**, and an audit of all 10 days holding step data confirms **only 12-Sep changes**. **No history rewritten** — `health_workouts` holds 2 rows, both correctly dated, and none of the 8 stored Auto Export bodies carries a `workouts` array, so zero rows were mis-dated. Two incidental fixes: `.gitignore` gained `*.bak.*` (the patchers stamp `.bak.<stamp>`, which neither `*.bak-*`/`*.bak_*` nor the `findstr` gate in `PUBLISH_HEALTH.bat` matches — a `.bak` of a sensitive file would have reached a **public** repo), and `patch_workout_day_ist.py` opens with `newline=""`. **Open:** `patch_fitlog_ist_and_steps.py` still opens in text mode, so running it on Windows rewrites an LF file to CRLF — content identical, every test still green, but the repo copy stops being byte-identical to the server's. Repo parity was restored by pulling all three files back over scp. Rollback: `app.py.bak.20260913-192445`, `health_ingest.py.bak.20260913-192451`.
 - 2026-09-11 v1.3.2 — DEPLOYED 23:41 IST. **Health Auto Export parser fixes.** `patch_apple_aggregation.py`, 2 anchors: `_apple_convert()` (kJ→kcal on `active_energy` / `basal_energy_burned`) and `_apple_aggregate()` (sum counts and durations, average levels, instead of last-sample-wins). New `test_apple_aggregation.py` **29/29**, built on the real id 22 / id 23 payload shapes; **7 checks fail against the unfixed parser**. First apply was rolled back — it rebound the entry-level `unit` variable so only the first sample converted; the suite caught it, `point_unit` fixes it. Suites after: 23/23, 36/36, 18/18, 19/19, 29/29, 39/39, 52/52, 10/10, 12/12, 12/12, kb_lint PASS, smoke 53/53. History recomputed for 09-09..09-11 by replaying stored `health_raw` bodies (no new raw rows): `active_energy_kcal` 521.8/1076.5/1845.1 kJ → **124.7/257.3/441.0 kcal**, `basal_energy_kcal` → 1528.4/1666.1/1735.3 kcal; steps 951/2305/4914, exercise 0/11/17, stand 7/11/19 and flights 1 all unchanged and confirmed correct. 604 ios-era `applewatch` rows retired from `health_hc_records`. **`stand_hours` 19 on 09-11 was investigated and found correct, not a bug** — see the section above. Rollback: `health_ingest.py.bak-apple-20260911_234019`, `fitlog.db.bak-apple-20260911_234019`.
 - 2026-09-11 Cleanup sweep — no code change. Fresh DB backup `/root/backups/fitlog/fitlog.db.cleanup-20260911_221631` (integrity ok). Removed 15 superseded `.bak` files (534 KB), `patch_hc_support.py` (md5-verified identical to the repo copy, R1 key `metric|start|end` confirmed), 23 stray `/tmp/fitlog_*` test dirs (1.8 MB) and `__pycache__` (92 KB). Kept per file: newest rollback + last pre-feature state + the pre-Phase-3.5 `app.py` floor. **`FITLOG_HC_TOKEN` rotated a second time** — the first rotation's token had itself been logged by three verification curls through OLS; this rotation was verified over loopback only, so nothing reached the vhost log. OLS access log archived **redacted** to `/root/backups/fitlog/fit.access_log.redacted-20260911_222730` (mode 600, all three tokens masked, 597 lines) then truncated in place; OLS confirmed still appending. Suites after: 23/23, 36/36, 18/18, 19/19, 39/39, 52/52, 10/10, 12/12, 12/12, kb_lint PASS, smoke 53/53. **Two live faults found, not caused by the sweep: the Samsung HC feed has been dead since the 17:24 rotation (last good post 17:11), and iOS `Auto Export` has been 401-looping every ~90 s since 18:16. Both need a token entered on the phone.**
 - 2026-09-11 v1.3.1 — DEPLOYED 18:07 IST. **"Today so far" Watch strip on the vitals page.** `patch_watch_strip.py`, 4 anchors (styles, `w_ring_svg` gains a `size` argument, strip renderer, one line wiring it into `home()` after the flags and before the check-in form). Previewed in a full staging copy at `/root/fitlog_stage` before the live file was touched — four states rendered against a copy of the live DB (logging path, fresh, stale, empty). Placement above the verdict on checked-in days confirmed by the owner. Suites: new `test_watch_strip.py` **52/52**, plus 23/23, 36/36, 18/18, 19/19, 39/39, 10/10, 12/12, 12/12 unchanged; kb_lint PASS, smoke 53/53 — rule engine untouched. Live strip reads `as of 17:31 IST · 35 min ago`, steps 3874, Move 319/300 kcal, Exercise 17/30 min, Stand 12/12 h. Rollback: `app.py.bak-strip-20260911_180622`, `fitlog.db.bak-strip-20260911_180622`.

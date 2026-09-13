@@ -451,7 +451,13 @@ def _apple_samples(payload):
         if not isinstance(wk, dict):
             continue
         start_raw = wk.get("start") or wk.get("startDate")
-        date = _parse_date(start_raw)
+        # Workouts are dated in IST, never by slicing the stamp. A 'Z'
+        # stamp is UTC and IST is UTC+5:30, so [:10] files anything
+        # starting before 05:30 IST under the previous day - which is
+        # exactly when he walks. _to_ist_date converts a Z stamp and
+        # passes a '+0530' stamp straight through to _parse_date, so the
+        # Auto Export shape in use today is unaffected.
+        date = _to_ist_date(start_raw)
         if not date:
             continue
         energy = wk.get("activeEnergyBurned") or wk.get("activeEnergy") or {}

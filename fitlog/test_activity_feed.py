@@ -226,6 +226,79 @@ def main():
             A.GUTLOG_TOKEN_FILE = old
         return "no token file -> feed closed (even to an empty Bearer)"
 
+    # ---- the two branches added by patch_fitlog_ist_and_steps.py.
+    # Nothing above enters either one: every fixture stamp is a '+0530'
+    # local one, and no day above carries two sources for the same metric.
+    # Synthetic dates; the arithmetic is the same one the live rows hit.
+
+    DZ_EVE, DZ_MORN, DZ_NEXT = "2026-01-14", "2026-01-15", "2026-01-16"
+
+    def wk(day, start_ts, end_ts, wtype, secs, source="applewatch"):
+        fq("INSERT INTO health_workouts"
+           "(date,start_ts,end_ts,wtype,duration_s,source,ingested_at) "
+           "VALUES(?,?,?,?,?,?,?)",
+           (day, start_ts, end_ts, wtype, secs, source, "t"))
+
+    def feed(day):
+        return fc.get("/api/feed/activity?day=" + day, headers=H).get_json()
+
+    def t12_utc_to_ist():
+        # The watch sends UTC with a trailing Z. The old code sliced the Z
+        # off and the time was then read as local: a 07:11 walk showed as
+        # 01:41. Three shapes, one of which crosses midnight.
+        assert hasattr(A, "_ist"), "_ist helper missing - patch not applied"
+        cases = [
+            ("2026-01-15T01:41:29.553Z", "2026-01-15T07:11:29"),
+            ("2026-01-14T16:28:41.272Z", "2026-01-14T21:58:41"),
+            ("2026-01-15T23:30:00.000Z", "2026-01-16T05:00:00"),
+            ("2026-01-15 07:05:00 +0530", "2026-01-15 07:05:00"),
+            ("", ""),
+            (None, ""),
+        ]
+        bad = [(s, A._ist(s), e) for s, e in cases if A._ist(s) != e]
+        assert not bad, "conversions wrong: " + str(bad)
+
+        # ...and through the real read path, not just the helper.
+        wk(DZ_MORN, "2026-01-15T01:41:29.553Z", "2026-01-15T02:11:29.553Z",
+           "WALKING", 1800)
+        wk(DZ_EVE, "2026-01-14T16:28:41.272Z", "2026-01-14T16:58:41.272Z",
+           "WALKING", 1800)
+        m = feed(DZ_MORN)["workouts"][0]
+        e = feed(DZ_EVE)["workouts"][0]
+        assert m["start"] == "2026-01-15T07:11:29", "morning " + str(m)
+        assert m["end"] == "2026-01-15T07:41:29", "morning end " + str(m)
+        assert e["start"] == "2026-01-14T21:58:41", "evening " + str(e)
+        assert not m["start"].endswith("Z"), "Z leaked into the feed"
+        return "01:41Z -> 07:11 IST, 16:28Z -> 21:58 IST, 23:30Z rolls the day"
+
+    def t13_steps_take_the_larger():
+        # Steps are a coverage metric: a day the watch was barely worn must
+        # not override a fuller count from the phone. Everything else keeps
+        # SOURCE_PRECEDENCE.
+        def metric(day, name, value, source):
+            fq("INSERT INTO health_metrics"
+               "(date,metric,value,unit,source,ingested_at) "
+               "VALUES(?,?,?,?,?,?)", (day, name, value, "count", source, "t"))
+
+        D_TWO, D_ONE = "2026-01-20", "2026-01-21"
+        metric(D_TWO, "steps", 301, "applewatch")
+        metric(D_TWO, "steps", 2430, "healthconnect")
+        # a non-steps metric on the same day must NOT change hands
+        metric(D_TWO, "exercise_minutes", 5, "applewatch")
+        metric(D_TWO, "exercise_minutes", 99, "healthconnect")
+        metric(D_ONE, "steps", 18, "applewatch")
+
+        two, one = feed(D_TWO), feed(D_ONE)
+        assert two["steps"] == 2430, "watch's 301 still wins: " + str(two)
+        assert two["steps"] != 301, "precedence still applied to steps"
+        assert two["exercise_minutes"] == 5, (
+            "exercise minutes changed hands too: " + str(two))
+        assert one["steps"] == 18, "single-source day moved: " + str(one)
+        # and the untouched fixture day is still the watch's own figure
+        assert feed(T)["steps"] == 8421, "today's steps moved"
+        return ("301 vs 2430 -> 2430; exercise_minutes stays with the watch "
+                "at 5; a one-source day stays at 18")
+
     tests = [
         ("00 classify workouts", t00_classify),
         ("01 ingest: mindful + indoor", t01_ingest),
@@ -239,6 +312,8 @@ def main():
         ("09 scratch DB isolated", t09_scratch_isolated),
         ("10 GutLog down", t10_gutlog_down),
         ("11 token file missing", t11_token_missing),
+        ("12 workout times UTC -> IST", t12_utc_to_ist),
+        ("13 steps take the larger source", t13_steps_take_the_larger),
     ]
     print("=" * 66)
     print("FitLog v1.2.0 - activity feed test")

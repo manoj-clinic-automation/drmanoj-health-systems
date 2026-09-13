@@ -3,6 +3,64 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-13 — workout times in IST, steps take the larger source (FitLog)
+
+**Fixed**
+- **Workout times were shown in UTC.** The watch sends
+  `2026-09-11T01:41:29.553Z`; `watch_activity()` did `[:19]`, which dropped
+  the `Z`, and GutLog then rendered it as local time. A 07:11 walk read as
+  01:41. New `_ist()` helper converts at read-out; a stamp that is not a
+  Z-stamp passes through unchanged. The two stored walks now read 07:11:29
+  and 21:58:41. `patch_fitlog_ist_and_steps.py`, 3 anchors.
+- **Steps: a barely-worn watch beat a fuller phone count.**
+  `SOURCE_PRECEDENCE` put `applewatch` first for *every* metric, so 12-Sep
+  showed 301 steps while `healthconnect` held 2,430. Steps are a coverage
+  metric, not a sensor-quality one, so the largest count for the day now
+  wins — inside `watch_activity()` only. Every other metric keeps the
+  precedence untouched: `resting_hr`, `hrv_ms`, `spo2_pct`,
+  `exercise_minutes` and `stand_hours` have no second source, and
+  `healthconnect` supplies steps alone. Audited across all 10 days holding
+  step data: **only 12-Sep changes** (301 → 2,430). 06 and 07 Sep stay at
+  18 and 13 — single source, nothing to compare.
+- **Workout day derived from a UTC stamp (forward-looking fix).**
+  `_apple_samples()` dated an Auto Export workout with
+  `_parse_date(start_raw)` — the first ten characters. IST is UTC+5:30, so
+  anything starting before 05:30 IST was filed to the *previous* day, and
+  his walks are 05:00–07:30. Now routed through `_to_ist_date()`, which the
+  ios path already used; a `+0530` stamp behaves exactly as before.
+  `patch_workout_day_ist.py`, 1 anchor.
+  *Scope:* audited live first — `health_workouts` holds 2 rows, both from
+  the retired ios feed, both already correctly dated, and none of the 8
+  stored Auto Export bodies carries a `workouts` array. **Zero existing
+  rows are mis-dated**, so no history was rewritten. A backfill belongs in
+  `recompute_apple_daily.py` if it is ever needed.
+
+**Tests** — `test_activity_feed.py` 14/14 (was 12/12). Two cases added per
+CLAUDE.md rule 2, because nothing already there entered either branch:
+every workout fixture used a `+0530` stamp, and no fixture day carried two
+sources for one metric. Both were run against the unpatched file first and
+both failed there. New `test_workout_day_ist.py` 12/12, with the old
+slicing expression kept as a negative control. Whole FitLog gate green on
+the server (10 suites) before the restart.
+
+**Also**
+- `.gitignore`: added `*.bak.*`. The patchers stamp rollback copies
+  `.bak.<stamp>`; neither `*.bak-*`/`*.bak_*` nor the `findstr` gate in
+  `PUBLISH_HEALTH.bat` matches that spelling, so a `.bak` of a sensitive
+  file would have been committed to a **public** repository.
+- `patch_workout_day_ist.py` opens with `newline=""`. Without it, running a
+  patcher on Windows against an LF file rewrites every line ending; the
+  content is identical and every test still passes, but the repo copy stops
+  being byte-identical to the server's — the invariant the sync rule rests
+  on. `patch_fitlog_ist_and_steps.py` still has this; see the DOSSIER note.
+
+## 2026-09-13 — GutLog CSV kept the dose status (GutLog)
+
+- `export_csv()` now emits `day,dtime,medicine,status,reason,effect,notes`.
+  The status column had been dropped, so a SKIPPED dose read as a dose
+  taken — the export said the opposite of the record. Applied and verified
+  live on the server.
+
 ## 2026-09-11 — Phase G: reports read automatically (GutLog v3.10.0)
 
 - Every scan or upload starts `records_worker.py` at once (cron every 15

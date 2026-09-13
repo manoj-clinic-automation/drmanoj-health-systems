@@ -2200,7 +2200,7 @@ def export_csv(table):
     cols = {
         "days": "day,syms,pain,pain_site,bristol,stools,tea,coffee,sleep,walk,treadmill,meditation,notes",
         "meals": "day,mtime,slot,items,protein,kcal,fibre,fscore,notes",
-        "doses": "day,dtime,medicine,reason,effect,notes",
+        "doses": "day,dtime,medicine,status,reason,effect,notes",
         "patches": "strength,day_on,time_on,day_off,time_off,notes",
         "episodes": "day,etime,category,etype,side,severity,duration,notes",
         "vitals": "day,vtime,sys,dia,pulse,temp,weight,waist,notes",

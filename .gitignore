@@ -14,6 +14,11 @@ ingest.env
 *.bak
 *.bak-*
 *.bak_*
+# patch_fitlog_ist_and_steps.py and patch_workout_day_ist.py stamp their
+# rollback copies '.bak.<stamp>'. Neither pattern above matches that
+# spelling, and neither does the findstr gate in PUBLISH_HEALTH.bat, so a
+# .bak of a sensitive file would have been committed to a PUBLIC repo.
+*.bak.*
 *.deployed-*
 # Runtime junk
 __pycache__/

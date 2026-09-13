@@ -335,6 +335,23 @@ def _feed_authorised(req):
     return bool(tok) and h.startswith("Bearer ") and hmac.compare_digest(h[7:].strip(), tok)
 
 
+def _ist(ts):
+    """Apple Health sends UTC with a trailing Z. The old code sliced the Z off
+    and the time was then read as local. Convert to IST. Anything that is not
+    a Z-stamp is passed through unchanged."""
+    if not ts:
+        return ""
+    s = str(ts)
+    if s.endswith("Z"):
+        try:
+            dt = datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S")
+            return (dt + timedelta(hours=5, minutes=30)).strftime(
+                "%Y-%m-%dT%H:%M:%S")
+        except (ValueError, TypeError):
+            pass
+    return s[:19]
+
+
 def watch_activity(day):
     """Steps, exercise and mindful minutes, and workouts for one day, from
     the wearable tables (best source only). Never raises."""
@@ -349,6 +366,17 @@ def watch_activity(day):
         for k in ("steps", "exercise_minutes", "mindful_min"):
             if k in m and m[k]["value"] is not None:
                 out[k] = round(float(m[k]["value"]), 1)
+        # Steps are a coverage metric, not a sensor-quality one: a day the
+        # watch was barely worn must not override a fuller count from the
+        # phone. Every other metric keeps the source precedence above.
+        try:
+            mx = conn.execute(
+                "SELECT MAX(value) FROM health_metrics "
+                "WHERE date=? AND metric='steps'", (day,)).fetchone()[0]
+            if mx is not None and float(mx) > float(out.get("steps") or 0):
+                out["steps"] = round(float(mx), 1)
+        except Exception:
+            pass
         rows = conn.execute(
             "SELECT start_ts, end_ts, wtype, duration_s, distance_km, source FROM health_workouts "
             "WHERE date=? ORDER BY start_ts", (day,)).fetchall()
@@ -359,7 +387,7 @@ def watch_activity(day):
                 continue
             out["workouts"].append({
                 "kind": hi.classify_workout(r["wtype"]), "wtype": r["wtype"] or "",
-                "start": (r["start_ts"] or "")[:19], "end": (r["end_ts"] or "")[:19],
+                "start": _ist(r["start_ts"]), "end": _ist(r["end_ts"]),
                 "minutes": round((r["duration_s"] or 0) / 60.0, 1),
                 "distance_km": round(r["distance_km"], 2) if r["distance_km"] else None})
     except Exception:

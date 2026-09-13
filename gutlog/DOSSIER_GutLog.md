@@ -237,6 +237,17 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-13 — the dose export kept its status.** `export_csv()` now emits
+  `day,dtime,medicine,status,reason,effect,notes` for the `doses` table. The
+  `status` and `reason` columns had been missing, so a SKIPPED or EXTRA dose
+  exported as an ordinary row and read as a dose taken — the export said the
+  opposite of the record, silently, in the one artefact most likely to be
+  carried to a consultation. Applied and verified live on the server; pulled
+  back into the repo the same day (`app.py` sha256 `e6e2bc85…a256457e`,
+  241,645 bytes).
+  *Note:* this file's title still reads **v3.5.0** while the changelog is at
+  v3.11.1 — the header has not been moved since Phase B and is the version
+  number to correct next.
 - **2026-09-12 v3.11.1 — the reader's schema.** Every uploaded PDF came back
   `reader error (BadRequestError)` and none were read. The file was never the
   problem: Sarvam rejects the whole extraction schema with `SCHEMA_INVALID`,
