@@ -246,8 +246,15 @@ rediscovered the expensive way.
   the same report then read cleanly. Two guards added: `ocr_note` now keeps what
   the service actually said (a bare exception class name cost a round trip to
   the server to learn the schema was at fault), and `test_phase_g.py` walks
-  `LAB_SCHEMA` and fails if any field or array item lacks a description —
-  now 14/14.
+  `LAB_SCHEMA` and fails if any field or array item lacks a description.
+  The first real report then read cleanly but was still held back with its
+  values withheld: the lab printed **DR M K AGARWAL** and `patient_ok()` was a
+  plain substring test for one given name. Both sides are now reduced to
+  letters before comparing, so titles, initials and spacing no longer matter,
+  and the parts of a name may appear in any order **only** when the profile
+  lists two or more real words — one shared surname must never be enough to let
+  a family member's report through. The name forms themselves stay in the
+  gitignored profile file; this repository is public. `test_phase_g.py` 15/15.
 
 - **2026-09-12 v3.11.0 — scan quality.** The scanner is the clinic's widget
   (S219 v2.3, the newest of the three versions), and it was tuned for pharmacy
