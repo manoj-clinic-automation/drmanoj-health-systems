@@ -23,6 +23,15 @@ ingest.env
 # a patcher's half-written copy of the file it was patching, if os.replace
 # never ran. Same hazard class as a .bak.
 *.tmp
+# The briefs that commission this work quote the record they are about:
+# molecule names, dates, findings. They are working notes, not deliverables,
+# and THIS REPOSITORY IS PUBLIC. 2026-09-14: the Phase J brief named two
+# molecules and a Holter result, and `git add -A` would have taken it.
+# NOTE: CLAUDE_CODE_PROMPT_pain_v1.md and _fitlog.md were committed before
+# this rule existed and are still tracked - ignoring a path does not untrack
+# it. See the CHANGELOG entry for 2026-09-14.
+fitlog-ingest/CLAUDE_CODE_PROMPT_*.md
+
 # Runtime junk
 __pycache__/
 *.pyc

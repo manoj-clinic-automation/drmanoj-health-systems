@@ -1,2 +1,43 @@
-# Auto detect text files and perform LF normalization
+# Line endings.
+#
+# Everything here that is deployed to the Linux server must be LF in the
+# WORKING TREE, not only in the repository. `* text=auto` on its own
+# normalises to LF on commit and then hands Windows CRLF back on checkout,
+# which is a quiet trap in this repo:
+#
+#   * the patchers read and write with newline="", so a CRLF working copy
+#     produces a CRLF app.py, which is then not byte-identical to the file on
+#     the server -- the property every deploy here is verified against;
+#   * tools/CHECK_FOLDER_PARITY.py compares the working folder against the app
+#     folders, and both would be CRLF, so it would pass while the server
+#     disagreed with both.
+#
+# Measured 2026-09-14, before this file was corrected: a fresh clone produced
+# gutlog/app.py at 265,085 bytes with 4,999 CR bytes, against 260,086 on the
+# server. The committed blobs were right; the checkout was not.
+#
+# So declare LF explicitly for everything that ships, and let the Windows
+# launchers keep CRLF -- cmd.exe is not reliable with LF-only labels and goto.
+
 * text=auto
+
+# --- deployed to the server: LF in the working tree too --------------------
+*.py          text eol=lf
+*.json        text eol=lf
+*.js          text eol=lf
+*.sh          text eol=lf
+*.service     text eol=lf
+*.logrotate   text eol=lf
+*.txt         text eol=lf
+*.md          text eol=lf
+*.example     text eol=lf
+
+# --- Windows-only launchers: keep CRLF -------------------------------------
+*.bat         text eol=crlf
+.gitattributes text eol=lf
+.gitignore    text eol=lf
+
+# --- binary: never converted, never diffed as text -------------------------
+*.png         binary
+*.zip         binary
+*.pdf         binary
