@@ -11,12 +11,35 @@ commit:
      credential-shaped literals. A database here is the diary itself; an
      env file holds bearer tokens. Neither may ever be committed.
 
-  B. CLINICAL DETAIL  WARNS only (never blocks, exit stays 0)
-     Drug and molecule names drawn from prnmeds. The regimen is already
-     public in gutlog/add_regimen.py and the dossier, so blocking every
-     commit that mentions a drug would be pure noise -- the point is to
-     notice when a commit ADDS clinical detail, before it publishes, and
-     let a human decide.
+  B. CLINICAL DETAIL, staged   WARNS only (never blocks, exit stays 0)
+     Drug and molecule names in the files about to be committed, listed so
+     a human can look before it ships.
+
+  C. CLINICAL DETAIL, TRACKED  BLOCKS the publish (exit 1)
+     2026-09-14. B only ever asked what was being ADDED. It never once
+     asked what was ALREADY THERE -- so four documents naming his
+     medicines sat in the public tree for weeks, and every clean run said
+     "clinical check: no drug or molecule names in staged files", which was
+     true and useless. Exactly the shape of the findstr CRLF hole in
+     PUBLISH_HEALTH.bat, one layer up: a gate that guards the doorway and
+     never looks at the room.
+
+     C scans `git ls-files` -- the INDEX, so it covers both what is already
+     committed and what has just been staged -- and BLOCKS on any clinical
+     term outside CLINICAL_ALLOW.
+
+     CLINICAL_ALLOW is small, explicit, and each entry carries its reason.
+     It exists because RxGuard's deterministic knowledge base is drug names
+     BY DESIGN (CLAUDE.md rules 1 and 5c) and must stay in the repo. A
+     pharmacology file stating what one molecule does to another is not a
+     statement that he takes either of them. A file that says HE takes one
+     is, and that is what C is for. When in doubt a path does NOT go on the
+     list -- fix the file instead.
+
+     (This paragraph originally named two molecules as the illustration.
+     C caught its own file on the first run. Left recorded because it is
+     the cleanest possible demonstration of why the list lives in a
+     gitignored file and why C blocks rather than warns.)
 
 Never prints a secret value. Matched credentials are reported by file,
 line and kind only.
@@ -56,10 +79,37 @@ Python 3.9 compatible.
 
 import os
 import re
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TERMS_FILE = os.path.join(HERE, "clinical_terms.local.txt")
+
+# ---- C. paths allowed to carry drug names, and why -------------------------
+# Generic pharmacology, not his record. A reader of these cannot tell which
+# of the drugs named is one he takes -- that is the whole distinction. Add a
+# path here only after deciding that; the default for anything new is to keep
+# it out and fix the file instead.
+CLINICAL_ALLOW = {
+    "rxguard/knowledge/drugs.json":
+        "the curated knowledge base itself - drug properties, CLAUDE.md rule 1",
+    "rxguard/knowledge/rules.json":
+        "the curated interaction rules - pairs and classes, CLAUDE.md rule 1",
+    "rxguard/kb_sources.py":
+        "name aliases for the RxNorm/openFDA lookups, no personal content",
+    "rxguard/patch_rxguard_v140.py":
+        "the patcher that wrote those same curated rules",
+    "rxguard/test_conditions.py":
+        "synthetic condition fixtures over the generic rule set",
+    "rxguard/test_kb.py":
+        "synthetic DDInter/RxNorm fixtures; the names are the vendors' own",
+    "rxguard/smoke_test.py":
+        "declared-synthetic fixture - its own header states every drug, dose, "
+        "indication and symptom in it is invented to exercise a rule",
+    "rxguard/validation_cases.json":
+        "the engine's formal validation suite, with acceptance thresholds "
+        "declared before the run; its 'index case' is the suite's, not a person's",
+}
 
 # ---- A. secrets ----------------------------------------------------------
 
@@ -149,6 +199,28 @@ def scan_clinical(text, terms):
     return found
 
 
+def tracked_files(base):
+    """Every path git is carrying, from the INDEX.
+
+    `git ls-files` reads the index, so a file that has just been `git add`ed
+    is included alongside everything already committed. One call therefore
+    covers both halves of the question -- what is about to go in, and what is
+    already in. Returns (files, error_message); an error is reported loudly
+    and never silently treated as "nothing found".
+    """
+    git = os.environ.get("NO_SECRETS_GIT") or "git"
+    try:
+        proc = subprocess.Popen([git, "ls-files"], cwd=base,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = proc.communicate()
+    except OSError as exc:
+        return None, "could not run git: " + str(exc)
+    if proc.returncode != 0:
+        return None, (err or b"").decode("utf-8", "replace").strip()
+    names = out.decode("utf-8", "replace").split("\n")
+    return [n.strip() for n in names if n.strip()], None
+
+
 def gather(args):
     """(files, base) from --files-from, or a walk of base."""
     base = "."
@@ -207,7 +279,29 @@ def main():
             for term, line_no in scan_clinical(text, terms).items():
                 clinical_hits.append((rel, term, line_no))
 
-    blocked = bool(path_hits or secret_hits)
+    # ---- C. what is ALREADY in the tree, not only what is being added -----
+    tracked_hits = []     # (path, term, line)
+    tracked_err = None
+    tracked_n = 0
+    if terms:
+        tnames, tracked_err = tracked_files(base)
+        if tnames is not None:
+            tracked_n = len(tnames)
+            for rel in tnames:
+                if rel in CLINICAL_ALLOW:
+                    continue
+                if rel.lower().endswith(SKIP_EXT):
+                    continue
+                full = os.path.join(base, rel.replace("/", os.sep))
+                if not os.path.exists(full) or os.path.isdir(full):
+                    continue
+                text = read_text(full)
+                if text is None:
+                    continue
+                for term, line_no in scan_clinical(text, terms).items():
+                    tracked_hits.append((rel, term, line_no))
+
+    blocked = bool(path_hits or secret_hits or tracked_hits or tracked_err)
 
     # ---- clinical: warn, never block -------------------------------------
     print("")
@@ -241,11 +335,52 @@ def main():
     else:
         print("  clinical check: no drug or molecule names in staged files.")
 
+    # ---- C. tracked clinical detail: BLOCKS --------------------------------
+    print("")
+    if terms is None:
+        pass                      # already said loudly above that C is unarmed
+    elif tracked_err:
+        print("!! REFUSING - the tracked-file clinical check DID NOT RUN.")
+        print("   " + str(tracked_err))
+        print("   It reads `git ls-files`, and it is the only check that asks")
+        print("   what is ALREADY in the public tree. A check that did not run")
+        print("   is not a check that passed.")
+    elif tracked_hits:
+        byfile = {}
+        for rel, term, line_no in tracked_hits:
+            byfile.setdefault(rel, []).append((term, line_no))
+        print("!! REFUSING - clinical detail is TRACKED in this public repo.")
+        print("   " + str(len(byfile)) + " file(s) git is carrying right now name a"
+              " drug or molecule")
+        print("   from the list, outside CLINICAL_ALLOW. These are readable by")
+        print("   anyone, and remain readable at every old sha even after they")
+        print("   are deleted from HEAD.")
+        print("")
+        for rel in sorted(byfile):
+            shown = sorted(byfile[rel])[:6]
+            more = len(byfile[rel]) - len(shown)
+            desc = ", ".join(t + ":" + str(n) for t, n in shown)
+            if more > 0:
+                desc = desc + ", +" + str(more) + " more"
+            print("      " + rel)
+            print("         " + desc)
+        print("")
+        print("   For each one, decide which it is:")
+        print("     - HIS RECORD          take the detail out of the file, and")
+        print("                           rewrite history so the old sha does")
+        print("                           not still serve it. Deleting from")
+        print("                           HEAD alone is not removal.")
+        print("     - GENERIC PHARMACOLOGY add the path to CLINICAL_ALLOW in")
+        print("                           this file, with its reason.")
+    else:
+        print("  tracked-file clinical check: " + str(tracked_n)
+              + " files carried by git, none naming a drug outside the allowlist.")
+
     # ---- secrets: block ---------------------------------------------------
-    if not blocked:
+    if not (path_hits or secret_hits):
         print("  secrets check: clean.")
         print("")
-        return 0
+        return 1 if blocked else 0
 
     print("")
     print("!! REFUSING - a secret or live-data file is staged.")

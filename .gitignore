@@ -28,9 +28,14 @@ ingest.env
 # and THIS REPOSITORY IS PUBLIC. 2026-09-14: the Phase J brief named two
 # molecules and a Holter result, and `git add -A` would have taken it.
 # NOTE: CLAUDE_CODE_PROMPT_pain_v1.md and _fitlog.md were committed before
-# this rule existed and are still tracked - ignoring a path does not untrack
-# it. See the CHANGELOG entry for 2026-09-14.
+# this rule existed. Ignoring a path does not untrack it, so for weeks this
+# rule sat here doing nothing while the files stayed in the tree. pain_v1.md
+# is now untracked AND purged from every commit; _fitlog.md names no medicine
+# or condition and is kept by decision. See the CHANGELOG for 2026-09-14.
 fitlog-ingest/CLAUDE_CODE_PROMPT_*.md
+# Same class: a planning document that named a molecule and a drug class he
+# takes. Untracked and purged from history on 2026-09-14.
+rxguard/PLAN_MedKnowledge_v1.md
 
 # Runtime junk
 __pycache__/
@@ -59,3 +64,4 @@ gutlog/_nc_*.py
 
 # test_ui_now.py screenshots (run output, not source)
 gutlog/ui_*.png
+
