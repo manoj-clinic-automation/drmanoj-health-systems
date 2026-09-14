@@ -3,6 +3,17 @@ Usage: python3 test_ui_now.py path/to/app.py
 Real-browser test of the Now tab: tap the variant row, pick a dose, log it,
 then tap the logged row and check the action strip. Runs the page's own JS.
 
+STUBBING AN ENDPOINT HERE NEEDS `service_workers="block"` ON THE CONTEXT.
+GutLog registers a service worker (pwa.py), and a fetch served through one
+never reaches `page.route()`. Without the block the route silently never
+fires, the page gets the live answer, and the assertions quietly test the real
+handler instead of the fixture -- which looks like a pass when the fixture was
+never used. Proved 2026-09-14 with a hit counter: route hits [], page rendered
+from the live handler. Every stub below therefore also asserts that its route
+actually fired, and that the stubbed card rendered something; a stub that is
+bypassed, or a payload missing a field the page early-returns on, must fail
+loudly rather than leave an empty element behind.
+
 Needs `import_records.py` beside the app.py you point it at, or the v3.8.0
 records block dies partway through with FileNotFoundError -- after a run of
 green results, which makes it look like a late regression rather than a
@@ -13,7 +24,13 @@ is enough; pointing it at a bare copy of app.py is not.
 From v3.12.0 the activity block asserts six tiles and checks the operating-day
 tile in full: hours not minutes, no intensity, and the logged entry staying
 out of the day's exercise minutes. Against v3.11.0 that tile does not exist,
-so the block reports named failures rather than a traceback."""
+so the block reports named failures rather than a traceback.
+
+From v3.13.0 the Watch block does the same. A block guarded by "is the card
+there?" that simply skips is not a negative control: running it against the
+previous build gave 76 PASS / 0 FAIL, which reads as evidence and is the
+absence of it. When #nowWatch is missing, every property is now emitted as a
+named failure instead."""
 import importlib.util, os, sys, tempfile, threading, time
 from werkzeug.serving import make_server
 from playwright.sync_api import sync_playwright
@@ -33,7 +50,16 @@ def res(cond, msg):
     global ok; ok = ok and cond; print(("[PASS] " if cond else "[FAIL] ") + msg)
 
 with sync_playwright() as p:
-    br = p.chromium.launch(); pg = br.new_page(viewport={"width": 390, "height": 844})
+    br = p.chromium.launch()
+    # service_workers="block" is load-bearing, not tidiness: GutLog registers
+    # one (pwa.py), and a fetch served through a service worker NEVER reaches
+    # page.route(). A stubbed endpoint then silently gets the live answer and
+    # the assertions read whatever the real handler returned. See the
+    # docstring; this is a property of the app, so it applies to every stub
+    # added here in future.
+    ctx = br.new_context(viewport={"width": 390, "height": 844},
+                         service_workers="block")
+    pg = ctx.new_page()
     errs = []; pg.on("pageerror", lambda e: errs.append(str(e)))
     pg.goto(B + "/setup"); pg.fill("input[name=pw]", "testpassword1"); pg.fill("input[name=pw2]", "testpassword1")
     pg.locator("input[name=pw2]").press("Enter"); pg.wait_for_load_state("networkidle")
@@ -292,7 +318,37 @@ with sync_playwright() as p:
     # is running -- and the fixture can then carry the awkward days on
     # purpose: one with no data at all, one with pain and nothing else, an
     # operating day, and an epoch that starts inside the window.
-    if pg.locator("#nowWatch").count():
+    # Kept in step with the messages inside the block below, so a run against
+    # a build without the card reports the same list of names as a run with
+    # it -- one line per property, failed instead of missing.
+    _WATCH_CHECKS = [
+        "the stub payload declares link, which the page requires",
+        "the stub actually served /api/watch",
+        "one column per day in the window",
+        "the day with no watch data is drawn as no-data, not as a zero bar",
+        "the no-data day says so on hover",
+        "exactly the logged pain day is marked",
+        "exactly the operating day is marked",
+        "the epoch band has a boundary inside the window",
+        "the today strip has its tiles",
+        "a metric with no figure today reads 'no data'",
+        "the steps tile shows a direction against his own median",
+        "the steps tile says which feed answered",
+        "the standing-load tile is marked as load",
+        "standing load is not shown in exercise minutes",
+        "the workout shows its IST clock time",
+        "the footnote is on the screen",
+        "no verdict appears on the page",
+    ]
+    if not pg.locator("#nowWatch").count():
+        # Same treatment as the operating-day tile: a guard that skips is a
+        # guard that reports nothing, and "76 PASS, 0 FAIL" against a build
+        # without the card is not a negative control, it is an absence of
+        # evidence dressed up as a pass.
+        res(False, "the Watch card is present -- no #nowWatch on this build")
+        for _m in _WATCH_CHECKS:
+            res(False, _m + " -- no Watch card on this build")
+    else:
         import json as _wj
         _days = [(_dt.date.today() - _dt.timedelta(days=n)).isoformat()
                  for n in range(13, -1, -1)]
@@ -330,46 +386,64 @@ with sync_playwright() as p:
             "note": ("Shown as inputs, not conclusions. No readiness, recovery or "
                      "fitness score is derived from them here."),
             "err": ""}
-        pg.route("**/api/watch*", lambda route: route.fulfill(
-            status=200, content_type="application/json", body=_wj.dumps(_payload)))
+        # the page early-returns on !j.link, so a payload missing it renders
+        # nothing at all -- assert the fixture is well formed before trusting
+        # anything drawn from it
+        res("link" in _payload and _payload["link"] is True,
+            "the stub payload declares link, which the page requires")
+        _hits = []
+
+        def _watch_stub(route):
+            _hits.append(route.request.url)
+            route.fulfill(status=200, content_type="application/json",
+                          body=_wj.dumps(_payload))
+
+        pg.route("**/api/watch*", _watch_stub)
         pg.goto(B + "/"); pg.wait_for_load_state("networkidle"); time.sleep(0.6)
         pg.click("#nowWatch .fold-h"); time.sleep(0.4)
+        # If this fails the stub was bypassed -- almost certainly a service
+        # worker serving the fetch -- and every assertion below would have
+        # been testing the live handler while looking like a pass.
+        _hitmsg = "the stub actually served /api/watch"
+        res(bool(_hits), _hitmsg if _hits else _hitmsg +
+            " -- 0 route hits, so something served it instead; a service "
+            "worker is the usual culprit")
         cols = pg.locator("#wkChart .wkrow .wkcol")
         res(cols.count() == len(_row), "one column per day in the window")
         nod = pg.locator("#wkChart .wkrow .wkcol.nodata")
         res(nod.count() == 1 and nod.first.get_attribute("data-d") == _days[2],
             "the day with no watch data is drawn as no-data, not as a zero bar")
         res("no data" in nod.first.get_attribute("title"),
-            "the no-data day does not say so on hover")
+            "the no-data day says so on hover")
         marks = pg.locator("#wkChart .wklane.pain .mk.on")
         res(marks.count() == 1, "exactly the logged pain day is marked")
         ots = pg.locator("#wkChart .wklane.ot .mk.on")
         res(ots.count() == 1, "exactly the operating day is marked")
         segs = pg.locator("#wkChart .wkep .seg.on")
         res(0 < segs.count() < len(_row),
-            "the epoch band has a boundary inside the window, not all or nothing")
+            "the epoch band has a boundary inside the window")
         strip = pg.locator("#wkStrip .wktile")
-        res(strip.count() >= 5, "the today strip is missing tiles")
+        res(strip.count() >= 5, "the today strip has its tiles")
         hrt = pg.locator('#wkStrip .wktile[data-k="resting_hr"]')
         res("no data" in hrt.inner_text(),
-            "a metric with no figure today does not read 'no data'")
+            "a metric with no figure today reads 'no data'")
         stt = pg.locator('#wkStrip .wktile[data-k="steps"]').inner_text()
         res("↑" in stt and "median" in stt,
-            "the steps tile does not show a direction against his own median: " + stt)
-        res("watch" in stt, "the steps tile does not say which feed answered")
+            "the steps tile shows a direction against his own median: " + stt)
+        res("watch" in stt, "the steps tile says which feed answered")
         ldt = pg.locator('#wkStrip .wktile[data-k="load_hours"]').inner_text()
         res("load, not exercise" in ldt and "6" in ldt,
-            "the standing-load tile is not marked as load: " + ldt)
+            "the standing-load tile is marked as load: " + ldt)
         res("min" not in ldt.split("load, not exercise")[0],
-            "standing load is being shown in exercise minutes: " + ldt)
+            "standing load is not shown in exercise minutes: " + ldt)
         res("07:11" in pg.locator("#wkWork").inner_text(),
-            "the workout does not show its IST clock time")
+            "the workout shows its IST clock time")
         res("input" in pg.locator("#wkNote").inner_text().lower(),
-            "the footnote is missing from the screen")
+            "the footnote is on the screen")
         body_l = pg.content().lower()
         res("readiness" not in body_l.replace("no readiness", "")
             and "body battery" not in body_l and "fitness age" not in body_l,
-            "a verdict appears on the page")
+            "no verdict appears on the page")
         pg.unroute("**/api/watch*")
         # leave the page where the next block expects to find it
         pg.click('#nav button[data-t="review"]'); time.sleep(0.5)

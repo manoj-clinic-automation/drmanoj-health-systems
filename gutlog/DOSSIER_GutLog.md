@@ -317,7 +317,24 @@ via OLS reverse proxy.
   outside the regimen, extras move freely, symptom/BP/meal retime, day view
   merge order and edited flags. Against v3.4.2 it scores 4/16, as it should.
 - `test_ui_now.py` — real Chromium, offline only, and **no page JS errors**
-  (rule 5b). Strip retime, change-dose-keeps-time, day-view edit, backfill of
+  (rule 5b). **91 PASS / 0 FAIL at v3.13.0.**
+  Two harness rules, both learned the hard way on 2026-09-14 and both now in
+  its docstring:
+  1. **The context must be created with `service_workers="block"`.** GutLog
+     registers a service worker (`pwa.py`), and a fetch served through one
+     never reaches `page.route()`. Without the block a stub silently never
+     fires, the page gets the live answer, and the assertions test the real
+     handler while looking like a pass. Proved with a hit counter: route hits
+     `[]`, page rendered "not reachable". This is a property of the app, so it
+     applies to every stub added here in future. Every stub now also asserts
+     that its own route actually fired.
+  2. **A block guarded by "is the card there?" must fail, not skip.** Guarded
+     with a bare `if`, the Watch block ran against v3.12.0 and reported 76
+     PASS / 0 FAIL — which reads as evidence and is the absence of it. When
+     `#nowWatch` is missing it now emits all seventeen properties as named
+     failures, the same treatment the operating-day tile already had. The
+     names are kept in a list beside the block so both runs print the same
+     seventeen lines. Strip retime, change-dose-keeps-time, day-view edit, backfill of
   both kinds; and from v3.12.0 nine checks on the **operating-day tile**: six
   tiles all closed, `ot_day` present and marked as load, the hours picker
   offering 2·4·6·8·10 and no minutes, no intensity row, the tile reading back

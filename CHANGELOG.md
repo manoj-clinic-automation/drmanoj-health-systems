@@ -70,6 +70,33 @@ interception**, so the drawing is exercised in a real browser without standing
 a second service up. Whole gate green on the server before each restart:
 GutLog phase A–I, FitLog's fifteen suites, and the cross-app mirror.
 
+**Then `test_ui_now.py` was run under Chromium, and the harness was wrong in
+two independent ways — the assertions were right, the scaffolding was not.**
+
+1. **A service worker was eating the stub.** GutLog registers one (`pwa.py`),
+   and a fetch served through a service worker never reaches `page.route()`.
+   The route silently never fired, the page got the live answer, and the
+   block would have been testing the real handler while looking like a pass.
+   Proved with a hit counter: route hits `[]`, page rendered "not reachable".
+   The context is now created with `service_workers="block"`, and **every
+   stub also asserts that its own route actually fired** — the check that
+   would have caught this on the first run. It is a property of the app, not
+   of this test, so it is in the docstring for whoever stubs the next
+   endpoint.
+2. **The block skipped instead of failing.** Guarded by `if
+   pg.locator("#nowWatch").count():`, it ran against v3.12.0 and reported
+   **76 PASS / 0 FAIL** — no evidence at all, presented as a clean run. It now
+   emits all seventeen properties as named failures when the card is absent,
+   the same treatment the operating-day tile already had, with the names in a
+   list beside the block so both runs print the same seventeen lines.
+
+Correction to the record while checking this: the stub payload **did** already
+carry `"link": True`. The early-return on `!j.link` is real and load-bearing,
+and the suite now asserts the fixture declares it before trusting anything
+drawn from it — but that was not a defect in what shipped.
+
+With both harness fixes: **91 PASS / 0 FAIL, "no JavaScript errors" green.**
+
 **Noticed, not fixed:** `test_apple_records.py`, `test_recompute_apple.py` and
 `test_workout_day_ist.py` live on the server and in `fitlog-ingest/` but not
 in the authoritative `fitlog/` folder, so `CHECK_FOLDER_PARITY` has nothing to
