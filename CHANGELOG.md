@@ -3,6 +3,78 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-14 — Phase J: the watch display, and a line-ending trap closed
+
+**Fixed first — `.gitattributes` was handing out CRLF.** `* text=auto`
+normalised to LF on commit and gave Windows CRLF back on checkout. Measured,
+not theorised: a fresh clone produced `gutlog/app.py` at **265,085 bytes with
+4,999 CR bytes**, against 260,086 on the server. The committed blobs were
+right; the checkout was not. That mattered because the patchers read and write
+with `newline=""`, so a CRLF working copy yields a CRLF `app.py` that is no
+longer byte-identical to the server — and `CHECK_FOLDER_PARITY` compares the
+working folder with the app folders, **both** of which would have been CRLF,
+so it would have passed while the server disagreed with both. Everything
+deployed is now declared `eol=lf`; Windows launchers keep CRLF; images and
+archives are declared binary. A fresh clone now reproduces all three `app.py`
+files byte-for-byte. Also ignored `fitlog-ingest/CLAUDE_CODE_PROMPT_*.md`: the
+briefs quote the record they are about, and `git add -A` would have taken the
+Phase J brief — molecule names and a clinical result — into a public
+repository. **Two earlier briefs are already tracked and still carry that
+detail; removing them needs a decision, since ignoring a path does not untrack
+it.**
+
+**Added — GutLog v3.13.0 + FitLog v1.5.0, the watch display.** DEPLOYED 05:40
+and 05:41 IST, both byte-identical to the repo build (`6c9bf876…` 74,819 ·
+`88ed0d85…` 273,810). The data was all arriving and was being shown as one
+line, so this is a *reading* change: no new table, no new ingestion, no fourth
+app, and no new token. FitLog gains one read-only endpoint,
+`GET /api/feed/watch`, on the bearer gate that already existed; GutLog gains a
+"Watch" card that joins it to GutLog's own pain rows and operating days —
+which is the entire point, because load and pain were in different
+applications.
+
+- **Today strip** — steps, exercise minutes, standing load in hours, resting
+  HR, HRV, each with a direction against **his own trailing median**, never a
+  goal. Fewer than three comparable days gives *no* direction rather than a
+  flat one: "not enough to say" and "level" are different statements.
+- **Fourteen-day row** — steps per day, with a pain lane and an operating-day
+  lane beneath it.
+- **Workouts in real IST**, read from the feed's own `start_hm`. Nothing
+  slices a timestamp; that was the 2026-09-13 bug, and a test fails if a slice
+  reappears.
+- **Epoch band** drawn across the same row, so a drug change is read off the
+  chart rather than remembered. The label is **data** — created on the server
+  only, and absent from this repository.
+- **Source honesty** — the larger steps feed wins and the day says which one
+  answered; a day with no data reads **"no data"**, never zero.
+- **No verdict**: no readiness, recovery, body battery or fitness age. A wrist
+  sensor's HR and HRV accuracy depends on the underlying rhythm, so the screen
+  shows inputs and carries one quiet footnote. A test fails if any such word
+  reaches the payload or the page. Standing load is never folded into
+  exercise — not on the strip, not in the row, not into the median.
+
+**Tests** — new `gutlog/test_phase_j.py` **18/18**, **1/18 against the
+previous build**, and 18/18 under `tools/RUN_AT_TIME.py` at 00:02, 05:05,
+12:00 and 23:58. It runs both applications for real and builds the wearable
+tables by running the **real migration** rather than a copied DDL, so it
+cannot pass against a schema it invented. The fortnight carries the awkward
+days on purpose: no data at all, one feed only, two feeds disagreeing, an
+operating day, a day with pain and nothing else, and an epoch starting inside
+the window. Properties, not counts — after `"5 tiles"` and `"42 passed"` broke
+twice, nothing here pins a number a later change would have to edit. The
+clinical-term check reads `tools/clinical_terms.local.txt`, the same list
+`NO_SECRETS` uses, because a test that spelled the words out would itself be
+the leak; 56 terms checked, and it skips *out loud* where that file is absent.
+`test_ui_now.py` gains the new screen with the feed **stubbed via route
+interception**, so the drawing is exercised in a real browser without standing
+a second service up. Whole gate green on the server before each restart:
+GutLog phase A–I, FitLog's fifteen suites, and the cross-app mirror.
+
+**Noticed, not fixed:** `test_apple_records.py`, `test_recompute_apple.py` and
+`test_workout_day_ist.py` live on the server and in `fitlog-ingest/` but not
+in the authoritative `fitlog/` folder, so `CHECK_FOLDER_PARITY` has nothing to
+compare and never says so. All three pass.
+
 ## 2026-09-14 — RxGuard v1.6.0: a typo was deleting a drug from every check
 
 Everything below came out of what v1.5.0 found on its first run against the

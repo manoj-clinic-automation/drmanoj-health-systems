@@ -1,4 +1,4 @@
-# FitLog — DOSSIER (v1.4.0)
+# FitLog — DOSSIER (v1.5.0)
 
 Single source of truth. Update after every change.
 
@@ -70,6 +70,32 @@ and shows both on Home.
   and what was tapped in GutLog (`/api/feed/activities`), a tap the watch also
   recorded shown once. GutLog down → watch data only, with a note. Follows
   the live-database rule (`FITLOG_GUTLOG_FEED`).
+
+## Watch read feed — v1.5.0 (`GET /api/feed/watch?days=14`)
+
+GutLog draws the watch screen; FitLog holds the data. This endpoint is the
+whole of the contract between them and it is **read-only** — no new table, no
+new ingestion, no new token. Bearer-gated on GutLog's existing feed token.
+
+Per day in the window it returns every watch metric that resolved, each
+**with the source that supplied it**, plus `has_data`. Both matter:
+
+- steps arrive from two feeds and the larger wins, so a figure whose
+  provenance is invisible invites the wrong conclusion on the day the two
+  disagree. `WATCH_LARGER_WINS` states that rule once, in one place;
+- `has_data` False is not a zero. A day the watch was not worn and a day spent
+  resting are different facts, and a chart that conflates them lies about a
+  rest day.
+
+Workouts come back best-source-only with IST already applied **and the clock
+time carried separately as `start_hm`**, so no consumer has to slice a
+timestamp again — the 2026-09-13 UTC bug was a slice. Medication epochs
+overlapping the window come too, because resting HR and HRV inside a drug
+change are artefacts of the change.
+
+Nothing here derives a verdict, and nothing here should start to.
+`gutlog/test_phase_j.py` case 01 reads the block and fails on any `INSERT`,
+`UPDATE`, `DELETE` or `commit(`.
 
 ## Analgesic mirror — v1.4.0 (`POST /api/analgesic`)
 
@@ -525,6 +551,8 @@ healthconnect case in it uses the legacy shape, so `is_hc` is false. It scored
 on HC changes.
 
 ## Changelog
+- 2026-09-14 v1.5.0 — **DEPLOYED 05:40 IST.** Phase J: the read-only watch feed. `patch_fitlog_v150.py`, 2 anchors. `app.py` sha256 `6c9bf876…`, 74,819 bytes, byte-identical to the repo build. `GET /api/feed/watch?days=14` on the token that already existed — per day every resolved metric **with its source** plus `has_data`, workouts best-source-only with IST applied and `start_hm` carried so nobody slices a timestamp, and any medication epoch overlapping the window. No new table, no new ingestion, no verdict. Live after the deploy: the fortnight answers, the two stored workouts read 21:58 and 07:11 IST, and five days correctly report `has_data` False rather than zero. Whole FitLog gate green on the server first — 53/53, 23/23, 36/36, 12/12, 29/29, 18/18, 19/19, 39/39, 52/52, 12/12, 56/56, 36/36, 10/10, 14/14, 8/8 — plus `gutlog/test_phase_j.py` 18/18. Rollback: `app.py.bak-v150-…`, or `app.py.predeploy-phaseJ-20260914_053829` with `/root/backups/fitlog/fitlog.db.predeploy-phaseJ-20260914_053829`.
+  *Repo gap noticed, not fixed:* `test_apple_records.py`, `test_recompute_apple.py` and `test_workout_day_ist.py` exist on the server and in `fitlog-ingest/` but **not** in the authoritative `fitlog/` folder, so `CHECK_FOLDER_PARITY` has nothing to compare and never notices. All three pass (56/56, 36/36, 12/12); they just are not where CLAUDE.md says the authoritative copy lives.
 - 2026-09-14 v1.4.0 — **DEPLOYED 04:38 IST**, first of the three. `app.py` sha256 `7a5f6549…`, 69,652 bytes, byte-identical to the repo build; 5/5 anchors, compile check OK. Whole gate green on the server before the restart: 23/23, 36/36, 12/12, 29/29, 18/18, 19/19, 39/39, 52/52, 12/12, 56/56, 36/36, 10/10, 14/14, kb_lint PASS, smoke 53/53. Live checks after: `/api/analgesic` returns **401 with no token** and, with GutLog's feed token, **200 `{"ok": false}`** for a molecule the stack does not carry — with `analgesic_log` still at 0 rows, so a refusal really does write nothing. No errors in the journal. The cross-app `test_analgesic_mirror.py` could not run at this point and was deliberately deferred: it drives GutLog's pain tiles, which did not exist until the next step. It scored **8/8** against both live-patched files once GutLog was up. Rollback: `app.py.bak-v140-20260914_043819`, or `app.py.predeploy-phaseI-20260914_043720` and `/root/backups/fitlog/fitlog.db.predeploy-phaseI-20260914_043720` (`sqlite3.backup()`, integrity ok).
 - 2026-09-13 v1.4.0 — Phase I: the analgesic mirror and the operating-day load. `patch_fitlog_v140.py`, 5 anchors. New `POST /api/analgesic`, bearer-gated on GutLog's existing read-only feed token — no new secret, no session path, machine-to-machine per CLAUDE.md rule 5. GutLog's Pain now tiles call it the instant an analgesic chip is tapped, carrying `pain_at_time` = the score entered at the same tap; that score is the whole reason for the endpoint, since the dose feed can say a drug was taken but never how bad it was. `_stack_match()` resolves by exact generic, then by whole component of a combination, then by display name — components rather than substrings, so a single molecule is never filed under the first combination whose name happens to contain those letters. Writes are idempotent on (med_id, dt, notes): a retry after a timeout returns the first row. No match → `{"ok": false}` and nothing written, and GutLog keeps its own dose row and reports what was not mirrored, so a failure here cannot lose a dose. `ACT_LABEL` gains `ot_day` and `LOAD_KINDS` keeps it out of the workout list: the Activity card shows it under **Standing load** in hours, never as exercise minutes. New `test_analgesic_mirror.py` **8/8** running a real GutLog and a real FitLog on two loopback ports (1/8 against v1.3.3); regression sweep green — 23/23, 36/36, 18/18, 19/19, 29/29, 39/39, 52/52, 12/12, 10/10, 14/14, kb_lint PASS, smoke 53/53. Needs GutLog v3.12.0 on the other side. *2026-09-14:* the suite was clock-dependent — it wrote literal times to today, which GutLog rightly refuses before they arrive, so it was green at 23:00 and red at 03:50. Fixed by deriving every such time from the clock, moving the two fixed timestamps onto a past day so they cannot collide with a derived one, and replacing a time-keyed row count with a delta (inside the first 90 minutes after midnight every derived time clamps to 00:00 and collides). Verified at seven times of day with `tools/RUN_AT_TIME.py`.
 - 2026-09-13 v1.3.3 — DEPLOYED 19:25 IST. **Workout times in IST; steps take the larger source; workout day fixed forward.** Two anchor-verified patchers, each dry-run first. `patch_fitlog_ist_and_steps.py` (3 anchors, `app.py`): `_ist()` converts a Z-stamp at read-out — the watch sends `2026-09-11T01:41:29.553Z` and the old `[:19]` dropped the `Z`, so GutLog rendered a 07:11 walk as 01:41; and `watch_activity()` now takes `MAX(value)` for `steps` only, because steps are a coverage metric, not a sensor-quality one. `patch_workout_day_ist.py` (1 anchor, `health_ingest.py`): the Auto Export workout loop dates through `_to_ist_date()` instead of slicing, so a walk starting before 05:30 IST keeps its own day. Suites: `test_activity_feed.py` **14/14** (was 12/12 — two cases added, both failing against the unpatched file), new `test_workout_day_ist.py` **12/12** (9/12 against the unfixed parser), plus 23/23, 36/36, 18/18, 19/19, 29/29, 12/12, 56/56, 36/36 — whole gate green on the server before the restart. Live after: the two stored walks read **07:11:29** and **21:58:41**; 12-Sep steps **301 → 2,430**, and an audit of all 10 days holding step data confirms **only 12-Sep changes**. **No history rewritten** — `health_workouts` holds 2 rows, both correctly dated, and none of the 8 stored Auto Export bodies carries a `workouts` array, so zero rows were mis-dated. Repo hygiene the same day, all closed: the `PUBLISH_HEALTH.bat` gate matched only `.bak_` and `.bak-` while the patchers write five spellings, so a `.bak.` copy of `app.py` would have reached a **public** repo — one `%BADPAT%` variable now covers every spelling plus `.tmp`/`.token`/`.secret`, validated at 15/15 caught and 0 false positives over 216 paths; `newline=""` added to all three patchers (`patch_workout_day_ist.py`, `patch_fitlog_ist_and_steps.py`, GutLog's `patch_doses_export_status.py`), each proved by patching the server's pre-patch LF file on Windows and getting the live file back byte-for-byte; and `tools/CHECK_FOLDER_PARITY.py` now blocks the publish if a working-folder copy has drifted from its app folder (22 paired files green). Rollback: `app.py.bak.20260913-192445`, `health_ingest.py.bak.20260913-192451`.

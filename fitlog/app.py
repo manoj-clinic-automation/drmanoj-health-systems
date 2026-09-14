@@ -3,6 +3,7 @@
 FITLOG_V110_GUTLOG_FEED -- FitLog v1.1.0 reads doses from GutLog.
 FITLOG_V120_ACTIVITY -- FitLog v1.2.0 activity feed + Home activity card.
 FITLOG_V140_PAIN -- FitLog v1.4.0 analgesic mirror + operating-day load.
+FITLOG_V150_WATCHFEED -- FitLog v1.5.0 read-only watch feed for GutLog.
 FitLog v1.0 — Personal physical capacity & recovery engine.
 Dr. Manoj Agarwal | fit.dr-manoj.in | port 8040
 Single-file Flask + SQLite. Deterministic rule engine (no LLM in decision path).
@@ -375,6 +376,134 @@ def api_analgesic():
     db().commit()
     rid = db().execute("SELECT last_insert_rowid() i").fetchone()["i"]
     return {"ok": True, "id": rid, "med": row["name"], "pain_at_time": pain}
+
+
+# ---------------- watch read feed (FITLOG_V150_WATCHFEED) ----------------
+# GutLog draws the watch screen; FitLog holds the data. This endpoint is the
+# whole of the contract between them, and it is read-only.
+WATCH_METRICS = ("steps", "exercise_minutes", "resting_hr", "hrv_ms",
+                 "distance_km", "flights", "active_energy_kcal",
+                 "stand_hours", "walking_hr_avg", "spo2_pct")
+
+# Coverage, not sensor quality. A barely-worn watch must not beat a fuller
+# phone count, so for these the larger figure wins whatever the source
+# precedence says -- and the source that supplied it is reported, because on
+# the day the two feeds disagree the reader needs to know which one answered.
+WATCH_LARGER_WINS = ("steps",)
+
+
+def _watch_day(conn, d):
+    import health_ingest as hi
+    resolved = hi.resolve_daily(conn, d)
+    metrics = {}
+    for k in WATCH_METRICS:
+        got = resolved.get(k)
+        if not got or got.get("value") is None:
+            continue
+        metrics[k] = {"value": round(float(got["value"]), 2),
+                      "source": got["source"]}
+    for k in WATCH_LARGER_WINS:
+        best = None
+        for r in conn.execute("SELECT source, value FROM health_metrics "
+                              "WHERE date=? AND metric=?", (d, k)).fetchall():
+            if r["value"] is None:
+                continue
+            v = float(r["value"])
+            if best is None or v > best[1]:
+                best = (r["source"], v)
+        if best is not None:
+            metrics[k] = {"value": round(best[1], 2), "source": best[0]}
+    # A day with nothing is a day with nothing. It must never reach a chart
+    # as a zero: not worn and worn-while-resting are different facts.
+    return {"date": d, "metrics": metrics, "has_data": bool(metrics)}
+
+
+def _watch_workouts(conn, since, until):
+    """Best source only, IST already applied, and the clock time carried
+    separately so nobody downstream slices a timestamp to get it."""
+    import health_ingest as hi
+    rows = conn.execute(
+        "SELECT date, start_ts, end_ts, wtype, duration_s, distance_km, source "
+        "FROM health_workouts WHERE date>=? AND date<=? ORDER BY start_ts",
+        (since, until)).fetchall()
+    by_day = {}
+    for r in rows:
+        by_day.setdefault(r["date"], []).append(r)
+    out = []
+    for d in sorted(by_day):
+        day = by_day[d]
+        srcs = [r["source"] for r in day if r["source"] in hi.SOURCE_PRECEDENCE]
+        best = min(srcs, key=hi.SOURCE_PRECEDENCE.index) if srcs else None
+        for r in day:
+            if best is not None and r["source"] != best:
+                continue
+            start, end = _ist(r["start_ts"]), _ist(r["end_ts"])
+            out.append({
+                "date": d, "kind": hi.classify_workout(r["wtype"]),
+                "wtype": r["wtype"] or "", "start": start, "end": end,
+                "start_hm": start[11:16] if len(start) >= 16 else "",
+                "end_hm": end[11:16] if len(end) >= 16 else "",
+                "minutes": round((r["duration_s"] or 0) / 60.0, 1),
+                "distance_km": round(r["distance_km"], 2) if r["distance_km"] else None,
+                "source": r["source"]})
+    return out
+
+
+def _watch_epochs(since, until):
+    """Medication epochs overlapping the window. Resting HR and HRV inside a
+    drug change are artefacts of the change; the band exists so that is read
+    off the chart instead of remembered."""
+    out = []
+    try:
+        rows = db().execute("SELECT label, date_start, date_end FROM med_epochs "
+                            "ORDER BY date_start, id").fetchall()
+    except Exception:
+        return out
+    for r in rows:
+        s = (r["date_start"] or "")[:10]
+        e = (r["date_end"] or "")[:10]
+        if e and e < since:
+            continue
+        if s and s > until:
+            continue
+        out.append({"label": r["label"] or "", "date_start": s, "date_end": e})
+    return out
+
+
+@app.route("/api/feed/watch")
+def api_feed_watch():
+    if not _feed_authorised(request):
+        return {"ok": False, "error": "unauthorised"}, 401
+    try:
+        days = int(request.args.get("days") or 14)
+    except (TypeError, ValueError):
+        days = 14
+    days = max(1, min(60, days))
+    until = today()
+    start = date.today() - timedelta(days=days - 1)
+    since = start.isoformat()
+    daily, workouts = [], []
+    conn = None
+    try:
+        import health_ingest as hi
+        conn = hi._connect()
+    except Exception:
+        conn = None
+    if conn is not None:
+        try:
+            for i in range(days - 1, -1, -1):
+                daily.append(_watch_day(conn, (date.today() - timedelta(days=i)).isoformat()))
+            workouts = _watch_workouts(conn, since, until)
+        except Exception:
+            pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return {"ok": True, "app": "fitlog", "days": days, "since": since,
+            "today": until, "daily": daily, "workouts": workouts,
+            "epochs": _watch_epochs(since, until)}
 
 
 # ---------------- warning flags ----------------

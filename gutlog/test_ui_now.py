@@ -285,6 +285,94 @@ with sync_playwright() as p:
             res("30 min" in hdr and "8 h on legs" in hdr,
                 "the header keeps exercise and load apart: " + hdr)
         pg.click('#nav button[data-t="review"]'); time.sleep(0.6)
+    # --- v3.13.0: the watch display ---------------------------------------
+    # /api/watch is stubbed, so the drawing is exercised in a real browser
+    # without standing a FitLog up beside this one. A UI suite should be
+    # testing what the page does with an answer, not whether a second service
+    # is running -- and the fixture can then carry the awkward days on
+    # purpose: one with no data at all, one with pain and nothing else, an
+    # operating day, and an epoch that starts inside the window.
+    if pg.locator("#nowWatch").count():
+        import json as _wj
+        _days = [(_dt.date.today() - _dt.timedelta(days=n)).isoformat()
+                 for n in range(13, -1, -1)]
+        _pain, _ot, _epstart = _days[3], _days[5], _days[7]
+        _row = []
+        for i, d in enumerate(_days):
+            nodata = (i == 2)
+            _row.append({
+                "date": d,
+                "steps": None if nodata else 4000 + i * 100,
+                "source": "" if nodata else ("healthconnect" if i == 6 else "applewatch"),
+                "has_data": not nodata,
+                "pain": d == _pain, "ot": d == _ot,
+                "ot_hours": 8.0 if d == _ot else None,
+                "epoch": "test epoch alpha" if d >= _epstart else ""})
+        _payload = {
+            "ok": True, "day": _days[-1], "days": 14, "since": _days[0], "link": True,
+            "strip": {
+                "steps": {"value": 9000, "source": "applewatch", "dir": "up",
+                          "median": 5200, "n": 12},
+                "exercise_minutes": {"value": 35, "source": "applewatch", "dir": "up",
+                                     "median": 20, "n": 12},
+                "load_hours": {"value": 6.0, "source": "gutlog", "dir": None,
+                               "median": None, "n": 0},
+                "resting_hr": {"value": None, "source": "", "dir": None,
+                               "median": None, "n": 0},
+                "hrv_ms": {"value": 61, "source": "applewatch", "dir": "down",
+                           "median": 70, "n": 11}},
+            "row": _row,
+            "workouts": [{"date": _days[-2], "kind": "walk", "wtype": "Walking",
+                          "start": _days[-2] + "T07:11:29", "end": _days[-2] + "T07:41:29",
+                          "start_hm": "07:11", "end_hm": "07:41", "minutes": 30.0,
+                          "distance_km": 2.4, "source": "applewatch"}],
+            "epochs": [{"label": "test epoch alpha", "date_start": _epstart, "date_end": ""}],
+            "note": ("Shown as inputs, not conclusions. No readiness, recovery or "
+                     "fitness score is derived from them here."),
+            "err": ""}
+        pg.route("**/api/watch*", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=_wj.dumps(_payload)))
+        pg.goto(B + "/"); pg.wait_for_load_state("networkidle"); time.sleep(0.6)
+        pg.click("#nowWatch .fold-h"); time.sleep(0.4)
+        cols = pg.locator("#wkChart .wkrow .wkcol")
+        res(cols.count() == len(_row), "one column per day in the window")
+        nod = pg.locator("#wkChart .wkrow .wkcol.nodata")
+        res(nod.count() == 1 and nod.first.get_attribute("data-d") == _days[2],
+            "the day with no watch data is drawn as no-data, not as a zero bar")
+        res("no data" in nod.first.get_attribute("title"),
+            "the no-data day does not say so on hover")
+        marks = pg.locator("#wkChart .wklane.pain .mk.on")
+        res(marks.count() == 1, "exactly the logged pain day is marked")
+        ots = pg.locator("#wkChart .wklane.ot .mk.on")
+        res(ots.count() == 1, "exactly the operating day is marked")
+        segs = pg.locator("#wkChart .wkep .seg.on")
+        res(0 < segs.count() < len(_row),
+            "the epoch band has a boundary inside the window, not all or nothing")
+        strip = pg.locator("#wkStrip .wktile")
+        res(strip.count() >= 5, "the today strip is missing tiles")
+        hrt = pg.locator('#wkStrip .wktile[data-k="resting_hr"]')
+        res("no data" in hrt.inner_text(),
+            "a metric with no figure today does not read 'no data'")
+        stt = pg.locator('#wkStrip .wktile[data-k="steps"]').inner_text()
+        res("↑" in stt and "median" in stt,
+            "the steps tile does not show a direction against his own median: " + stt)
+        res("watch" in stt, "the steps tile does not say which feed answered")
+        ldt = pg.locator('#wkStrip .wktile[data-k="load_hours"]').inner_text()
+        res("load, not exercise" in ldt and "6" in ldt,
+            "the standing-load tile is not marked as load: " + ldt)
+        res("min" not in ldt.split("load, not exercise")[0],
+            "standing load is being shown in exercise minutes: " + ldt)
+        res("07:11" in pg.locator("#wkWork").inner_text(),
+            "the workout does not show its IST clock time")
+        res("input" in pg.locator("#wkNote").inner_text().lower(),
+            "the footnote is missing from the screen")
+        body_l = pg.content().lower()
+        res("readiness" not in body_l.replace("no readiness", "")
+            and "body battery" not in body_l and "fitness age" not in body_l,
+            "a verdict appears on the page")
+        pg.unroute("**/api/watch*")
+        # leave the page where the next block expects to find it
+        pg.click('#nav button[data-t="review"]'); time.sleep(0.5)
     # --- v3.8.0: records --------------------------------------------------
     if pg.locator("#files-summary").count():
         HERE = os.path.dirname(os.path.abspath(__file__))

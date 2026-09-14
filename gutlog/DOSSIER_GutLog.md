@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.12.0)
+# GutLog — DOSSIER (v3.13.0)
 
 Single source of truth. Update after every change.
 
@@ -58,6 +58,45 @@ not a form. Everything below serves that.
 Doses, extras and symptoms are collapsible; each header carries its own summary
 (`3 of 8 taken`, `2 logged today`) so state is readable without expanding
 anything. Blood pressure does not collapse.
+
+## Watch (Now tab) — v3.13.0
+
+The data was all arriving and was being shown as a single line. This card is
+a *reading* change: it ingests nothing, adds no table and adds no feed token.
+It reads FitLog's new `/api/feed/watch` (bearer-gated on the existing
+read-only token) and joins it to GutLog's own pain rows and operating days —
+the join is the point, because load and pain were in different applications.
+
+- **Today strip** — steps, exercise minutes, **standing load in hours**,
+  resting HR, HRV. Each carries a direction against **his own trailing median
+  over the window**, never a generic goal: a ring target a 58-year-old with a
+  replaced hip cannot meet is noise, and noise teaches you to ignore the
+  screen. Fewer than three comparable days gives *no* direction rather than a
+  flat one — "not enough to say" and "level" are different statements.
+- **Fourteen-day row** — one bar per day, steps; under it two thin lanes,
+  one marking every day with a logged pain entry, one marking every operating
+  day.
+- **Workouts** in real IST, taken from the feed's own `start_hm`. Nothing on
+  this screen slices a timestamp; that was the 2026-09-13 bug and
+  `test_phase_j.py` case 12 fails if a slice reappears.
+- **Epoch band** — `med_epochs` drawn across the same row, because resting HR
+  and HRV inside a drug change are artefacts of the change. The label is
+  *data*: it lives in the FitLog database on the server and appears nowhere in
+  this repository.
+- **Source honesty** — steps arrive from two feeds and the larger wins, so the
+  day's figure says quietly which feed answered. A day with no data reads
+  **"no data"**, never zero: not worn and worn-while-resting are different
+  facts and a chart that conflates them lies about a rest day.
+
+**Deliberately absent:** readiness, recovery, body battery, fitness age, or
+any other number pretending to summarise a body. A wrist sensor's HR and HRV
+accuracy depends on the underlying rhythm, so every figure here is an input
+and one quiet footnote says so. `test_phase_j.py` case 04 fails if any such
+word reaches the payload or the page. **Standing load is never added to
+exercise** — not on the strip, not in the row, and not into the median.
+
+If FitLog is unreachable the card says so and still draws GutLog's own pain
+and operating days.
 
 ## Pain now (Now tab) — v3.12.0
 
@@ -224,6 +263,29 @@ Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · HTTPS liv
 via OLS reverse proxy.
 
 ## Test evidence
+- `test_phase_j.py` — **18/18 PASS** (2026-09-14, v3.13.0), **1/18 against
+  v3.12.0** (the one pass is a check that skips without the local term list).
+  Runs a real GutLog and a real FitLog on two loopback ports and builds the
+  wearable tables by running the **real migration** rather than a copied DDL,
+  so it cannot pass against a schema it invented. The fortnight is built with
+  the awkward days on purpose: one with no watch data at all, one with
+  `healthconnect` only, one where the two feeds disagree, an operating day, a
+  day with pain and nothing else, and an epoch that **starts inside the
+  window** so the band has a boundary to draw. Asserts properties, not counts.
+  Covers: the feed bearer-gated and complete; **no INSERT, UPDATE, DELETE or
+  commit in the feed block** (Phase J is a reading problem, and if that ever
+  fails someone has solved the wrong one); direction against his own median
+  with steps up, resting HR down and HRV up; no verdict word anywhere in
+  payload or page; "not enough to say" distinct from "level"; a no-data day
+  carrying `has_data` False and steps `None`; the larger feed winning *and*
+  being named; both lanes marking exactly the right days; a pain day with no
+  activity still on the chart; `01:41:29Z → 07:11` IST; no timestamp slicing
+  in the page; the band with a real boundary; **no clinical term in either app
+  file or in the suite**, checked against `tools/clinical_terms.local.txt`
+  (56 terms) and skipped out loud where that file is absent; 6 h of load
+  beside 35 exercise minutes and out of the median too; and degradation to a
+  message that keeps GutLog's own rows. **Clock-independent** — 18/18 under
+  `tools/RUN_AT_TIME.py` at 00:02, 05:05, 12:00 and 23:58.
 - `test_phase_i.py` — **18/18 PASS** (2026-09-14, v3.12.0), **0/18 against
   v3.11.0**, so every case enters a v3.12.0 path (CLAUDE.md §2). Covers the
   migration (both columns + `schema_version`, checked by reading
@@ -334,6 +396,25 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-14 v3.13.0 — Phase J, the watch display. DEPLOYED 05:41 IST.**
+  `app.py` sha256 `88ed0d85…`, 273,810 bytes, byte-identical to the repo
+  build. `patch_gutlog_v3130.py`, 6 anchors; FitLog v1.5.0 alongside it.
+  A "Watch" card on the Now screen: today strip with directions against his
+  own trailing median, a fourteen-day steps row with pain and operating-day
+  lanes under it, workouts in real IST, the medication-epoch band drawn
+  across the same row, and the source named on each day's figure. No
+  readiness, recovery, battery or fitness-age verdict anywhere, and standing
+  load is never folded into exercise. Nothing new is ingested: it reads
+  FitLog's new read-only `/api/feed/watch` on the token that already existed.
+  The epoch itself was created **on the server only** — the label is data and
+  is not in this repository. Live after the deploy: the feed answers for the
+  full fortnight, the two stored workouts read **21:58** and **07:11** IST,
+  five days in the window carry no data and say so rather than showing zero,
+  and the band covers 9 of 14 days so its boundary is visible.
+  `test_phase_j.py` 18/18 (1/18 before) and at four times of day; the whole
+  GutLog and FitLog gate green on the server before the restart. Rollback:
+  `app.py.bak-v3130-…`, or `app.py.predeploy-phaseJ-20260914_053829` with
+  `/root/backups/gutlog/health3.db.predeploy-phaseJ-20260914_053829`.
 - **2026-09-14 v3.12.0 — DEPLOYED 04:40 IST.** `app.py` sha256 `f6c169ed…`,
   **260,086 bytes, byte-identical to the repo build** — the `newline=""`
   handling means the same patcher produces the same bytes on Windows and on
