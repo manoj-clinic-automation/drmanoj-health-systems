@@ -3,6 +3,57 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-14 — GutLog v3.14.0: the watch strip falls back one day
+
+First real-use finding on the Phase J card, and a good one: at 07:30 all five
+tiles read **"no data"**, because the phone had not uploaded the day yet.
+Correct behaviour, wrong design — he opens this screen between 5 and 7am and
+the sync happens later, so the strip was blank at exactly the hour he looks at
+it. DEPLOYED 07:43 IST, `app.py` sha256 `b4649026…`, 275,081 bytes,
+byte-identical to the repo build; `patch_gutlog_v3140.py`, 5 anchors.
+
+- A metric with no figure for today now shows **yesterday's, labelled
+  "yesterday"**. A fallback that is not labelled is a lie, so the label is on
+  the tile and in the card header.
+- **"No data" is reserved** for the case where neither day has a figure. That
+  is still a real state and still says so, and the fallback never reaches back
+  a second day.
+- The direction compares the **shown** day against the trailing median with
+  that day **excluded**. Leave it in and the figure is compared against a
+  median it is itself inside — which on a fallback day reads "level" every
+  single time.
+- Each tile carries **n**, the days behind the median, so a thin baseline is
+  visible as thin. **Deliberately not a plausibility threshold:** the steps
+  median currently sits near 1,200 because two days from before the source fix
+  are still inside the window. That self-corrects as the window moves, and a
+  heuristic written for it today would outlive the problem it was written for.
+- Standing load falls back on the same terms — at 5am an operating day has not
+  necessarily been tapped either.
+
+**Live immediately after the restart:** `exercise_minutes`, `resting_hr` and
+`hrv_ms` fell back to 13-Sep and were flagged stale, while `steps` showed a
+genuine 62 for today, `dir=down` against a median of 1,213.5 over **n=10**.
+The thin baseline, visible as thin, exactly as predicted.
+
+*Consequence worth knowing:* the fallback triggers on absence, and steps is
+the first metric to arrive each morning. So the strip is often **mixed** — a
+small genuine steps figure for today beside yesterday's HR and HRV. Every tile
+names the day it is showing, so this is legible rather than wrong, but it does
+mean the early-morning steps tile can read very low. Whether steps should also
+fall back while the day is young is a judgement, not a bug, and is left open.
+
+**Tests** — `test_phase_j.py` **22/22**, **18/22 against v3.13.0** (the four
+new cases failing and nothing else), and 22/22 under `RUN_AT_TIME.py` at
+05:05, 07:30, 23:58 and 00:02 — the fallback is clock-shaped and that is where
+the earlier clock bug lived. The median-exclusion case asserts the shown value
+is not equal to its own median, which is the failure mode it exists for.
+
+**A suite defect fixed while adding them.** A case that deleted today's
+metrics failed part-way, left them deleted, and case 15 then failed for a
+completely unrelated reason — one real failure presenting as two. Mutating
+cases now restore the fixture in a `finally`, so the negative control reports
+exactly the four cases that should fail.
+
 ## 2026-09-14 — Phase J: the watch display, and a line-ending trap closed
 
 **Fixed first — `.gitattributes` was handing out CRLF.** `* text=auto`

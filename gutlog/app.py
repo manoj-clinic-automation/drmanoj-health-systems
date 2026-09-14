@@ -271,7 +271,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.3"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH
+SCHEMA_VERSION = "3.3.3"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -2167,6 +2167,7 @@ def api_watch():
     except (TypeError, ValueError):
         days = 14
     tday = today()
+    yday = (date.today() - timedelta(days=1)).isoformat()
     since = (date.today() - timedelta(days=days - 1)).isoformat()
 
     feed = _link_get(FITLOG_URL + "/api/feed/watch?days=" + str(days), ttl=60)
@@ -2205,30 +2206,44 @@ def api_watch():
                     "ot_hours": (round(load[d] / 60.0, 1) if d in load else None),
                     "epoch": epoch_of(d)})
 
-    def history(metric):
-        out = []
-        for r in daily:
-            if r.get("date") == tday:
-                continue
-            m = (r.get("metrics") or {}).get(metric) or {}
-            if m.get("value") is not None:
-                out.append(float(m["value"]))
-        return out
-
-    tmets = (by_date.get(tday) or {}).get("metrics") or {}
-    strip = {}
+    # GUTLOG_V3140_FALLBACK -- one series per tile, the watch metrics from
+    # the feed and standing load from GutLog's own rows, so both go through
+    # the same fallback and the same median.
+    series = {}
     for k in WATCH_STRIP:
-        cur = tmets.get(k) or {}
+        s = {}
+        for r in daily:
+            m = (r.get("metrics") or {}).get(k)
+            if m and m.get("value") is not None:
+                s[r.get("date")] = m
+        series[k] = s
+    series["load_hours"] = dict(
+        (d, {"value": round(v / 60.0, 1), "source": "gutlog"})
+        for d, v in load.items())
+
+    strip = {}
+    for k in WATCH_STRIP + ("load_hours",):
+        s = series.get(k) or {}
+        # Today if it has a figure, else yesterday. He opens this between 5
+        # and 7am; the phone syncs later, so at the hour he actually looks
+        # today is usually still empty and a blank strip is correct and
+        # useless. Falling back is always labelled, never silent.
+        day = None
+        for cand in (tday, yday):
+            if s.get(cand) and s[cand].get("value") is not None:
+                day = cand
+                break
+        cur = s.get(day) or {}
         v = float(cur["value"]) if cur.get("value") is not None else None
-        d_, med, n = _direction(v, history(k))
+        # The median excludes the day being shown. Leave it in and the figure
+        # is compared against a median it is itself inside, which on a
+        # fallback day reads "level" every time.
+        hist = [float(x["value"]) for d2, x in s.items()
+                if d2 != day and x and x.get("value") is not None]
+        d_, med, n = _direction(v, hist)
         strip[k] = {"value": v, "source": cur.get("source") or "",
+                    "day": day or "", "stale": bool(day) and day != tday,
                     "dir": d_, "median": med, "n": n}
-    lh = load.get(tday)
-    d_, med, n = _direction(
-        (lh / 60.0) if lh is not None else None,
-        [v / 60.0 for k2, v in load.items() if k2 != tday])
-    strip["load_hours"] = {"value": (round(lh / 60.0, 1) if lh is not None else None),
-                           "source": "gutlog", "dir": d_, "median": med, "n": n}
 
     wk = [w for w in ((feed or {}).get("workouts") or []) if w.get("date", "") >= since]
     wk.sort(key=lambda w: (w.get("date", ""), w.get("start_hm", "")), reverse=True)
@@ -5039,10 +5054,13 @@ function wkTile(k,d){
     vv.textContent=wkNum(d.value,k)+(WK_UNIT[k]||'');
   }
   const bits=[];
+  if(d.stale)bits.push('yesterday');
   if(d.dir&&d.median!==null&&d.median!==undefined){
-    bits.push(WK_ARROW[d.dir]+' vs '+wkNum(d.median,k)+' median of '+d.n+'d');
+    bits.push(WK_ARROW[d.dir]+' vs '+wkNum(d.median,k)+' median of '+d.n+' d');
   }else if(d.value!==null&&d.value!==undefined){
-    bits.push('not enough history to compare');
+    /* n is shown either way, so a thin baseline is visible as thin rather
+       than quietly standing behind an arrow */
+    bits.push(d.n?('only '+d.n+' d of history'):'no history to compare');
   }
   if(d.source&&d.source!=='gutlog'&&d.value!==null&&d.value!==undefined){
     bits.push(d.source==='applewatch'?'watch':d.source);
@@ -5131,7 +5149,11 @@ async function loadWatch(){
   if(s.exercise_minutes&&s.exercise_minutes.value)
     sum.push(Math.round(s.exercise_minutes.value)+' min');
   if(s.load_hours&&s.load_hours.value)sum.push(s.load_hours.value+' h on legs');
-  $('#wkSum').textContent=sum.length?sum.join(' \u00b7 '):'no data today';
+  /* say so in the header too, or a fallback figure reads as today's */
+  const anyStale=['steps','exercise_minutes','load_hours','resting_hr','hrv_ms']
+    .some(k=>s[k]&&s[k].stale);
+  if(sum.length&&anyStale)sum.push('yesterday');
+  $('#wkSum').textContent=sum.length?sum.join(' \u00b7 '):'no data yet';
   $('#wkChart').appendChild(wkChart(j.row||[]));
   const ep=(j.epochs||[]).map(e=>e.label).filter(Boolean);
   if(ep.length){

@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.13.0)
+# GutLog — DOSSIER (v3.14.0)
 
 Single source of truth. Update after every change.
 
@@ -73,6 +73,24 @@ the join is the point, because load and pain were in different applications.
   replaced hip cannot meet is noise, and noise teaches you to ignore the
   screen. Fewer than three comparable days gives *no* direction rather than a
   flat one — "not enough to say" and "level" are different statements.
+- **It falls back one day (v3.14.0).** A metric with no figure for today shows
+  **yesterday's, labelled "yesterday"**. He opens this between 5 and 7am and
+  the phone syncs later, so the first real use found all five tiles reading
+  "no data" at 07:30 — correct, and useless at exactly the hour he looks.
+  "No data" is now reserved for the case where neither day has a figure.
+  The direction compares the **shown** day against the median with that day
+  **excluded**: leave it in and the figure is compared against a median it is
+  itself inside, which on a fallback day reads "level" every time.
+  Each tile also carries **n**, the number of days behind the median, so a
+  thin baseline is visible as thin. That is deliberately *not* a plausibility
+  threshold — as of 14-Sep the steps median sits near 1,200 because two days
+  from before the source fix are still in the window; it self-corrects as the
+  window moves, and a heuristic written for it would outlive it.
+  *Consequence worth knowing:* the fallback triggers on absence, and steps is
+  the first metric to arrive each morning, so the strip is often **mixed** —
+  a small genuine figure for steps today beside yesterday's HR and HRV. Every
+  tile says which day it is showing, so this is legible rather than wrong, but
+  it does mean the early-morning steps tile can read very low.
 - **Fourteen-day row** — one bar per day, steps; under it two thin lanes,
   one marking every day with a logged pain entry, one marking every operating
   day.
@@ -413,6 +431,26 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-14 v3.14.0 — the watch strip falls back one day. DEPLOYED 07:43
+  IST.** `app.py` sha256 `b4649026…`, 275,081 bytes, byte-identical to the
+  repo build. `patch_gutlog_v3140.py`, 5 anchors. First real-use finding on
+  the Phase J card: at 07:30 all five tiles read "no data" because the phone
+  had not uploaded yet — correct behaviour at exactly the wrong hour. A
+  metric with no figure for today now shows yesterday's, labelled; "no data"
+  means neither day has one; the direction excludes the shown day from its own
+  median; and every tile carries **n** so a thin baseline looks thin. No
+  plausibility threshold, deliberately.
+  Live immediately after: `exercise_minutes`, `resting_hr` and `hrv_ms` fell
+  back to 13-Sep and were flagged stale, while `steps` showed a genuine 62 for
+  today with `dir=down` against a median of 1,213.5 over **n=10** — the thin
+  baseline, now visible as thin.
+  `test_phase_j.py` **22/22** (18/22 against v3.13.0, the four new cases
+  failing), and 22/22 at 05:05, 07:30, 23:58 and 00:02. One suite defect fixed
+  while adding them: a case that deleted today's metrics and then failed left
+  them deleted and poisoned case 15. Mutating cases now restore the fixture in
+  a `finally`, so one real failure stays one failure. Rollback:
+  `app.py.bak-v3140-20260914_074206` or
+  `app.py.predeploy-v3140-20260914_074206`.
 - **2026-09-14 v3.13.0 — Phase J, the watch display. DEPLOYED 05:41 IST.**
   `app.py` sha256 `88ed0d85…`, 273,810 bytes, byte-identical to the repo
   build. `patch_gutlog_v3130.py`, 6 anchors; FitLog v1.5.0 alongside it.

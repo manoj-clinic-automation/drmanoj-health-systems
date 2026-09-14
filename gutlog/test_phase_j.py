@@ -169,6 +169,13 @@ def main():
     metric(D[2], "exercise_minutes", 20, "applewatch", "min")
     metric(D[2], "resting_hr", 60, "applewatch", "count/min")
     metric(D[2], "hrv_ms", 40, "applewatch", "ms")
+    # yesterday, with a figure unlike any other day's, so a fallback to it
+    # cannot be confused with a neighbour
+    YSTEPS = 6543
+    metric(D[1], "steps", YSTEPS, "applewatch", "count")
+    metric(D[1], "exercise_minutes", 22, "applewatch", "min")
+    metric(D[1], "resting_hr", 59, "applewatch", "count/min")
+    metric(D[1], "hrv_ms", 41, "applewatch", "ms")
     metric(TODAY, "steps", 9000, "applewatch", "count")
     metric(TODAY, "exercise_minutes", 35, "applewatch", "min")
     metric(TODAY, "resting_hr", 52, "applewatch", "count/min")
@@ -267,6 +274,113 @@ def main():
         assert j["strip"]["hrv_ms"]["dir"] == "up", str(j["strip"]["hrv_ms"])
         return ("steps up, resting HR down, HRV up -- each against its own "
                 "median of " + str(st["n"]) + " days")
+
+    def without_days(days_, fn):
+        """Run fn with those days' metrics removed, then put them back --
+        whatever happens.
+
+        2026-09-14: a case that deleted today's metrics failed mid-way, left
+        them deleted, and case 15 then failed for a completely unrelated
+        reason. A case that mutates the fixture must not be able to poison
+        the ones after it, or a single real failure turns into a screen of
+        noise and the actual finding is the one you stop reading at.
+        """
+        marks = ",".join("?" for _ in days_)
+        saved = fq("SELECT date,metric,value,unit,source,ingested_at FROM "
+                   "health_metrics WHERE date IN (" + marks + ")", tuple(days_))
+        try:
+            fq("DELETE FROM health_metrics WHERE date IN (" + marks + ")",
+               tuple(days_))
+            gl._LINK_CACHE.clear()
+            return fn()
+        finally:
+            for r in saved:
+                fq("INSERT OR REPLACE INTO health_metrics"
+                   "(date,metric,value,unit,source,ingested_at) "
+                   "VALUES(?,?,?,?,?,?)", tuple(r))
+            gl._LINK_CACHE.clear()
+
+    def t03b_strip_falls_back_to_yesterday():
+        """At 07:30 the phone has not uploaded yet, so today is empty and the
+        strip read "no data" at exactly the hour he looks at it. Yesterday's
+        figure, labelled, is the useful answer; an unlabelled one would be a
+        lie."""
+        def body():
+            j = watch()
+            st = j["strip"]["steps"]
+            assert st["value"] == YSTEPS, \
+                "the strip did not fall back to yesterday: " + str(st["value"])
+            assert st["stale"] is True and st["day"] == D[1], str(st)
+            assert st["source"] == "applewatch", \
+                "the fallback lost its source: " + str(st)
+            # every tile, not just steps -- all five were blank at 07:30
+            for k in ("exercise_minutes", "resting_hr", "hrv_ms"):
+                assert j["strip"][k]["value"] is not None, k + " is still blank"
+                assert j["strip"][k]["stale"] is True, k + " is not flagged stale"
+            assert j["row"][-1]["has_data"] is False, \
+                "the row must still say today itself has nothing"
+            return ("today empty -> yesterday's " + str(YSTEPS) +
+                    " shown on every tile, flagged stale, row unchanged")
+        return without_days([TODAY], body)
+
+    def t03c_median_excludes_the_day_being_shown():
+        """The bug this guards: a figure compared against a median it is
+        itself inside compares with itself, and every fallback day reads
+        level."""
+        def body():
+            j = watch()
+            st = j["strip"]["steps"]
+            assert st["day"] == D[1], "not in the fallback state: " + str(st)
+            vals = [r["steps"] for r in j["row"]
+                    if r["date"] not in (TODAY, D[1]) and r["steps"] is not None]
+            assert st["n"] == len(vals), \
+                "median is over %d days, expected %d with the shown day out" % (
+                    st["n"], len(vals))
+            assert st["median"] != st["value"], \
+                "the shown day is inside its own median, so it is being " \
+                "compared with itself"
+            assert st["dir"] is not None, "no direction at all on a fallback day"
+            assert st["dir"] == "up", \
+                str(YSTEPS) + " against a median of " + str(st["median"]) + \
+                " should read up, got " + str(st["dir"])
+            return ("median over " + str(st["n"]) + " days with the shown day "
+                    "excluded; " + str(YSTEPS) + " vs " + str(st["median"]) +
+                    " reads " + st["dir"])
+        return without_days([TODAY], body)
+
+    def t03d_no_data_only_when_neither_day_has_one():
+        def body():
+            j = watch()
+            st = j["strip"]["steps"]
+            assert st["value"] is None, \
+                "something was shown when neither day had a figure: " + str(st)
+            assert st["stale"] is False and st["day"] == "", str(st)
+            # and it never reaches back a second day: D[2] still has 5020
+            got = [r for r in j["row"] if r["date"] == D[2]][0]
+            assert got["steps"] is not None, \
+                "the fixture lost the day before yesterday"
+            return ("neither day -> no data, and it did not reach back to "
+                    "D-2, which still holds " + str(int(got["steps"])))
+        return without_days([TODAY, D[1]], body)
+
+    def t03e_the_tile_shows_how_thin_the_baseline_is():
+        """Deliberately not a plausibility threshold. Two days from before the
+        source fix are dragging the live median down; that self-corrects as
+        the window moves, and a heuristic written for it would outlive it. So
+        show n and let a thin baseline look thin."""
+        j = watch()
+        for k, d in j["strip"].items():
+            assert "n" in d, k + " carries no n"
+            assert isinstance(d["n"], int) and d["n"] >= 0, str(d)
+        src = open(gut_path, encoding="utf-8", newline="").read()
+        blk = src.split("GUTLOG_V3140_FALLBACK", 1)[1][:4000]
+        for bad in ("implausible", "MIN_STEPS", "> 100", "plausib"):
+            assert bad not in blk, "a plausibility threshold crept in: " + bad
+        h = gc.get("/").get_data(as_text=True)
+        assert "d of history" in h and "median of '+d.n+' d'" in h, \
+            "n is not rendered on the tile, with or without an arrow"
+        return ("every tile carries n and the page prints it; no threshold "
+                "anywhere in the new block")
 
     def t04_no_verdict_anywhere():
         """Inputs, not conclusions. No score, no readiness, no recovery."""
@@ -472,6 +586,10 @@ def main():
         ("01 no ingestion path was added", t01_no_ingestion_path_was_added),
         ("02 strip carries every figure", t02_strip_carries_every_figure_asked_for),
         ("03 direction is against his own median", t03_direction_is_against_his_own_median),
+        ("03b strip falls back to yesterday", t03b_strip_falls_back_to_yesterday),
+        ("03c median excludes the shown day", t03c_median_excludes_the_day_being_shown),
+        ("03d no data only when neither day has one", t03d_no_data_only_when_neither_day_has_one),
+        ("03e the tile shows how thin the baseline is", t03e_the_tile_shows_how_thin_the_baseline_is),
         ("04 no verdict anywhere", t04_no_verdict_anywhere),
         ("05 'not enough to say' is not 'level'", t05_a_level_day_is_not_a_missing_day),
         ("06 row spans the window, ends today", t06_row_spans_the_window_and_ends_today),
