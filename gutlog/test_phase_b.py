@@ -34,6 +34,8 @@ def load_app(app_path, workdir):
     os.environ["GUTLOG_INSECURE"] = "1"
     os.environ["GUTLOG_SECRET"] = "test-secret-not-real"
     os.environ["GUTLOG_ICONS"] = os.path.dirname(os.path.abspath(app_path))
+    # never mint the feed token beside app.py -- that is inside a public repo
+    os.environ["GUTLOG_FEED_TOKEN_FILE"] = os.path.join(workdir, "feed.token")
     sys.path.insert(0, os.path.dirname(os.path.abspath(app_path)))
     spec = importlib.util.spec_from_file_location("gutlog_app_b", app_path)
     mod = importlib.util.module_from_spec(spec)

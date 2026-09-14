@@ -1,0 +1,26 @@
+{
+  "_": [
+    "Phase M, browser side. The down-day block in test_ui_now.py. Against the",
+    "reconstructed v3.16.0 there is no #nowDown, so the guard emits every",
+    "named property as a failure rather than skipping (the operating-day",
+    "treatment), and each one is seen failing there."
+  ],
+  "suite": "test_ui_now.py",
+  "app": "app.py",
+  "patcher": "patch_gutlog_v3170.py",
+  "assertions": [
+    {"name": "the down-day card is on the Now screen with one primary tap", "control": "version"},
+    {"name": "one tap marks today and the card reads marked today", "control": "version"},
+    {"name": "the mark went through the page's own fetch, not a service worker", "control": "version"},
+    {"name": "a component chip saves on tap and survives a reload", "control": "version"},
+    {"name": "the temperature prompt is the only active ask and not-now silences it", "control": "version"},
+    {"name": "the watch chart carries a down-day lane and names it in the key", "control": "version"},
+    {"name": "nothing inside the down-day card is smaller than 14px", "control": "version"},
+    {"name": "the down-day card renders no third-person pronoun", "control": "version"},
+    {"name": "nothing inside the down-day card is smaller than 14px in dark mode", "control": "version"},
+    {"name": "every text colour in the down-day card clears its floor in dark mode", "control": "version"},
+    {"name": "the Review tab has a Down days view that counts the marked day", "control": "version"},
+    {"name": "the Down days view puts the marked day beside the day before it", "control": "version"},
+    {"name": "unmarking restores the one-tap control", "control": "version"}
+  ]
+}

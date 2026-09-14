@@ -1,0 +1,33 @@
+{
+  "_": [
+    "Phase M, server side. Every case in test_phase_m.py is new and fails",
+    "against the reconstructed v3.16.0 (no down_days table, no /api/downday),",
+    "except case 19: it re-instantiates test_phase_j's clinical-term guard over",
+    "the new code, is unchanged in kind, and cannot be shown failing without",
+    "naming a real term in this public file. It is therefore NOT declared as",
+    "evidence -- see the Phase M report."
+  ],
+  "suite": "test_phase_m.py",
+  "app": "app.py",
+  "patcher": "patch_gutlog_v3170.py",
+  "assertions": [
+    {"name": "01 table exists after one request", "control": "version"},
+    {"name": "02 one tap marks today", "control": "version"},
+    {"name": "03 marking twice corrects", "control": "version"},
+    {"name": "04 three consecutive days are one run", "control": "version"},
+    {"name": "05 a gap of one day makes two runs", "control": "version"},
+    {"name": "06 a down day with no components", "control": "version"},
+    {"name": "07 a temperature reaches vitals", "control": "version"},
+    {"name": "08 an analgesic chip writes exactly one doses row", "control": "version"},
+    {"name": "09 the third consecutive day surfaces the flare protocol", "control": "version"},
+    {"name": "10 the 14-day row carries a down-day lane", "control": "version"},
+    {"name": "11 past days backfill", "control": "version"},
+    {"name": "12 unmark removes the row", "control": "version"},
+    {"name": "13 the down-day feed is bearer-gated", "control": "version"},
+    {"name": "14 each down day sits beside the day before it", "control": "version"},
+    {"name": "15 what he did is reported against run length", "control": "version"},
+    {"name": "16 FitLog's trend leaves the down day out", "control": "version"},
+    {"name": "17 Python 3.9 syntax, Jinja-clean JS, page renders", "control": "version"},
+    {"name": "18 no third-person pronoun", "control": "version"}
+  ]
+}

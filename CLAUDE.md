@@ -13,9 +13,9 @@ Clinic automation lives separately in `drmanoj-clinic-automation` — do not mix
 ## Apps & ports
 | App | Subdomain | Port | DB (live path) |
 |---|---|---|---|
-| GutLog v3.16.0 | health.dr-manoj.in | 8020 | /root/gutlog/health3.db |
-| RxGuard v1.1.0 | rx.dr-manoj.in | 8031 | /root/rxguard/ |
-| FitLog v1.1.0 + Phase 3.5 | fit.dr-manoj.in | 8040 | /root/fitlog/fitlog.db (verified on server 2026-09-10) |
+| GutLog v3.17.0 | health.dr-manoj.in | 8020 | /root/gutlog/health3.db |
+| RxGuard v1.6.0 | rx.dr-manoj.in | 8031 | /root/rxguard/ |
+| FitLog v1.6.0 | fit.dr-manoj.in | 8040 | /root/fitlog/fitlog.db (verified on server 2026-09-10) |
 
 ## Non-negotiable conventions
 1. **Deterministic engines only** in safety/decision paths — rules as JSON knowledge files, no LLM calls in analysis. Every decision surfaces which named rules fired.

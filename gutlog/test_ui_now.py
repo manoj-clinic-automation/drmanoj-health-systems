@@ -38,7 +38,7 @@ at 390px *or* 360px, one full-width hero over two-per-row tiles, every tile
 naming its own day, and no third-person pronoun in any rendered string. The
 last is a real guard, not pedantry -- "On his legs" reached the screen from a
 brief written about him rather than to him."""
-import importlib.util, os, sys, tempfile, threading, time
+import importlib.util, os, re, sys, tempfile, threading, time
 from werkzeug.serving import make_server
 from playwright.sync_api import sync_playwright
 
@@ -449,6 +449,7 @@ with sync_playwright() as p:
         "the no-data day says so on hover",
         "exactly the logged pain day is marked",
         "exactly the operating day is marked",
+        "the watch chart carries a down-day lane and names it in the key",
         "the epoch band has a boundary inside the window",
         "the today strip has its tiles",
         "a metric with no figure today reads 'no data'",
@@ -482,7 +483,7 @@ with sync_playwright() as p:
         import json as _wj
         _days = [(_dt.date.today() - _dt.timedelta(days=n)).isoformat()
                  for n in range(13, -1, -1)]
-        _pain, _ot, _epstart = _days[3], _days[5], _days[7]
+        _pain, _ot, _epstart, _down = _days[3], _days[5], _days[7], _days[9]
         _row = []
         for i, d in enumerate(_days):
             nodata = (i == 2)
@@ -491,7 +492,7 @@ with sync_playwright() as p:
                 "steps": None if nodata else 4000 + i * 100,
                 "source": "" if nodata else ("healthconnect" if i == 6 else "applewatch"),
                 "has_data": not nodata,
-                "pain": d == _pain, "ot": d == _ot,
+                "pain": d == _pain, "ot": d == _ot, "down": d == _down,
                 "ot_hours": 8.0 if d == _ot else None,
                 "epoch": "test epoch alpha" if d >= _epstart else ""})
         _payload = {
@@ -565,6 +566,13 @@ with sync_playwright() as p:
         res(marks.count() == 1, "exactly the logged pain day is marked")
         ots = pg.locator("#wkChart .wklane.ot .mk.on")
         res(ots.count() == 1, "exactly the operating day is marked")
+        # v3.17.0: a third lane, a square, so it is never colour-alone
+        dns = pg.locator("#wkChart .wklane.down .mk.on")
+        _keytxt = pg.locator("#wkChart .wkkey").inner_text() if pg.locator("#wkChart .wkkey").count() else ""
+        res(dns.count() == 1 and "down day" in _keytxt,
+            "the watch chart carries a down-day lane and names it in the key"
+            + ("" if (dns.count() == 1 and "down day" in _keytxt)
+               else " -- marks %d, key %s" % (dns.count(), "down day" in _keytxt)))
         segs = pg.locator("#wkChart .wkep .seg.on")
         res(0 < segs.count() < len(_row),
             "the epoch band has a boundary inside the window")
@@ -752,6 +760,132 @@ with sync_playwright() as p:
         pg.locator('.seg[data-seg="files"] button[data-s="reports"]').click(); time.sleep(0.8)
         pg.locator("#rdList .rd-row", has_text="Auto CBC").first.locator(".rd-ok").click(); time.sleep(0.8)
         res(pg.locator("#rdList .rd-row", has_text="Auto CBC").first.locator(".rd-auto").count() == 0, "Looks right clears the badge")
+    # --- v3.17.0: the down-day card -------------------------------------
+    # One tap marks today; everything else is optional and saves as it is
+    # tapped. GutLog-only, so no stub: the real endpoint answers, and a route
+    # counter proves the call went through the page's own fetch rather than
+    # through a service worker (see the docstring).
+    _dhits = {"n": 0}
+
+    def _down_route(route):
+        _dhits["n"] += 1
+        route.continue_()
+    pg.route("**/api/downday*", _down_route)
+
+    # The scratch server answers in the better part of a second, so a fixed
+    # sleep after a tap reads the card before the round trip lands. Wait for
+    # the state instead, and turn a timeout into a failure, not a crash.
+    def _wait(js, ms=8000):
+        try:
+            pg.wait_for_function(js, timeout=ms)
+            return True
+        except Exception:
+            return False
+
+    def _to_now():
+        # a clean "/", not reload(): the records section leaves the page at
+        # /?open=records, whose deep-link handler re-opens Records after the
+        # Now click lands, leaving the card intact but inside a hidden tab
+        pg.goto(B + "/")
+        _wait("() => document.querySelector('nav button[data-t=\"now\"]') !== null")
+        pg.click('nav button[data-t="now"]')
+        _wait("() => document.getElementById('nowDown') !== null && "
+              "document.getElementById('downSum') !== null")
+        # today is marked at every point this is called, so the card is only
+        # painted once its chips exist; the button being visible is merely the
+        # markup's default and says nothing about whether the GET has landed
+        _wait("() => document.querySelectorAll('#downComp .chip').length > 0")
+    set_theme(pg, "system")
+    pg.set_viewport_size({"width": 390, "height": 844})
+    pg.goto(B + "/"); time.sleep(1.0)
+    pg.click('nav button[data-t="now"]'); time.sleep(0.5)
+    _card = pg.locator("#nowDown")
+    _mark = pg.locator("#downMark")
+    res(_card.count() == 1 and _mark.count() == 1 and _mark.is_visible()
+        and pg.locator("#downMore").is_hidden(),
+        "the down-day card is on the Now screen with one primary tap"
+        + ("" if _card.count() else " -- no #nowDown on this build"))
+    if _card.count():
+        _mark.click()
+        _wait("() => document.getElementById('downSum').textContent.trim() !== ''")
+        _sum = pg.locator("#downSum").inner_text().strip()
+        res(_sum == "marked today" and _mark.is_hidden() and pg.locator("#downMore").is_visible(),
+            "one tap marks today and the card reads marked today"
+            + ("" if _sum == "marked today" else " -- read '" + _sum + "'"))
+        res(_dhits["n"] >= 1, "the mark went through the page's own fetch, not a service worker"
+            + ("" if _dhits["n"] else " -- 0 hits"))
+        pg.locator("#downComp .chip", has_text="Fatigue").click()
+        _wait("() => document.querySelectorAll('#downComp .chip.sel').length === 1")
+        _to_now()
+        _sel = pg.locator("#downComp .chip.sel").all_inner_texts()
+        res(_sel == ["Fatigue"], "a component chip saves on tap and survives a reload"
+            + ("" if _sel == ["Fatigue"] else " -- selected: " + str(_sel)))
+        # measured from the DOM rather than through Locator.is_visible(), which
+        # read false here once while the element had a 346x181 box
+        _JS_TEMP = ("() => { const e=document.querySelector('#downTemp .dwtemp');"
+                    " const r=e?e.getBoundingClientRect():null;"
+                    " return {n:document.querySelectorAll('#downTemp .dwtemp').length,"
+                    " shown:!!(e && e.offsetParent!==null && r && r.height>0),"
+                    " inputs:document.querySelectorAll('#downMore input').length}; }")
+        _t0 = pg.evaluate(_JS_TEMP)
+        _had = _t0["n"] == 1 and _t0["shown"]
+        if _had:
+            pg.locator("#downTemp .nn").click(); time.sleep(0.3)
+        _t1 = pg.evaluate(_JS_TEMP)
+        _to_now()
+        _t2 = pg.evaluate(_JS_TEMP)
+        _okt = _had and _t0["inputs"] == 1 and _t1["n"] == 0 and _t2["n"] == 0
+        res(_okt, "the temperature prompt is the only active ask and not-now silences it"
+            + ("" if _okt else " -- before %s, after not-now %s, after reload %s" % (_t0, _t1, _t2)))
+        _ds = pg.evaluate(_JS_SMALL, "#nowDown")
+        res(not _ds, "nothing inside the down-day card is smaller than 14px"
+            + ("" if not _ds else ": " + ", ".join(_ds[:5])))
+        _txt = pg.locator("#nowDown").inner_text()
+        _third = re.search(r"\b(his|him|he)\b", _txt, re.I)
+        res(not _third, "the down-day card renders no third-person pronoun"
+            + ("" if not _third else " -- " + _third.group(0)))
+        set_theme(pg, "dark")
+        _dds = pg.evaluate(_JS_SMALL, "#nowDown")
+        res(not _dds, "nothing inside the down-day card is smaller than 14px in dark mode"
+            + ("" if not _dds else ": " + ", ".join(_dds[:5])))
+        _dcb = pg.evaluate(_JS_CONTRAST, "#nowDown")
+        res(not _dcb, "every text colour in the down-day card clears its floor in dark mode"
+            + ("" if not _dcb else ": " + "; ".join(_dcb[:4])))
+        set_theme(pg, "system")
+        pg.click('nav button[data-t="review"]')
+        _wait("() => document.getElementById('ddSum') && "
+              "document.getElementById('ddSum').textContent.trim() !== 'tap to open'")
+        _dd = pg.locator("#ddSum").inner_text().strip() if pg.locator("#ddSum").count() else ""
+        res(_dd.startswith("1 in "), "the Review tab has a Down days view that counts the marked day"
+            + ("" if _dd.startswith("1 in ") else " -- read '" + _dd + "'"))
+        if pg.locator("#downView .fold-h").count():
+            pg.locator("#downView .fold-h").click(); time.sleep(0.5)
+        _body = pg.locator("#ddBody").inner_text() if pg.locator("#ddBody").count() else ""
+        res("beside the day before" in _body and "Fatigue" in _body,
+            "the Down days view puts the marked day beside the day before it"
+            + ("" if "beside the day before" in _body else " -- body: " + _body[:80]))
+        pg.click('nav button[data-t="now"]')
+        _wait("() => document.getElementById('downUnmark') && "
+              "document.getElementById('downUnmark').offsetParent !== null")
+        pg.locator("#downUnmark").click()
+        _wait("() => !document.getElementById('downMark').hidden")
+        res(pg.locator("#downMark").is_visible() and pg.locator("#downMore").is_hidden(),
+            "unmarking restores the one-tap control")
+    else:
+        for _m in ("one tap marks today and the card reads marked today",
+                   "the mark went through the page's own fetch, not a service worker",
+                   "a component chip saves on tap and survives a reload",
+                   "the temperature prompt is the only active ask and not-now silences it",
+                   "nothing inside the down-day card is smaller than 14px",
+                   "the down-day card renders no third-person pronoun",
+                   "nothing inside the down-day card is smaller than 14px in dark mode",
+                   "every text colour in the down-day card clears its floor in dark mode",
+                   "the Review tab has a Down days view that counts the marked day",
+                   "the Down days view puts the marked day beside the day before it",
+                   "unmarking restores the one-tap control"):
+            res(False, _m + " -- no down-day card on this build")
+    pg.unroute("**/api/downday*")
+
     # --- v3.16.0: .hint is app-wide, so it is checked app-wide --------------
     # Every screen that carries a hint, at the two widths he actually holds:
     # 390px (iPhone 14/15) and 360px (the narrowest Android still in use).

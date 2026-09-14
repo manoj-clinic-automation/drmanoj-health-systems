@@ -126,6 +126,9 @@ CREATE TABLE IF NOT EXISTS rec_labs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT, test TEXT, section TEXT, value TEXT, num REAL,
   unit TEXT, ref TEXT, flag INTEGER DEFAULT 0, lab TEXT, created TEXT, origin TEXT DEFAULT '', doc_id INTEGER,
   UNIQUE(day, test, lab));
+CREATE TABLE IF NOT EXISTS down_days (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT UNIQUE, components TEXT DEFAULT '',
+  coped TEXT DEFAULT '', note TEXT DEFAULT '', created TEXT);
 CREATE TABLE IF NOT EXISTS rec_plan (
   id INTEGER PRIMARY KEY AUTOINCREMENT, pos INTEGER, test TEXT UNIQUE, why TEXT, timing TEXT,
   status TEXT DEFAULT 'planned', done_day TEXT DEFAULT '', note TEXT DEFAULT '');
@@ -271,7 +274,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.3"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK
+SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -350,6 +353,13 @@ def _migrate(con):
 
     for stmt in _V330_INDEXES:
         con.execute(stmt)
+
+    # -- GUTLOG_V3170_DOWN: a down day is a calendar day, so it gets its
+    # own table rather than an episodes row. Idempotent, like the rest.
+    con.execute("CREATE TABLE IF NOT EXISTS down_days ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT UNIQUE, "
+                "components TEXT DEFAULT '', coped TEXT DEFAULT '', "
+                "note TEXT DEFAULT '', created TEXT)")
 
     # -- normalise legacy free-text dose rows to prnmeds ---------------
     con.execute("UPDATE doses SET status='TAKEN' "
@@ -1226,6 +1236,13 @@ def api_dayview():
                 str(r["sys"] or "-") + "/" + str(r["dia"] or "-"), " · ".join(parts))
         else:
             add("vitals", r["id"], r["vtime"], "Vitals", "Vitals", " · ".join(parts))
+    dd = _down_row(day)
+    if dd:
+        n, run = _down_run_of(day)
+        sub = ", ".join(dd["components"]) or "no components noted"
+        if run and run["length"] > 1:
+            sub = "day " + str(n) + " of " + str(run["length"]) + " \u00b7 " + sub
+        add("down_days", 0, "", "Down day", "Down day", sub, down=True)
     for r in db().execute(
             "SELECT id, mtime, slot, items, protein FROM meals WHERE day=?",
             (day,)).fetchall():
@@ -1960,6 +1977,105 @@ for _pa in _local_seed("pain_analgesics"):
         PAIN_TREATMENTS.append(_pa[0])
 
 
+# GUTLOG_V3170_DOWN -- the down-day cluster as the record describes it, not a
+# generic symptom list, and what was done about it. The two medicine chips
+# are the analgesic labels from regimen.local.json: this file names no
+# medicine.
+DOWN_COMPONENTS = ["Hip / thigh ache", "Left abdominal pain", "Fatigue",
+                   "Feverishness", "Heavy head / headache",
+                   "Eyes burning or watering", "Broken sleep", "Low mood"]
+DOWN_COPED_BASE = ["Kept moving indoors", "Rested", "Skipped exercise",
+                   "Worked anyway", "Heat pad", "Hot shower", "NormaTec"]
+DOWN_COPED = DOWN_COPED_BASE + list(PAIN_ANALGESICS.keys())
+DOWN_MOVED, DOWN_RESTED = "Kept moving indoors", "Rested"
+
+# Verbatim from the Action Plan's flare protocol. A note, not an alarm, and
+# not advice: it repeats what his own plan already says, on the day it says
+# to do it.
+DOWN_PROTOCOL = ("Third day of this run; your flare protocol asks for "
+                 "calprotectin and ESR/CRP within 48 hours.")
+
+
+def _log_analgesics(labels, day, hm, reason, score, ref):
+    """Write one doses row per analgesic chip and mirror each to FitLog with
+    the score attached. Shared by the pain tiles and the down-day card, so a
+    medicine is recorded the same way whichever surface it was tapped on.
+    Returns (doses, mirrored, not_mirrored, linked)."""
+    doses, mirrored, missed = [], [], []
+    linked = _links_enabled()
+    for t in labels:
+        if t not in PAIN_ANALGESICS:
+            continue
+        mol, fallback = PAIN_ANALGESICS[t]
+        mid, name = _pain_med(mol, fallback)
+        db().execute(
+            "INSERT INTO doses(day,dtime,medicine,reason,effect,notes,created,"
+            "status,med_id,sched_id,dose_text) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (day, hm, name, reason, None, "", now_s(), "EXTRA", mid, None, ""))
+        db().commit()
+        doses.append(name)
+        if not linked:
+            continue
+        ans = _link_post(FITLOG_URL + "/api/analgesic",
+                         {"dt": day + "T" + hm, "molecule": mol, "name": name,
+                          "dose_label": name, "pain_at_time": score,
+                          "notes": "GutLog: " + reason, "source": "gutlog",
+                          "ref": ref + "-" + t.lower().replace(" ", "-")})
+        (mirrored if (ans or {}).get("ok") else missed).append(name)
+    return doses, mirrored, missed, linked
+
+
+def _down_runs(days):
+    """Consecutive calendar days grouped into runs. Computed every time it is
+    read: date arithmetic on the stored days, nothing stored about the run."""
+    out = []
+    for d in sorted(set(days)):
+        try:
+            cur = date.fromisoformat(d)
+        except ValueError:
+            continue
+        if out and (cur - date.fromisoformat(out[-1]["end"])).days == 1:
+            out[-1]["end"] = d
+            out[-1]["days"].append(d)
+        else:
+            out.append({"start": d, "end": d, "days": [d]})
+    for r in out:
+        r["length"] = len(r["days"])
+    return out
+
+
+def _down_all_days():
+    return [r["day"] for r in db().execute(
+        "SELECT day FROM down_days ORDER BY day").fetchall()]
+
+
+def _down_run_of(day):
+    """(position in its run, the run) for a marked day; (0, None) otherwise."""
+    for r in _down_runs(_down_all_days()):
+        if day in r["days"]:
+            return r["days"].index(day) + 1, r
+    return 0, None
+
+
+def _split_pipe(s):
+    return [x for x in (s or "").split("|") if x]
+
+
+def _down_row(day):
+    r = db().execute("SELECT day, components, coped, note FROM down_days WHERE day=?",
+                     (day,)).fetchone()
+    if not r:
+        return None
+    return {"day": r["day"], "components": _split_pipe(r["components"]),
+            "coped": _split_pipe(r["coped"]), "note": r["note"] or ""}
+
+
+def _temp_on(day):
+    r = db().execute("SELECT temp, vtime FROM vitals WHERE day=? AND temp IS NOT NULL "
+                     "ORDER BY vtime DESC, id DESC LIMIT 1", (day,)).fetchone()
+    return {"value": r["temp"], "vtime": r["vtime"] or ""} if r else None
+
+
 def _link_post(url, payload, timeout=3):
     """POST JSON to a companion app carrying the feed token. Never raises;
     returns the decoded answer, or None when links are off or the other app
@@ -2054,29 +2170,241 @@ def api_pain():
             "|".join(treats), radiates])
     eid = db().execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
 
-    doses, mirrored, missed = [], [], []
-    linked = _links_enabled()
-    for t in treats:
-        if t not in PAIN_ANALGESICS:
-            continue
-        mol, fallback = PAIN_ANALGESICS[t]
-        mid, name = _pain_med(mol, fallback)
-        db().execute(
-            "INSERT INTO doses(day,dtime,medicine,reason,effect,notes,created,"
-            "status,med_id,sched_id,dose_text) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (day, etime, name, meta[1], None, "", now_s(), "EXTRA", mid, None, ""))
-        db().commit()
-        doses.append(name)
-        if not linked:
-            continue
-        ans = _link_post(FITLOG_URL + "/api/analgesic",
-                         {"dt": day + "T" + etime, "molecule": mol, "name": name,
-                          "dose_label": name, "pain_at_time": score,
-                          "notes": "GutLog: " + meta[1], "source": "gutlog",
-                          "ref": "gutlog-episode-" + str(eid)})
-        (mirrored if (ans or {}).get("ok") else missed).append(name)
+    doses, mirrored, missed, linked = _log_analgesics(
+        treats, day, etime, meta[1], score, "gutlog-episode-" + str(eid))
     return jsonify(ok=True, id=eid, site=meta[1], side=meta[2], radiates=radiates,
                    doses=doses, mirrored=mirrored, not_mirrored=missed, linked=linked)
+
+
+# ------------------------------------------------------------------ down days
+# GUTLOG_V3170_DOWN
+def _down_state(day):
+    row = _down_row(day)
+    n, run = _down_run_of(day) if row else (0, None)
+    proto = ""
+    if run and n >= 3:
+        proto = DOWN_PROTOCOL if n == 3 else (
+            "Day " + str(n) + " of this run; your flare protocol asks for "
+            "calprotectin and ESR/CRP within 48 hours.")
+    return {"day": day, "marked": bool(row),
+            "components": row["components"] if row else [],
+            "coped": row["coped"] if row else [],
+            "note": row["note"] if row else "",
+            "run": ({"n": n, "length": run["length"], "start": run["start"],
+                     "end": run["end"]} if run else None),
+            "protocol": proto, "temp": _temp_on(day),
+            "components_all": DOWN_COMPONENTS, "coped_all": DOWN_COPED}
+
+
+@app.route("/api/downday")
+@login_required
+def api_downday():
+    day = _valid_day(request.args.get("day")) or today()
+    return jsonify(ok=True, **_down_state(day))
+
+
+@app.route("/api/downday", methods=["POST"])
+@login_required
+def api_downday_set():
+    """Mark a day. With no body beyond the day it is one tap; components,
+    coped and temp are each optional and each may arrive on its own later.
+    day is UNIQUE, so a repeat corrects the row rather than adding one."""
+    d = J()
+    day = _valid_day(d.get("day") or today())
+    if not day:
+        return jsonify(ok=False, err="Pick a real date, not in the future."), 400
+    before = _down_row(day) or {"components": [], "coped": [], "note": ""}
+    comps = before["components"]
+    if "components" in d:
+        comps = [c for c in (d.get("components") or []) if c in DOWN_COMPONENTS]
+    coped = before["coped"]
+    if "coped" in d:
+        coped = [c for c in (d.get("coped") or []) if c in DOWN_COPED]
+    nt = before["note"] if "note" not in d else note(d)
+    db().execute(
+        "INSERT INTO down_days(day,components,coped,note,created) VALUES(?,?,?,?,?) "
+        "ON CONFLICT(day) DO UPDATE SET components=excluded.components, "
+        "coped=excluded.coped, note=excluded.note",
+        (day, "|".join(comps), "|".join(coped), nt, now_s()))
+    db().commit()
+
+    # A medicine chip writes a real doses row -- once. Only chips that were
+    # not already on the stored row are logged, so correcting the row cannot
+    # record the same tablet twice.
+    new_meds = [c for c in coped if c in PAIN_ANALGESICS and c not in before["coped"]]
+    hm = now_hm() if day == today() else "12:00"
+    doses, mirrored, missed, linked = _log_analgesics(
+        new_meds, day, hm, "Down day", None, "gutlog-down-" + day)
+
+    # Temperature is a vitals row, never a column here.
+    temp_saved = None
+    if d.get("temp") not in (None, ""):
+        try:
+            tv = float(d.get("temp"))
+        except (TypeError, ValueError):
+            tv = None
+        if tv is not None and 30 <= tv <= 115:
+            vt = _valid_hm(d.get("vtime")) or (now_hm() if day == today() else "12:00")
+            insert("vitals", ["day", "vtime", "sys", "dia", "pulse", "weight", "waist",
+                              "temp", "notes"],
+                   [day, vt, None, None, None, None, None, tv, "Down day"])
+            temp_saved = tv
+    st = _down_state(day)
+    st.update(ok=True, doses=doses, mirrored=mirrored, not_mirrored=missed,
+              linked=linked, temp_saved=temp_saved)
+    return jsonify(**st)
+
+
+@app.route("/api/downday/unmark", methods=["POST"])
+@login_required
+def api_downday_unmark():
+    d = J()
+    day = _valid_day(d.get("day") or today())
+    if not day:
+        return jsonify(ok=False, err="Pick a real date."), 400
+    db().execute("DELETE FROM down_days WHERE day=?", (day,))
+    db().commit()
+    return jsonify(ok=True, **_down_state(day))
+
+
+@app.route("/api/feed/downdays")
+@feed_required
+def api_feed_downdays():
+    """Read-only, for FitLog: which days were down days, so its trend can
+    leave them out instead of reading them as non-adherence."""
+    since = _feed_since(60)
+    rows = [dict(day=r["day"], components=_split_pipe(r["components"]),
+                 coped=_split_pipe(r["coped"]))
+            for r in db().execute(
+                "SELECT day, components, coped FROM down_days WHERE day>=? ORDER BY day",
+                (since,)).fetchall()]
+    return jsonify(ok=True, app="gutlog", since=since, days=rows,
+                   runs=_down_runs([r["day"] for r in rows]))
+
+
+def _act_minutes_by_day(since):
+    marks = ",".join("?" for _ in LOAD_KINDS)
+    rows = db().execute(
+        "SELECT day, SUM(minutes) AS m FROM activities "
+        "WHERE kind NOT IN (" + marks + ") AND day>=? GROUP BY day",
+        tuple(LOAD_KINDS) + (since,)).fetchall()
+    return dict((r["day"], float(r["m"] or 0)) for r in rows)
+
+
+@app.route("/api/downdays")
+@login_required
+def api_downdays():
+    """The view. Everything here is read from rows that already exist; the
+    down-day marks are the only new fact, and they make the rest comparable."""
+    try:
+        days_n = max(7, min(365, int(request.args.get("days") or 90)))
+    except (TypeError, ValueError):
+        days_n = 90
+    since = (date.today() - timedelta(days=days_n)).isoformat()
+    # one day earlier than the window, so the oldest down day has a "before"
+    since_b = (date.today() - timedelta(days=days_n + 1)).isoformat()
+    marked = [dict(day=r["day"], components=_split_pipe(r["components"]),
+                   coped=_split_pipe(r["coped"]), note=r["note"] or "")
+              for r in db().execute(
+                  "SELECT day, components, coped, note FROM down_days "
+                  "WHERE day>=? ORDER BY day", (since,)).fetchall()]
+    mdays = [m["day"] for m in marked]
+    runs = _down_runs(mdays)
+
+    # ---- what already exists for every day in the window ----------------
+    feed = _link_get(FITLOG_URL + "/api/feed/watch?days=" + str(min(180, days_n + 2)),
+                     ttl=60)
+    linked = bool((feed or {}).get("ok"))
+    by_date = dict((x.get("date"), x) for x in ((feed or {}).get("daily") or []))
+    epochs = (feed or {}).get("epochs") or []
+    load = _watch_load_by_day(since_b)
+    act = _act_minutes_by_day(since_b)
+    sleep = dict((r["day"], r["sleep"]) for r in db().execute(
+        "SELECT day, sleep FROM days WHERE day>=?", (since_b,)).fetchall())
+    doses = dict((r["day"], r["n"]) for r in db().execute(
+        "SELECT day, COUNT(*) AS n FROM doses WHERE day>=? "
+        "AND COALESCE(status,'')<>'SKIPPED' GROUP BY day", (since_b,)).fetchall())
+    temps = {}
+    for r in db().execute(
+            "SELECT day, temp, vtime FROM vitals WHERE day>=? AND temp IS NOT NULL "
+            "ORDER BY day, vtime", (since_b,)).fetchall():
+        temps[r["day"]] = {"value": r["temp"], "vtime": r["vtime"] or ""}
+
+    def epoch_of(d):
+        for e in epochs:
+            s, en = e.get("date_start") or "", e.get("date_end") or ""
+            if s and d < s:
+                continue
+            if en and d > en:
+                continue
+            return e.get("label") or ""
+        return ""
+
+    def facts(d):
+        m = (by_date.get(d) or {}).get("metrics") or {}
+        st = m.get("steps") or {}
+        sl = m.get("sleep_hours") or {}
+        return {"day": d,
+                "steps": st.get("value"),
+                "load_h": (round(load[d] / 60.0, 1) if d in load else None),
+                "act_min": (round(act[d]) if d in act else None),
+                "sleep": (sl.get("value") if sl.get("value") is not None
+                          else (sleep.get(d) or None)),
+                "doses": doses.get(d, 0),
+                "temp": (temps.get(d) or {}).get("value"),
+                "epoch": epoch_of(d)}
+
+    pairs = []
+    for m in marked:
+        b = (date.fromisoformat(m["day"]) - timedelta(days=1)).isoformat()
+        pairs.append({"day": m["day"], "before": b, "d": facts(m["day"]),
+                      "b": facts(b), "components": m["components"],
+                      "coped": m["coped"]})
+
+    # ---- per month --------------------------------------------------------
+    months = {}
+    for m in marked:
+        months.setdefault(m["day"][:7], {"month": m["day"][:7], "n": 0, "runs": []})
+        months[m["day"][:7]]["n"] += 1
+    for r in runs:
+        months.setdefault(r["start"][:7], {"month": r["start"][:7], "n": 0, "runs": []})
+        months[r["start"][:7]]["runs"].append(r["length"])
+    months = [months[k] for k in sorted(months)]
+
+    # ---- co-occurrence ----------------------------------------------------
+    ccount = {}
+    pcount = {}
+    for m in marked:
+        cs = sorted(set(m["components"]))
+        for c in cs:
+            ccount[c] = ccount.get(c, 0) + 1
+        for i in range(len(cs)):
+            for j in range(i + 1, len(cs)):
+                k = cs[i] + " + " + cs[j]
+                pcount[k] = pcount.get(k, 0) + 1
+    comps = sorted(ccount.items(), key=lambda kv: (-kv[1], kv[0]))
+    cpairs = sorted(pcount.items(), key=lambda kv: (-kv[1], kv[0]))[:6]
+
+    # ---- temperature: the one active ask, so its absence is reported -------
+    with_t = [{"day": m["day"], "value": temps[m["day"]]["value"],
+               "vtime": temps[m["day"]]["vtime"]} for m in marked if m["day"] in temps]
+
+    # ---- what he did, against the run length: an observation with its n ----
+    def runs_where(tag):
+        ls = [r["length"] for r in runs
+              if any(tag in (x["coped"]) for x in marked if x["day"] in r["days"])]
+        return {"n": len(ls), "mean_len": (round(sum(ls) / float(len(ls)), 1) if ls else None)}
+    coped_runs = {"kept_moving": runs_where(DOWN_MOVED), "rested": runs_where(DOWN_RESTED),
+                  "note": "An observation over the runs marked so far, not a recommendation."}
+
+    return jsonify(ok=True, days=days_n, since=since, link=linked,
+                   marked=marked, runs=runs, months=months, pairs=pairs,
+                   components=[{"name": k, "n": v} for k, v in comps],
+                   pairs_cooccur=[{"pair": k, "n": v} for k, v in cpairs],
+                   temps={"with": len(with_t), "of": len(marked), "values": with_t},
+                   coped_runs=coped_runs,
+                   err="" if linked else "FitLog is not answering, so steps and "
+                                          "sleep are not available for these days.")
 
 
 @app.route("/api/episode/eased/<int:eid>", methods=["POST"])
@@ -2194,6 +2522,8 @@ def api_watch():
         "SELECT DISTINCT day FROM episodes WHERE category='pain' AND day>=?",
         (since,)).fetchall())
     load = _watch_load_by_day(since)
+    down = set(r["day"] for r in db().execute(
+        "SELECT day FROM down_days WHERE day>=?", (since,)).fetchall())
 
     def epoch_of(d):
         for e in epochs:
@@ -2217,6 +2547,7 @@ def api_watch():
                     "has_data": bool(info.get("has_data")),
                     "pain": d in pain,
                     "ot": d in load,
+                    "down": d in down,
                     "ot_hours": (round(load[d] / 60.0, 1) if d in load else None),
                     "epoch": epoch_of(d)})
 
@@ -2496,7 +2827,7 @@ label.f select,label.f input{display:block;width:100%;margin-top:4px;font-size:1
    Marker set re-stepped for dark and validated: worst all-pairs
    deutan delta-E 11.2, tritan 15.9, normal-vision 18.5, all >= 3:1. */
 @media (prefers-color-scheme:dark){
-:root:not([data-theme="light"]){color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
+:root:not([data-theme="light"]){color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--mkdown:#3D9BE0;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
 :root:not([data-theme="light"]) body{background:var(--bg);color:var(--ink)}
 :root:not([data-theme="light"]) .card{background:var(--card);border-color:var(--line)}
 :root:not([data-theme="light"]) .chip{background:var(--chip);border-color:var(--line);color:var(--ink)}
@@ -2558,7 +2889,7 @@ label.f select,label.f input{display:block;width:100%;margin-top:4px;font-size:1
 :root:not([data-theme="light"]) svg text{fill:var(--muted)}
 :root:not([data-theme="light"]) .ring svg text{fill:inherit}
 }
-:root[data-theme="dark"]{color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
+:root[data-theme="dark"]{color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--mkdown:#3D9BE0;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
 :root[data-theme="dark"] body{background:var(--bg);color:var(--ink)}
 :root[data-theme="dark"] .card{background:var(--card);border-color:var(--line)}
 :root[data-theme="dark"] .chip{background:var(--chip);border-color:var(--line);color:var(--ink)}
@@ -2812,7 +3143,7 @@ background:linear-gradient(135deg,#0B6E6E,#12907C);color:#fff;cursor:pointer}
    Marker set re-stepped for dark and validated: worst all-pairs
    deutan delta-E 11.2, tritan 15.9, normal-vision 18.5, all >= 3:1. */
 @media (prefers-color-scheme:dark){
-:root:not([data-theme="light"]){color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
+:root:not([data-theme="light"]){color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--mkdown:#3D9BE0;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
 :root:not([data-theme="light"]) body{background:var(--bg);color:var(--ink)}
 :root:not([data-theme="light"]) .card{background:var(--card);border-color:var(--line)}
 :root:not([data-theme="light"]) .chip{background:var(--chip);border-color:var(--line);color:var(--ink)}
@@ -2875,7 +3206,7 @@ background:linear-gradient(135deg,#0B6E6E,#12907C);color:#fff;cursor:pointer}
 :root:not([data-theme="light"]) .ring svg text{fill:inherit}
 :root:not([data-theme="light"]) body{background:radial-gradient(1200px 600px at 50% -10%,#16302B,var(--bg))}
 }
-:root[data-theme="dark"]{color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
+:root[data-theme="dark"]{color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--mkdown:#3D9BE0;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
 :root[data-theme="dark"] body{background:var(--bg);color:var(--ink)}
 :root[data-theme="dark"] .card{background:var(--card);border-color:var(--line)}
 :root[data-theme="dark"] .chip{background:var(--chip);border-color:var(--line);color:var(--ink)}
@@ -3008,7 +3339,7 @@ button.warn{background:#fff;color:var(--err);border:1.5px solid var(--err)}
    Marker set re-stepped for dark and validated: worst all-pairs
    deutan delta-E 11.2, tritan 15.9, normal-vision 18.5, all >= 3:1. */
 @media (prefers-color-scheme:dark){
-:root:not([data-theme="light"]){color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
+:root:not([data-theme="light"]){color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--mkdown:#3D9BE0;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
 :root:not([data-theme="light"]) body{background:var(--bg);color:var(--ink)}
 :root:not([data-theme="light"]) .card{background:var(--card);border-color:var(--line)}
 :root:not([data-theme="light"]) .chip{background:var(--chip);border-color:var(--line);color:var(--ink)}
@@ -3070,7 +3401,7 @@ button.warn{background:#fff;color:var(--err);border:1.5px solid var(--err)}
 :root:not([data-theme="light"]) svg text{fill:var(--muted)}
 :root:not([data-theme="light"]) .ring svg text{fill:inherit}
 }
-:root[data-theme="dark"]{color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
+:root[data-theme="dark"]{color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--mkdown:#3D9BE0;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
 :root[data-theme="dark"] body{background:var(--bg);color:var(--ink)}
 :root[data-theme="dark"] .card{background:var(--card);border-color:var(--line)}
 :root[data-theme="dark"] .chip{background:var(--chip);border-color:var(--line);color:var(--ink)}
@@ -3262,7 +3593,7 @@ APP_PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 /* one validated categorical set: pain / operating day / epoch, and the
    same three for the pain-tea-coffee line. Light steps on #FCFCF9 pass
    every check: deutan 11.1, tritan 14.1, normal-vision 16.0, all >=3:1. */
---mkpain:#B3372A;--mkot:#6A3FA8;--mkep:#B57B08;
+--mkpain:#B3372A;--mkot:#6A3FA8;--mkep:#B57B08;--mkdown:#0A93B0;
 --fmL:#2E7D32;--fmLM:#7CA53A;--fmM:#C8860A;--fmMH:#C2622B;--fmH:#B3372A;
 --grad:linear-gradient(135deg,#0B6E6E,#12907C)}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -3701,6 +4032,38 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 .wknote{font-size:14px;color:var(--muted);margin:12px 0 0;line-height:1.5}
 .wkwo{display:flex;gap:10px;padding:10px 2px;border-top:1px solid var(--line);font-size:15px}
 .wkwo .wt{flex:0 0 96px;color:var(--muted);font-size:14px;font-variant-numeric:tabular-nums}
+/* GUTLOG_V3170_DOWN -- the down-day card: one tap, everything else behind it.
+   The lane marker is a SQUARE in a fourth colour validated with the other
+   three: light #0A93B0 on #FCFCF9, dark #3D9BE0 on #18211F. */
+#nowDown .dwtop{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+#nowDown .dwtop .q{margin:0;flex:1}
+#nowDown .dwtop .fs{font-size:15px;font-weight:700;color:var(--muted)}
+#nowDown.on .dwtop .fs{color:var(--teal)}
+#nowDown .dwmore{margin-top:4px}
+.dwtemp{display:flex;gap:8px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.dwtemp .lbl{margin:0;flex:1 1 100%;}
+.dwtemp input{flex:0 0 120px;padding:11px 10px;border:1.5px solid var(--line);border-radius:10px;
+  font-size:16px;background:var(--card);color:var(--ink)}
+.dwtemp .btn{margin:0;padding:11px 14px}
+.dwnote{font-size:15px;line-height:1.5;color:var(--ink);background:var(--chip);
+  border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:14px 0 0}
+.wklane.down .mk.on::after{background:var(--mkdown);border-radius:1px}
+.wkkey i.down{background:var(--mkdown);border-radius:1px}
+.tag.k-down{background:var(--chip);color:var(--teal)}
+/* every caption on these surfaces is 14px or more; .lbl elsewhere is 13.5px */
+#nowDown .lbl,#ddBody .lbl,.dwtemp .lbl{font-size:14px}
+#nowDown .btn.tiny,#dvDown{font-size:14px}
+.ddwrap{margin-top:6px}
+.ddtab{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+.ddtab th,.ddtab td{padding:7px 5px;border-bottom:1px solid var(--line);text-align:left;
+  vertical-align:top;line-height:1.45}
+.ddtab td:first-child{white-space:nowrap;padding-right:8px}
+.ddtab td.fx{white-space:normal;color:var(--ink)}
+.ddtab th{color:var(--muted);font-weight:700}
+.ddtab tr.dn td{font-weight:700}
+.ddtab tr.dn td:first-child{color:var(--teal)}
+.ddtab tr.bf td:first-child{color:var(--muted)}
+.ddobs{font-size:15px;line-height:1.5;margin:8px 2px 0}
 @media (prefers-reduced-motion:reduce){.toast,.pbar i,.chip{transition:none}}
 .appsw{display:flex;gap:8px;padding:8px 12px 4px;font-size:14px;align-items:center;flex-wrap:wrap}
 .appsw a{padding:4px 12px;border-radius:14px;background:var(--swbg);color:var(--swink);text-decoration:none;font-weight:700}
@@ -3714,7 +4077,7 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
    Marker set re-stepped for dark and validated: worst all-pairs
    deutan delta-E 11.2, tritan 15.9, normal-vision 18.5, all >= 3:1. */
 @media (prefers-color-scheme:dark){
-:root:not([data-theme="light"]){color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
+:root:not([data-theme="light"]){color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--mkdown:#3D9BE0;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
 :root:not([data-theme="light"]) body{background:var(--bg);color:var(--ink)}
 :root:not([data-theme="light"]) .card{background:var(--card);border-color:var(--line)}
 :root:not([data-theme="light"]) .chip{background:var(--chip);border-color:var(--line);color:var(--ink)}
@@ -3776,7 +4139,7 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 :root:not([data-theme="light"]) svg text{fill:var(--muted)}
 :root:not([data-theme="light"]) .ring svg text{fill:inherit}
 }
-:root[data-theme="dark"]{color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
+:root[data-theme="dark"]{color-scheme:dark;--ink:#E8F1EE;--muted:#9FB3AD;--bg:#0E1513;--card:#18211F;--line:#2A3734;--teal:#4FC4B1;--teal2:#68D9C6;--teal-d:#8FE3D4;--chip:#22302C;--err:#F5827A;--ok:#79C97E;--amber:#E0A83C;--amber-bg:#332912;--hip:#B9A0F0;--patch:#2A2140;--mkpain:#C1443A;--mkot:#7A5FD0;--mkep:#B58E08;--mkdown:#3D9BE0;--rtrk:#2A3734;--rtrk2:#2A3734;--swbg:#22302C;--swink:#E8F1EE;--onsw:#0E1513;--fmL:#79C97E;--fmLM:#A8CC5A;--fmM:#E0A83C;--fmMH:#E08A55;--fmH:#F5827A;--grad:linear-gradient(135deg,#0B4F4F,#0E6B5E)}
 :root[data-theme="dark"] body{background:var(--bg);color:var(--ink)}
 :root[data-theme="dark"] .card{background:var(--card);border-color:var(--line)}
 :root[data-theme="dark"] .chip{background:var(--chip);border-color:var(--line);color:var(--ink)}
@@ -3963,6 +4326,21 @@ function thmCycle(){
         Tap <b>eased</b> when it settles and the duration is measured, not guessed.</p>
       <div id="n_msk"></div>
       <div id="painList"></div>
+    </div>
+  </div>
+
+  <div class="card" id="nowDown">
+    <div class="dwtop"><p class="q">Down day</p><span class="fs" id="downSum"></span></div>
+    <button type="button" class="btn primary" id="downMark">Mark today as a down day</button>
+    <p class="hint" id="downHint" style="margin:8px 2px 0">One tap. Nothing else is asked.</p>
+    <div class="dwmore" id="downMore" hidden>
+      <p class="lbl">What it is today &mdash; optional, saves as you tap</p>
+      <div class="chips" id="downComp"></div>
+      <p class="lbl" style="margin-top:12px">Coped with &mdash; optional</p>
+      <div class="chips" id="downCoped"></div>
+      <div id="downTemp"></div>
+      <p class="dwnote" id="downProto" hidden></p>
+      <button type="button" class="btn tiny ghost" id="downUnmark" style="margin-top:14px">Not a down day after all</button>
     </div>
   </div>
 
@@ -4261,9 +4639,16 @@ function thmCycle(){
     <div class="dvnav"><button type="button" class="btn ghost" id="dvPrev">&lsaquo;</button>
       <input type="date" id="dvDate"><button type="button" class="btn ghost" id="dvNext">&rsaquo;</button></div>
     <p class="hint" style="margin:8px 2px 4px"><span id="dvSum"></span> &middot; tap an entry to fix its time</p>
+    <div class="btnrow" style="margin:4px 0 8px"><button type="button" class="btn tiny ghost" id="dvDown">Mark this day as a down day</button></div>
     <div id="dvList"></div>
     <p class="lbl" id="dvMissHd" style="margin-top:14px">Scheduled but not logged &mdash; enter the time it was taken</p>
     <div id="dvMiss"></div>
+  </div>
+  <div class="card fold" id="downView">
+    <button type="button" class="fold-h">
+      <span class="ft">Down days</span><span class="fs" id="ddSum">tap to open</span><span class="fc"></span>
+    </button>
+    <div class="cbody" id="ddBody"></div>
   </div>
   <div class="card" id="vitalsLog">
     <p class="q">Vitals log</p>
@@ -5112,7 +5497,7 @@ function renderVitals(rows){
    entry to move it to the time (or day) it really happened, or delete it.
    Below: that day's scheduled doses never logged, for backfilling. */
 let dvDay=todayISO;
-const DV_TAG={Dose:'dose',Extra:'extra',Skipped:'skip',Symptom:'sym',BP:'bp',Vitals:'bp',Meal:'meal',Activity:'act',Pain:'pain',Load:'load'};
+const DV_TAG={Dose:'dose',Extra:'extra',Skipped:'skip',Symptom:'sym',BP:'bp',Vitals:'bp',Meal:'meal',Activity:'act',Pain:'pain',Load:'load','Down day':'down'};
 function dvShift(n){
   const d=new Date(dvDay+'T12:00:00');d.setDate(d.getDate()+n);
   const s=d.toLocaleDateString('en-CA');
@@ -5127,6 +5512,7 @@ async function loadDayView(){
   const v=both[0],n=both[1];
   const box=$('#dvList');box.innerHTML='';
   $('#dvSum').textContent=v.entries.length?(v.entries.length+' logged'):'nothing logged';
+  loadDvDown();
   v.entries.forEach(e=>{
     const r=document.createElement('div');r.className='dvrow';
     r.innerHTML='<span class="t"></span><span class="tag"></span><div class="x"><b></b><span></span></div>';
@@ -5224,6 +5610,7 @@ $('#dvDate').onchange=ev=>{
 
 async function loadReview(){
   loadDayView();
+  loadDownView();
   $('#rvDaysN').textContent=rvDays;
   const rv=await jget('/api/review?days='+rvDays);
   renderVitals(rv.vitals);
@@ -5537,6 +5924,7 @@ async function loadNow(){
   loadMedStatus();
   loadActivity();
   loadPain();
+  loadDown();
   loadWatch();
   nowData=await jget('/api/now?day='+todayISO);
   const box=$('#nowSched');box.innerHTML='';
@@ -5714,6 +6102,217 @@ async function loadPain(){
   });
 }
 
+/* GUTLOG_V3170_DOWN -- a down day is a calendar day, marked with one tap.
+   Everything else on the card is optional and saves as it is tapped, so
+   there is no form to leave half-filled on a day with a heavy head. The one
+   active prompt is a temperature; "not now" is remembered for the day. */
+let downState=null;
+function downTempSkipped(){
+  try{ return localStorage.getItem('gl_temp_skip')===todayISO; }catch(e){ return false; }
+}
+async function loadDown(){
+  const card=$('#nowDown');
+  if(!card)return;
+  const j=await jget('/api/downday?day='+todayISO);
+  downState=j;
+  renderDown(j);
+}
+function renderDown(j){
+  const card=$('#nowDown'),sum=$('#downSum'),mark=$('#downMark'),
+        more=$('#downMore'),hint=$('#downHint');
+  card.classList.toggle('on',!!j.marked);
+  if(!j.marked){
+    sum.textContent='';
+    mark.hidden=false;hint.hidden=false;more.hidden=true;
+    return;
+  }
+  mark.hidden=true;hint.hidden=true;more.hidden=false;
+  sum.textContent=(j.run&&j.run.n>1)?('day '+j.run.n+' of this run'):'marked today';
+  downChips($('#downComp'),j.components_all,j.components,'components');
+  downChips($('#downCoped'),j.coped_all,j.coped,'coped');
+  renderDownTemp(j);
+  const p=$('#downProto');
+  if(j.protocol){ p.textContent=j.protocol;p.hidden=false; }
+  else{ p.hidden=true; }
+}
+function downChips(box,all,sel,key){
+  box.innerHTML='';
+  (all||[]).forEach(v=>{
+    const b=document.createElement('div');
+    b.className='chip'+((sel||[]).indexOf(v)>=0?' sel':'');
+    b.textContent=v;
+    b.onclick=async()=>{
+      if(b.dataset.busy)return;
+      b.dataset.busy='1';
+      const cur=(downState[key]||[]).slice();
+      const i=cur.indexOf(v);
+      if(i>=0)cur.splice(i,1); else cur.push(v);
+      const body={day:todayISO};
+      body[key]=cur;
+      try{
+        const r=await post('/api/downday',body);
+        if(r.doses&&r.doses.length)toast(r.doses.join(' + ')+' recorded');
+        if(r.not_mirrored&&r.not_mirrored.length)toast('FitLog did not take '+r.not_mirrored.join(', '));
+        await loadDown();
+      }catch(err){ toast(err.message); }
+      b.dataset.busy='';
+    };
+    box.appendChild(b);
+  });
+}
+function renderDownTemp(j){
+  const box=$('#downTemp');
+  box.innerHTML='';
+  if(j.temp){
+    const p=document.createElement('p');
+    p.className='hint';
+    p.style.margin='12px 2px 0';
+    p.textContent='Temperature '+j.temp.value+'° at '+j.temp.vtime+', in your vitals.';
+    box.appendChild(p);
+    return;
+  }
+  if(downTempSkipped())return;
+  const w=document.createElement('div');
+  w.className='dwtemp';
+  w.innerHTML='<p class="lbl">Temperature now? The one number worth taking.</p>'+
+    '<input type="number" step="0.1" min="30" max="115" inputmode="decimal" placeholder="37.0" aria-label="Temperature">'+
+    '<button type="button" class="btn primary go">Save</button>'+
+    '<button type="button" class="btn nn">Not now</button>';
+  w.querySelector('.go').onclick=async()=>{
+    const v=parseFloat(w.querySelector('input').value);
+    if(!(v>=30&&v<=115)){ toast('Enter a temperature'); return; }
+    try{
+      await post('/api/downday',{day:todayISO,temp:v});
+      toast('Temperature saved to your vitals');
+      loadDown();
+    }catch(err){ toast(err.message); }
+  };
+  w.querySelector('.nn').onclick=()=>{
+    try{ localStorage.setItem('gl_temp_skip',todayISO); }catch(e){ }
+    box.innerHTML='';
+  };
+  box.appendChild(w);
+}
+(function(){
+  const m=$('#downMark');
+  if(m)m.onclick=async()=>{
+    if(m.dataset.busy)return;
+    m.dataset.busy='1';
+    try{
+      await post('/api/downday',{day:todayISO});
+      toast('Marked as a down day');
+      await loadDown();
+      loadWatch();
+    }catch(err){ toast(err.message); }
+    m.dataset.busy='';
+  };
+  const u=$('#downUnmark');
+  if(u)u.onclick=async()=>{
+    try{
+      await post('/api/downday/unmark',{day:todayISO});
+      toast('Not a down day');
+      await loadDown();
+      loadWatch();
+    }catch(err){ toast(err.message); }
+  };
+})();
+/* Day by day: mark or unmark the day being viewed -- the backfill path. */
+async function loadDvDown(){
+  const b=$('#dvDown');
+  if(!b)return;
+  const j=await jget('/api/downday?day='+dvDay);
+  if(j.marked){
+    const r=j.run||{n:1,length:1};
+    b.textContent='Down day'+(r.length>1?(' · day '+r.n+' of '+r.length):'')+' · tap to unmark';
+  }else{
+    b.textContent='Mark this day as a down day';
+  }
+  b.onclick=async()=>{
+    try{
+      await post(j.marked?'/api/downday/unmark':'/api/downday',{day:dvDay});
+      toast(j.marked?'Unmarked':'Marked as a down day');
+      loadDayView();
+      if(dvDay===todayISO)loadDown();
+      loadWatch();
+    }catch(err){ toast(err.message); }
+  };
+}
+/* The view: every down day beside the day before it, from rows that already
+   exist. Observations carry their n; nothing here is advice. */
+function ddEsc(s){
+  return String(s===null||s===undefined?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function ddNum(v,dp){
+  if(v===null||v===undefined||v==='')return '—';
+  if(typeof v==='number')return (dp?v.toFixed(dp):Math.round(v).toLocaleString('en-IN'));
+  return ddEsc(v);
+}
+/* Seven facts per day would be eight columns, which is 466px on a 368px
+   card. Each fact carries its own label instead, so the pair reads as two
+   lines in the same order and nothing has to scroll sideways at 360px. */
+function ddRow(label,f,down){
+  const bits=['steps '+ddNum(f.steps),'on legs '+ddNum(f.load_h,1)+(f.load_h!==null&&f.load_h!==undefined?' h':''),
+    'exercise '+ddNum(f.act_min)+(f.act_min!==null&&f.act_min!==undefined?' min':''),
+    'sleep '+ddNum(f.sleep),'doses '+ddNum(f.doses),
+    'temp '+ddNum(f.temp,1)+(f.temp!==null&&f.temp!==undefined?'°':'')];
+  if(f.epoch)bits.push(ddEsc(f.epoch));
+  return '<tr class="'+(down?'dn':'bf')+'"><td>'+ddEsc(label)+'</td><td class="fx">'+bits.join(' · ')+'</td></tr>';
+}
+async function loadDownView(){
+  const body=$('#ddBody');
+  if(!body)return;
+  const j=await jget('/api/downdays?days='+rvDays);
+  const n=(j.marked||[]).length;
+  $('#ddSum').textContent=n?(n+' in '+rvDays+' days'):'none marked';
+  if(!n){
+    body.innerHTML='<p class="hint" style="margin:0">No down days marked in this range. '+
+      'Mark today from Now, or a past day from Day by day above.</p>';
+    return;
+  }
+  let h='';
+  h+='<p class="lbl">By month</p><div class="ddwrap"><table class="ddtab">'+
+     '<tr><th>Month</th><th>Down days</th><th>Run lengths</th></tr>';
+  (j.months||[]).forEach(m=>{
+    h+='<tr><td>'+ddEsc(m.month)+'</td><td>'+m.n+'</td><td>'+(m.runs.length?m.runs.join(', '):'—')+'</td></tr>';
+  });
+  h+='</table></div>';
+  h+='<p class="lbl" style="margin-top:14px">Each down day beside the day before it</p>';
+  h+='<div class="ddwrap"><table class="ddtab">';
+  (j.pairs||[]).forEach(p=>{
+    h+=ddRow('before · '+wkDay(p.before),p.b,false);
+    h+=ddRow('down · '+wkDay(p.day),p.d,true);
+  });
+  h+='</table></div>';
+  if(!j.link)h+='<p class="hint" style="margin:6px 2px 0">'+ddEsc(j.err)+'</p>';
+  h+='<p class="lbl" style="margin-top:14px">What came together</p>';
+  if((j.components||[]).length){
+    h+='<p class="ddobs">'+(j.components.map(c=>ddEsc(c.name)+' · '+c.n).join('<br>'))+'</p>';
+    if((j.pairs_cooccur||[]).length){
+      h+='<p class="hint" style="margin:8px 2px 0">Together: '+
+         j.pairs_cooccur.map(c=>ddEsc(c.pair)+' ('+c.n+')').join('; ')+'</p>';
+    }
+  }else{
+    h+='<p class="hint" style="margin:0">No components noted yet.</p>';
+  }
+  h+='<p class="lbl" style="margin-top:14px">Temperature</p>';
+  if(j.temps&&j.temps.with){
+    h+='<p class="ddobs">A reading on '+j.temps.with+' of '+j.temps.of+' down days: '+
+       j.temps.values.map(t=>ddNum(t.value,1)+'° ('+wkDay(t.day)+')').join(', ')+'</p>';
+  }else{
+    h+='<p class="ddobs">No temperature on any of these '+j.temps.of+' down days yet. '+
+       'That is the one number this card asks for.</p>';
+  }
+  h+='<p class="lbl" style="margin-top:14px">What you did, against how long it lasted</p>';
+  const cr=j.coped_runs||{};
+  const km=cr.kept_moving||{},rs=cr.rested||{};
+  const bits=[];
+  if(km.n)bits.push('runs where you kept moving indoors: n='+km.n+', mean '+km.mean_len+' days');
+  if(rs.n)bits.push('runs where you rested: n='+rs.n+', mean '+rs.mean_len+' days');
+  h+='<p class="ddobs">'+(bits.length?bits.join('<br>'):'Nothing marked under coped with yet.')+
+     '<br><span class="hint" style="margin:0">'+ddEsc(cr.note||'')+'</span></p>';
+  body.innerHTML=h;
+}
+
 /* GUTLOG_V3130_WATCH -- the watch screen. Reading only: every figure comes
    from FitLog's feed or from GutLog's own pain and operating-day rows, and
    nothing here computes a verdict. Arrows are against his own trailing
@@ -5815,6 +6414,7 @@ function wkChart(row){
       (r.source?(' \u00b7 '+wkSrc(r.source)):'')):'no data');
     if(r.ot)bits.push(r.ot_hours+' h on your legs');
     if(r.pain)bits.push('pain logged');
+    if(r.down)bits.push('down day');
     if(r.epoch)bits.push(r.epoch);
     const txt=bits.join(' \u00b7 ');
     c.title=txt;
@@ -5836,7 +6436,7 @@ function wkChart(row){
     ep.appendChild(s);
   });
   box.appendChild(ep);
-  [['pain','pain'],['ot','ot']].forEach(p=>{
+  [['pain','pain'],['ot','ot'],['down','down']].forEach(p=>{
     const lane=document.createElement('div');lane.className='wklane '+p[1];
     row.forEach(r=>{
       const m=document.createElement('div');
@@ -5857,6 +6457,7 @@ function wkChart(row){
   const key=document.createElement('div');key.className='wkkey';
   key.innerHTML='<span><i class="pain"></i>pain logged</span>'+
     '<span><i class="ot"></i>operating day</span>'+
+    '<span><i class="down"></i>down day</span>'+
     '<span><i class="ep"></i>medication epoch</span>'+
     '<span><i class="nd"></i>no data</span>';
   box.appendChild(key);

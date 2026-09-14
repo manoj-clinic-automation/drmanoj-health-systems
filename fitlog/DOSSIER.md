@@ -1,4 +1,4 @@
-# FitLog — DOSSIER (v1.5.0)
+# FitLog — DOSSIER (v1.6.0)
 
 Single source of truth. Update after every change.
 
@@ -96,6 +96,40 @@ change are artefacts of the change.
 Nothing here derives a verdict, and nothing here should start to.
 `gutlog/test_phase_j.py` case 01 reads the block and fails on any `INSERT`,
 `UPDATE`, `DELETE` or `commit(`.
+
+## Down days out of the trend — v1.6.0
+
+GutLog v3.17.0 marks **down days** (Phase M): the recurring cluster of hip
+and thigh ache, left abdominal pain, fatigue, feverishness and a broken
+night. On such a day steps fall to near nothing. An unmarked one read on the
+Trend card as a low-steps day — that is, as non-adherence — which would have
+quietly corrupted the one question the fitness plan exists to answer.
+
+- `gutlog_downdays(since)` reads GutLog's read-only `/api/feed/downdays`
+  with the feed token that already exists. Same rules as the dose reader:
+  follows the live database (a scratch DB never reads it), 60 s cache, never
+  raises — an unreachable GutLog is an empty set plus a reason.
+- `w_trend_card` **draws** a down day's bar (hatched, class `wbar down`,
+  named "down day (GutLog)" in its title) and **leaves it out** of mean, low
+  and high, saying how many it left out. Not hidden: a down day is a fact
+  about the day, and the bar stays on the chart so it can be seen for what
+  it is. When GutLog cannot be read the card says so rather than silently
+  including everything.
+- `/api/feed/watch`: the day window is capped at **180** instead of 60, so
+  GutLog's down-days view can put months of down days beside the day before
+  each one; and `sleep_hours` joins the metrics it reports, so that view can
+  show sleep from the Watch where GutLog's own log has none.
+
+No rule reads any of this. `compute_flags()` is untouched; W02 adherence is
+still counted from `sessions.status`, not from steps.
+
+Proved by `test_downdays_trend.py` (5/5), which runs a real GutLog beside
+the FitLog under test and asserts on the rendered `/watch`: the bar is
+marked and named; mean **and low** are 6000 over the nine kept days with a
+100-step down day present, and the note says one was left out; the feed
+answers 180 days and carries sleep; and with GutLog down the page still
+renders and says the down days could not be read. Every case fails against
+the reconstructed v1.5.0 (`tools/NEGATIVE_CONTROL.py`, 5 declared, 5 seen).
 
 ## Analgesic mirror — v1.4.0 (`POST /api/analgesic`)
 
@@ -551,6 +585,7 @@ healthconnect case in it uses the legacy shape, so `is_hc` is false. It scored
 on HC changes.
 
 ## Changelog
+- 2026-09-14 v1.6.0 — **DEPLOYED 18:19 IST**, first of the two. Phase M: the trend leaves GutLog's down days out. `patch_fitlog_v160.py`, 6 anchors, reversible byte-for-byte. `app.py` sha256 `8f66d787…`, 77,578 bytes, byte-identical to the repo build. `gutlog_downdays()` reads the new bearer-gated `/api/feed/downdays`; `w_trend_card` draws a down day's bar hatched and named and leaves it out of mean / low / high, saying how many; `/api/feed/watch` reaches back 180 days (was 60) and carries `sleep_hours`. No rule reads any of it. New `test_downdays_trend.py` **5/5** against a real GutLog v3.17.0 — **5 declared, 5 seen to fail** against the reconstructed v1.5.0. Whole gate green on the server before the restart: 5/5, 39/39, 52/52, 23/23, 36/36, 18/18, 19/19, 29/29, 12/12, 56/56, 36/36, 12/12, 10/10, 14/14, 8/8. The gate's rollback fired once and correctly: the three cross-app suites and the new one were first pointed at `app.py.new`, whose suffix `importlib` refuses to load, so they printed nothing, v1.5.0 was restored and nothing restarted; rerun with a `.py`-named candidate. Rollback: `app.py.rollback-v150-20260914_180728`, `fitlog.db.pre-phaseM-20260914_180728` (`sqlite3.backup()`, integrity ok, 13 tables).
 - 2026-09-14 v1.5.0 — **DEPLOYED 05:40 IST.** Phase J: the read-only watch feed. `patch_fitlog_v150.py`, 2 anchors. `app.py` sha256 `6c9bf876…`, 74,819 bytes, byte-identical to the repo build. `GET /api/feed/watch?days=14` on the token that already existed — per day every resolved metric **with its source** plus `has_data`, workouts best-source-only with IST applied and `start_hm` carried so nobody slices a timestamp, and any medication epoch overlapping the window. No new table, no new ingestion, no verdict. Live after the deploy: the fortnight answers, the two stored workouts read 21:58 and 07:11 IST, and five days correctly report `has_data` False rather than zero. Whole FitLog gate green on the server first — 53/53, 23/23, 36/36, 12/12, 29/29, 18/18, 19/19, 39/39, 52/52, 12/12, 56/56, 36/36, 10/10, 14/14, 8/8 — plus `gutlog/test_phase_j.py` 18/18. Rollback: `app.py.bak-v150-…`, or `app.py.predeploy-phaseJ-20260914_053829` with `/root/backups/fitlog/fitlog.db.predeploy-phaseJ-20260914_053829`.
   *Repo gap noticed, not fixed:* `test_apple_records.py`, `test_recompute_apple.py` and `test_workout_day_ist.py` exist on the server and in `fitlog-ingest/` but **not** in the authoritative `fitlog/` folder, so `CHECK_FOLDER_PARITY` has nothing to compare and never notices. All three pass (56/56, 36/36, 12/12); they just are not where CLAUDE.md says the authoritative copy lives.
 - 2026-09-14 v1.4.0 — **DEPLOYED 04:38 IST**, first of the three. `app.py` sha256 `7a5f6549…`, 69,652 bytes, byte-identical to the repo build; 5/5 anchors, compile check OK. Whole gate green on the server before the restart: 23/23, 36/36, 12/12, 29/29, 18/18, 19/19, 39/39, 52/52, 12/12, 56/56, 36/36, 10/10, 14/14, kb_lint PASS, smoke 53/53. Live checks after: `/api/analgesic` returns **401 with no token** and, with GutLog's feed token, **200 `{"ok": false}`** for a molecule the stack does not carry — with `analgesic_log` still at 0 rows, so a refusal really does write nothing. No errors in the journal. The cross-app `test_analgesic_mirror.py` could not run at this point and was deliberately deferred: it drives GutLog's pain tiles, which did not exist until the next step. It scored **8/8** against both live-patched files once GutLog was up. Rollback: `app.py.bak-v140-20260914_043819`, or `app.py.predeploy-phaseI-20260914_043720` and `/root/backups/fitlog/fitlog.db.predeploy-phaseI-20260914_043720` (`sqlite3.backup()`, integrity ok).

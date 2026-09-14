@@ -1,0 +1,18 @@
+{
+  "_": [
+    "FitLog v1.6.0. test_downdays_trend.py runs a real GutLog v3.17.0 beside",
+    "the FitLog under test; against the reconstructed FitLog v1.5.0 there is",
+    "no reader, no marked bar, a 60-day feed window and no sleep_hours, so",
+    "every case fails there."
+  ],
+  "suite": "test_downdays_trend.py",
+  "app": "app.py",
+  "patcher": "patch_fitlog_v160.py",
+  "assertions": [
+    {"name": "01 FitLog reads GutLog's down days through the feed", "control": "version"},
+    {"name": "02 the down day's bar is drawn, marked and named", "control": "version"},
+    {"name": "03 mean, low and high leave the down day out", "control": "version"},
+    {"name": "04 the watch feed reaches back 180 days and carries sleep", "control": "version"},
+    {"name": "05 GutLog down degrades to a message", "control": "version"}
+  ]
+}

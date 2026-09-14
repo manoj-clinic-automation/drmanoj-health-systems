@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.16.0)
+# GutLog — DOSSIER (v3.17.0)
 
 Single source of truth. Update after every change.
 
@@ -301,6 +301,83 @@ closed at epochs 2 and 3, with a new pair opened together at epoch 4.
 `/api/now` computes today's expected doses by reading whichever line is
 effective for today. Test 09 and 10 in `test_phase_a.py` gate this.
 
+## Down days — v3.17.0
+
+**Why.** The record has carried a recurring cluster for over two years as
+"recurrent fatigue and subjective feverishness — never a documented
+temperature, no cause established": hip and thigh ache, left abdominal pain,
+fatigue, feverishness, a heavy head, sometimes the eyes, usually a broken
+night. Nothing counted those days — no frequency, no duration, no pattern.
+Yet every day around them was already fully recorded: steps, hours on legs,
+sleep, doses, the drug epoch. What was missing was the marker saying which
+days were the bad ones. This is that marker, and the view that turns months
+of existing rows into an answer.
+
+**Data model — decided, not redesigned.**
+`down_days(id, day UNIQUE, components, coped, note, created)`. A down day is
+a **calendar day**, not a timestamped moment, so it is not an `episodes`
+row. `components` and `coped` are pipe-joined (the `days.syms` convention).
+`day` is UNIQUE, so a second tap corrects rather than duplicates. **Runs are
+computed at read time** from consecutive days (`_down_runs`): no run id, no
+episode id, no state that can rot — the same principle as expected scheduled
+doses. **Temperature does not live here.** `vitals.temp` already exists; the
+card prompts for it and writes a real `vitals` row (`notes` "Down day"),
+exactly as the analgesic chips write a real `doses` row. The card shows
+whether one has been taken today and stores nothing else about it. Schema
+3.3.3 → **3.3.4**, through the idempotent `_migrate` pattern; `_migrate`
+runs per request, so it is verified by `schema_version` after a request,
+never by `systemctl status`.
+
+**The entry — one tap, and it stays one tap.** A *Down day* card on the Now
+screen beside Pain, with one primary control: *Mark today as a down day*.
+Tapping it marks today. Everything else is behind that and optional:
+components in the record's own words (Hip / thigh ache · Left abdominal
+pain · Fatigue · Feverishness · Heavy head / headache · Eyes burning or
+watering · Broken sleep · Low mood) and *coped with* (Kept moving indoors ·
+Rested · Skipped exercise · Worked anyway · Heat pad · Hot shower · NormaTec
+· the two analgesic chips). Chips **save as they are tapped** — there is no
+Save button and no form to leave half-filled on a day with a heavy head,
+which would bias the record toward the days he felt well enough to type.
+The medicine chips write through to the doses log with the reason set, via
+`_log_analgesics`, the helper now shared with the pain tiles (factored out
+of `api_pain`); only chips **newly added** to the stored row are logged, so
+correcting the row cannot record a tablet twice. **One active prompt**: a
+temperature, with a single *Not now* remembered for the day in
+`localStorage` — it does not nag. A consecutive day extends the run and the
+card reads *day 2 of this run*. Past days are marked from **Day by day**
+(`#dvDown`, the backfill path); future days are refused. Nothing is seeded.
+
+**The view — the point.** A *Down days* fold on Review, over the 30/90/180
+range: count per month and the length of each run; **each down day beside
+the day before it** — steps, hours on legs, exercise minutes, sleep, doses,
+temperature, medication epoch — from rows that already exist (steps and
+Watch sleep via FitLog's feed, now 180 days deep; hours on legs, exercise
+minutes, doses, logged sleep and temperature from GutLog's own tables). Seven
+facts per day would be eight columns, 466px on a 368px card; each fact
+carries its own label instead, so the pair reads as two lines in the same
+order and nothing scrolls sideways at 360px. Then which components co-occur
+and how often; how many down days carry a temperature and what they were (if
+that column stays empty the phase has failed at its one active ask, and the
+card says so); and whether what he did changes the run length — runs where
+he kept moving against runs where he rested — **as an observation with its
+n, never as advice**, and the payload is asserted free of advice words.
+
+**Two connections.** On the **third consecutive day** the card carries a
+quiet note, verbatim from the Action Plan's flare protocol: *"Third day of
+this run; your flare protocol asks for calprotectin and ESR/CRP within 48
+hours."* A note, not an alarm, not advice. And the 14-day watch row carries
+a **down-day lane** — a square, so it is never colour-alone beside the pain
+disc and the operating-day diamond — in a fourth colour validated with the
+other three (light `#0A93B0` on `#FCFCF9`, dark `#3D9BE0` on `#18211F`; all
+five checks pass in both modes, worst pair unchanged at deutan 11.1 /
+normal-vision 16.0 light, 10.4 / 15.7 dark). FitLog's trend leaves those days
+out — see the FitLog DOSSIER, v1.6.0.
+
+**Endpoints.** `GET/POST /api/downday` (state for a day; mark / correct /
+temperature), `POST /api/downday/unmark`, `GET /api/downdays?days=N` (the
+view payload), `GET /api/feed/downdays?since=` (bearer-gated, read-only, for
+FitLog).
+
 ## Colour and theme — v3.16.0
 
 **One palette, two selected modes, every pair measured.** The app renders four
@@ -427,6 +504,35 @@ Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · HTTPS liv
 via OLS reverse proxy.
 
 ## Test evidence
+- `test_phase_m.py` — **19/19 PASS** (2026-09-14, v3.17.0), and 19/19 under
+  `RUN_AT_TIME` at 00:02, 05:05 and 23:58; **18 declared new assertions, 18
+  seen to fail** against the reconstructed v3.16.0. Half one runs GutLog
+  alone with links off: the table and its UNIQUE day and *absence* of a
+  temperature column; one tap → one row; a second tap correcting, not
+  duplicating; three consecutive days as one run with positions 1/2/3; a
+  one-day gap making two runs; a down day with no components; a temperature
+  reaching `vitals` and `down_days` unchanged; an analgesic chip producing
+  **exactly one** doses row and a re-save producing none; the third day
+  carrying the protocol note verbatim and the second day not; the watch row
+  marking exactly the marked days; backfill of a past day and refusal of a
+  future one; unmark; the feed 401 without the token; each down day beside
+  the day before with that day's load, exercise, doses and sleep; and the
+  coped-versus-run observation carrying its n, with the whole payload
+  asserted free of advice words and third-person pronouns. Half two runs a
+  real FitLog beside it: the trend bar marked and the mean and low over the
+  kept days only, the chip reaching `analgesic_log` once and a re-save not
+  mirroring again, and the view seeing 6000 steps before / 100 on the day.
+- `test_ui_now.py`, down-day block — **13 declared, 13 seen** against the
+  reconstructed v3.16.0 (no `#nowDown`, so the guard emits every property
+  as a failure rather than skipping). A route-hit counter on
+  `/api/downday*` proves the tap went through the page's own fetch, not a
+  service worker. Three harness lessons, all fixed in the suite: fixed
+  sleeps read the card before a ~1 s round trip landed (replaced with
+  `wait_for_function`); the earlier watch stub answers `/api/watch` for the
+  rest of the session, so the down-day lane is asserted inside that stub
+  with a `down` day of its own; and the records section leaves the page at
+  `/?open=records`, whose deep-link handler re-opened Records after the Now
+  click — the block now navigates to a clean `/`.
 - `tools/NEGATIVE_CONTROL.py` + `new_assertions_v3160.json` — **18 declared,
   18 seen to fail** (2026-09-14, v3.16.0). CLAUDE.md rule 2a in force: an
   assertion is evidence only if it has been seen to fail. Ten assertions fail
@@ -602,6 +708,23 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-14 v3.17.0 — Phase M: Down days. DEPLOYED 18:20 IST** (FitLog
+  v1.6.0 at 18:19, first). `app.py` sha256 `86887cf6…`, 363,598 bytes,
+  byte-identical to the repo build. `patch_gutlog_v3170.py`, 24 anchors,
+  reversible (reversing reproduces v3.16.0 at exactly 337,053 bytes, sha
+  `c67ae491…`). Schema 3.3.3 → **3.3.4**, verified live by `schema_version`
+  after one request; `down_days` present with no temperature column and 0
+  rows — nothing seeded. See *Down days — v3.17.0* above. Server gate before
+  the restart: phase_m 19/19 (and 19/19 at 00:02, 05:05, 23:58 under
+  `RUN_AT_TIME`), phase_i 18/18, phase_j 28/28, a 18/18, c 20/20, e 13/13,
+  f 8/8, g 14/14. Negative controls: server-side **18 declared, 18 seen**
+  against the reconstructed v3.16.0; browser-side **13 declared, 13 seen**.
+  Case 19 of `test_phase_m` (no medicine name in the code) is deliberately
+  **not** declared: it re-instantiates `test_phase_j` t14 over the new code
+  and cannot be shown failing without naming a real term in a public file.
+  Also this pass: the Phase L litter guard caught `test_phase_a.py` and
+  `test_phase_b.py` still minting the feed token beside `app.py`; both now
+  redirect it to their scratch directory.
 - **2026-09-14 v3.16.0 — Phase L: readability fixes and app-wide dark mode.
   DEPLOYED 09:59 IST.** `app.py` sha256 `c67ae491…`, 337,053 bytes,
   byte-identical to the repo build. `patch_gutlog_v3160.py`, 33 anchors,

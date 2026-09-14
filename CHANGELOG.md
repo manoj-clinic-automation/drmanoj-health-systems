@@ -3,6 +3,79 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-14 — GutLog v3.17.0 + FitLog v1.6.0, Phase M: Down days
+
+DEPLOYED FitLog 18:19 IST, GutLog 18:20 IST, FitLog first. GutLog `app.py`
+sha256 `86887cf6…`, 363,598 bytes; FitLog `app.py` sha256 `8f66d787…`, 77,578
+bytes — both byte-identical to the repo builds. `patch_gutlog_v3170.py`, 24
+anchors; `patch_fitlog_v160.py`, 6 anchors; both reverse byte-for-byte to
+the pre-patch builds. Verified live after one request: `schema_version`
+**3.3.4**, `down_days(id, day, components, coped, note, created)` with **no
+temperature column**, **0 rows** (nothing seeded). Databases backed up first
+(`sqlite3.backup()`, `integrity_check` ok, 25 and 13 tables). Each server
+gate ran before its restart with rollback on failure — and the FitLog gate
+*used* the rollback once: the cross-app suites were pointed at
+`app.py.new`, whose suffix `spec_from_file_location` refuses, so they
+printed no result, the script restored v1.5.0 and did not restart; re-run
+with a `.py`-named candidate, 15/15 suites green, then deployed.
+
+**Why.** A recurring cluster the record has carried for over two years as
+"recurrent fatigue and subjective feverishness — never a documented
+temperature, no cause established" — hip and thigh ache, left abdominal
+pain, fatigue, feverishness, a heavy head, sometimes the eyes, usually a
+broken night. Nothing counted those days. Every day around them was already
+fully recorded; what was missing was the marker saying which days were the
+bad ones. One tap now converts months of existing rows into an answer.
+
+**GutLog — the marker.** `down_days(id, day UNIQUE, components, coped, note,
+created)`: a calendar day, not a moment, so not an `episodes` row; a second
+tap corrects rather than duplicates; **runs are computed at read time** from
+consecutive days, nothing stored about them. Temperature is **not** a column
+here — the card prompts for it once, with a *Not now* that is remembered for
+the day and does not nag, and writes a real `vitals` row. The two analgesic
+chips write a real `doses` row with the reason set, through the helper now
+shared with the pain tiles, and only for chips newly added, so correcting
+the row cannot log a tablet twice. Schema 3.3.3 → 3.3.4 via `_migrate`.
+
+**The entry.** A *Down day* card on Now beside Pain: *Mark today as a down
+day*. One tap, done. Components (in the record's own words) and *coped with*
+sit behind it, optional, and save as they are tapped — no form to leave
+half-filled on a day with a heavy head. A consecutive day extends the run
+and the card reads *day 2 of this run*. Past days are marked from Day by
+day. Nothing seeded.
+
+**The view.** A *Down days* fold on Review: count per month and run
+lengths; **each down day beside the day before it** — steps, hours on legs,
+exercise minutes, sleep, doses, temperature, epoch — from rows that already
+exist; which components co-occur; how many down days carry a temperature
+(and, if none, that the one active ask is going unanswered); and runs where
+he kept moving against runs where he rested, as an observation with its n,
+never advice — the payload is asserted free of advice words.
+
+**Two connections.** On the third consecutive day, a quiet note verbatim
+from the Action Plan's flare protocol (calprotectin and ESR/CRP within 48
+hours). The 14-day watch row gains a **down-day lane** — a square, in a
+fourth colour validated with the other three (light `#0A93B0`, dark
+`#3D9BE0`, all five checks passing in both modes).
+
+**FitLog — the trend leaves them out.** `gutlog_downdays()` reads the new
+bearer-gated `/api/feed/downdays`; `w_trend_card` **draws** a down day's bar
+hatched and named, and leaves it out of mean, low and high, saying how many
+it left out. Not hidden: a bad day is a fact about the day. The watch feed
+now reaches back 180 days (was 60) and carries `sleep_hours`, so the
+down-days view can show months, with sleep. No rule reads any of it.
+
+**Evidence.** `gutlog/test_phase_m.py` **19/19**, and 19/19 under
+`RUN_AT_TIME` at 00:02, 05:05 and 23:58 — run grouping is date arithmetic
+and this is exactly where the earlier clock bug lived. `fitlog/
+test_downdays_trend.py` **5/5** against a real GutLog. `test_ui_now.py`
+ALL PASS, both themes, 390 and 360px, with a route-hit counter proving the
+tap went through the page's own fetch. Negative controls (CLAUDE.md 2a):
+GutLog server-side **18 declared, 18 seen to fail** against the
+reconstructed v3.16.0; FitLog **5/5 seen** against v1.5.0; browser-side
+figures in the DOSSIER. Both patchers reverse byte-for-byte to the
+pre-patch builds.
+
 ## 2026-09-14 — GutLog v3.16.0, Phase L: readability fixes and app-wide dark mode
 
 DEPLOYED 09:59 IST. `app.py` sha256 `c67ae491…`, 337,053 bytes,

@@ -4,6 +4,7 @@ FITLOG_V110_GUTLOG_FEED -- FitLog v1.1.0 reads doses from GutLog.
 FITLOG_V120_ACTIVITY -- FitLog v1.2.0 activity feed + Home activity card.
 FITLOG_V140_PAIN -- FitLog v1.4.0 analgesic mirror + operating-day load.
 FITLOG_V150_WATCHFEED -- FitLog v1.5.0 read-only watch feed for GutLog.
+FITLOG_V160_DOWNDAYS -- FitLog v1.6.0 trend excludes GutLog's down days.
 FitLog v1.0 — Personal physical capacity & recovery engine.
 Dr. Manoj Agarwal | fit.dr-manoj.in | port 8040
 Single-file Flask + SQLite. Deterministic rule engine (no LLM in decision path).
@@ -315,6 +316,41 @@ def gutlog_days(category, since):
     return set(e.get("day") for e in events if e.get("day") and cat(e.get("molecule")) == category)
 
 
+# ---------------- down days (FITLOG_V160_DOWNDAYS) ----------------
+_GD_CACHE = {}
+
+
+def gutlog_downdays(since):
+    """Days GutLog has marked as down days, on or after `since`. Same rules as
+    the dose feed: follows the live database, 60 s cache, never raises, and
+    an unreachable GutLog is an empty set plus a reason, not an exception."""
+    import time
+    import urllib.request
+    if not gutlog_feed_enabled():
+        return set(), "off"
+    hit = _GD_CACHE.get(since)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1], hit[2]
+    days, err = set(), ""
+    try:
+        with open(GUTLOG_TOKEN_FILE, encoding="utf-8") as fh:
+            tok = fh.read().strip()
+        req = urllib.request.Request(
+            GUTLOG_FEED_URL.rstrip("/") + "/api/feed/downdays?since=" + since,
+            headers={"Authorization": "Bearer " + tok})
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=2) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        if isinstance(data, dict) and data.get("ok"):
+            days = set(d.get("day") for d in (data.get("days") or []) if d.get("day"))
+        else:
+            err = "GutLog returned an unexpected answer"
+    except Exception as e:
+        err = "GutLog not reachable (" + type(e).__name__ + ")"
+    _GD_CACHE[since] = (time.time(), days, err)
+    return days, err
+
+
 # ---------------- analgesic mirror (FITLOG_V140_PAIN) ----------------
 # GutLog owns the medicine record. When a pain tile there logs an analgesic it
 # writes its own `doses` row AND calls this, so the same event exists here with
@@ -383,7 +419,8 @@ def api_analgesic():
 # whole of the contract between them, and it is read-only.
 WATCH_METRICS = ("steps", "exercise_minutes", "resting_hr", "hrv_ms",
                  "distance_km", "flights", "active_energy_kcal",
-                 "stand_hours", "walking_hr_avg", "spo2_pct")
+                 "stand_hours", "walking_hr_avg", "spo2_pct",
+                 "sleep_hours")
 
 # Coverage, not sensor quality. A barely-worn watch must not beat a fuller
 # phone count, so for these the larger figure wins whatever the source
@@ -478,7 +515,7 @@ def api_feed_watch():
         days = int(request.args.get("days") or 14)
     except (TypeError, ValueError):
         days = 14
-    days = max(1, min(60, days))
+    days = max(1, min(180, days))
     until = today()
     start = date.today() - timedelta(days=days - 1)
     since = start.isoformat()
@@ -767,6 +804,8 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:6px 4px;b
 .wbar{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:11px}
 .wbar i{display:block;width:9px;background:#0b6e6e;border-radius:2px 2px 0 0}
 .wbar u{font-size:9px;color:#8a9aa8;text-decoration:none;margin-top:2px}
+.wbar.down i{background:repeating-linear-gradient(45deg,#c0392b,#c0392b 2px,#f4f6f8 2px,#f4f6f8 5px);border:1px solid #c0392b}
+.wbar.down u{color:#c0392b;font-weight:700}
 .wstrip{padding:10px 12px}
 .wstrip-h{display:flex;align-items:baseline;gap:8px;margin-bottom:4px}
 .wstrip-h b{font-size:14px}
@@ -1304,6 +1343,10 @@ def w_trend_card(rows):
     days = sorted(rows.keys())
     if not days:
         return ""
+    # FITLOG_V160_DOWNDAYS -- a down day marked in GutLog is drawn, named and
+    # left out of the summary. Reading it as a low-steps day would turn a bad
+    # day into an adherence failure.
+    down, derr = gutlog_downdays(days[0])
     series = [(d, rows[d].get("steps")) for d in days]
     vals = [v for d, v in series if v is not None]
     if not vals:
@@ -1316,12 +1359,16 @@ def w_trend_card(rows):
             h = int(round(58.0 * float(v) / top))
             if h < 1:
                 h = 1
-        bars.append('<div class="wbar" title="' + w_esc(d) + ": " +
-                    w_fmt(v, 0) + ' steps"><i style="height:' + str(h) +
+        isdown = d in down
+        bars.append('<div class="wbar' + (' down' if isdown else '') + '" title="' + w_esc(d) + ": " +
+                    w_fmt(v, 0) + ' steps' + (' \u00b7 down day (GutLog)' if isdown else '') +
+                    '"><i style="height:' + str(h) +
                     'px"></i><u>' + w_esc(d[8:]) + "</u></div>")
+    kept = [d for d in days if d not in down]
+    left_out = len([d for d in days if d in down])
     stats = []
     for key, label, unit, places in W_DAILY:
-        got = [rows[d].get(key) for d in days if rows[d].get(key) is not None]
+        got = [rows[d].get(key) for d in kept if rows[d].get(key) is not None]
         if not got:
             continue
         nums = [float(x) for x in got]
@@ -1334,13 +1381,24 @@ def w_trend_card(rows):
                      w_fmt(min(nums), places) + suffix + "</td><td>" +
                      w_fmt(max(nums), places) + suffix + "</td><td>" +
                      str(len(nums)) + "</td></tr>")
+    if left_out:
+        note = ("Mean, low and high are over the days the Watch actually reported, "
+                "shown in the Days column, leaving out " + str(left_out) +
+                (" down day" if left_out == 1 else " down days") +
+                " marked in GutLog (hatched above).")
+    elif derr and derr != "off":
+        note = ("Mean, low and high are over the days the Watch actually reported, "
+                "shown in the Days column. Down days could not be read from GutLog "
+                "just now, so none are left out.")
+    else:
+        note = ("Mean, low and high are over the days the Watch actually reported, "
+                "shown in the Days column.")
     return ("<h2>Trend " + W_DASH + " last " + str(W_TREND_DAYS) + " days</h2>" +
             '<div class="card"><div class="small">Daily steps</div>' +
             '<div class="wbars">' + "".join(bars) + "</div>" +
             "<table><tr><th>Metric</th><th>Mean</th><th>Low</th><th>High</th>" +
             "<th>Days</th></tr>" + "".join(stats) + "</table>" +
-            '<div class="small">Mean, low and high are over the days the Watch '
-            "actually reported, shown in the Days column.</div></div>")
+            '<div class="small">' + note + "</div></div>")
 
 
 def w_workouts_card():

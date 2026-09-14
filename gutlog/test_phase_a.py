@@ -35,6 +35,8 @@ def load_app(app_path, workdir):
     os.environ["GUTLOG_INSECURE"] = "1"        # allow http test client
     os.environ["GUTLOG_SECRET"] = "test-secret-not-real"
     os.environ["GUTLOG_ICONS"] = os.path.dirname(os.path.abspath(app_path))
+    # never mint the feed token beside app.py -- that is inside a public repo
+    os.environ["GUTLOG_FEED_TOKEN_FILE"] = os.path.join(workdir, "feed.token")
 
     # pwa.py must be importable from the same directory
     sys.path.insert(0, os.path.dirname(os.path.abspath(app_path)))
