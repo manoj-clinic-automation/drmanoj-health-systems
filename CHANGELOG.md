@@ -3,6 +3,61 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-14 — clinical detail purged from history, and NO_SECRETS now asks what is ALREADY tracked
+
+**The question nobody had asked.** The clinical check only ever looked at what
+was being ADDED. It never looked at what was already in the tree. Every clean
+run reported "no drug or molecule names in staged files" — true, and useless.
+Same shape as the findstr CRLF hole in the publish script, one layer up: a
+gate that guards the doorway and never looks at the room.
+
+**What was actually there.** Four documents were named as suspects. Reading
+them: `rxguard/ANALYSIS_Sources_and_Activity_v1.md` names no medicine and no
+condition (kept); `CLAUDE_CODE_PROMPT_fitlog.md` names none either, though it
+carries dated step counts (kept by decision); `rxguard/PLAN_MedKnowledge_v1.md`
+named a molecule with its strength and disclosed a drug class he takes;
+`CLAUDE_CODE_PROMPT_pain_v1.md` named three molecules with doses and a dated
+stop. **But a scan of all 199 tracked files found four more**, including a UI
+placeholder in `rxguard/app.py` phrased as a documented finding with its year
+and a drug reaction — worse than any of the four, and unfixable by deleting a
+file. And a scan of **every blob in every commit** found the real problem:
+`gutlog/add_regimen.py` at an old sha held the **full regimen, Indian brand
+names included** (30 terms), plus `fitlog/knowledge/med_stack.json` (14) and
+`gutlog/patch_redact_seed.py` (15) — the redaction patcher embedding the very
+list it had removed. A redaction commit had cleaned HEAD in July and left
+every old sha serving the original.
+
+**What was done.** Each of those files had exactly two blobs: the original and
+the redacted one. So the fix was surgical rather than a squash — 26 superseded
+blobs stripped by id, two documents removed from every commit by path, and two
+placeholders plus one patcher docstring neutralised in place first. All 30
+commits and the whole knowledge base survive. `git-filter-repo`, then a forced
+update `ccdee31…1140ed4`. Verified from a **fresh clone of what GitHub now
+serves**: 30 commits, 197 files, both documents at 0 occurrences, and the only
+paths still naming a drug are the eight allowlisted knowledge-base files.
+
+**NO_SECRETS.py gains check C**, which scans `git ls-files` — the index, so one
+call covers both what is committed and what has just been staged — and BLOCKS
+on any clinical term outside an explicit `CLINICAL_ALLOW`, each entry carrying
+its reason. RxGuard's curated knowledge base, its formal validation suite and
+its declared-synthetic smoke fixture are allowlisted: generic pharmacology is
+not a statement that he takes any of it. **On its first run check C caught its
+own file**, because the paragraph explaining it had named two molecules as the
+illustration. That is left recorded in the header.
+
+**Still exposed, and it needs a support request.** Proven, not assumed: after
+the force-push, `git fetch origin <full-sha>` against GitHub still returns the
+old commits, and `gutlog/add_regimen.py` **was read back from GitHub with the
+clinical terms intact**. Unreferenced objects survive until GitHub garbage-
+collects. A support request asking them to purge is the last step, and a fork
+by anyone would make that impossible.
+
+RxGuard redeployed for the placeholder change (server gate green: 49/49, 32/32,
+10/10, 15/15, 18/18) and all three apps re-verified byte-identical to the repo.
+Full backup before any of it: `_backups/health-systems-20260914_215833.git`
+(mirror, all refs) plus a worktree copy — **both still contain the old history
+and the clinical detail**, so they are the one remaining local copy.
+
 ## 2026-09-14 — PUBLISH_HEALTH.bat v2: it now says what happened, and the secret gate actually works
 
 Asked for: the window closed on success, so the one line worth reading — did
