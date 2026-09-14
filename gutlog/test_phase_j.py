@@ -265,11 +265,13 @@ def main():
     def t03_direction_is_against_his_own_median():
         j = watch()
         st = j["strip"]["steps"]
-        assert st["value"] == 9000, str(st["value"])
+        # steps is cumulative, so the headline is the last complete day
+        assert st["value"] == YSTEPS, str(st["value"])
         assert st["median"] is not None and st["n"] >= 3, str(st)
         assert 4000 < st["median"] < 7000, \
-            "the median is not his own trailing figure: " + str(st["median"])
+            "the median is not drawn from his own trailing days: " + str(st["median"])
         assert st["dir"] == "up", str(st)
+        # the settled pair take today's reading
         assert j["strip"]["resting_hr"]["dir"] == "down", str(j["strip"]["resting_hr"])
         assert j["strip"]["hrv_ms"]["dir"] == "up", str(j["strip"]["hrv_ms"])
         return ("steps up, resting HR down, HRV up -- each against its own "
@@ -349,18 +351,23 @@ def main():
         return without_days([TODAY], body)
 
     def t03d_no_data_only_when_neither_day_has_one():
+        """The one-day rule belongs to the SETTLED metrics. A reading is
+        yesterday's or it is nothing; a cumulative total legitimately
+        headlines the last complete day, however far back that is, because
+        a complete day is a complete day."""
         def body():
             j = watch()
+            for k in ("resting_hr", "hrv_ms"):
+                d = j["strip"][k]
+                assert d["value"] is None, \
+                    k + " reached past yesterday: " + str(d)
+                assert d["stale"] is False and d["day"] == "", str(d)
+            # the cumulative one does reach further, and says which day
             st = j["strip"]["steps"]
-            assert st["value"] is None, \
-                "something was shown when neither day had a figure: " + str(st)
-            assert st["stale"] is False and st["day"] == "", str(st)
-            # and it never reaches back a second day: D[2] still has 5020
-            got = [r for r in j["row"] if r["date"] == D[2]][0]
-            assert got["steps"] is not None, \
-                "the fixture lost the day before yesterday"
-            return ("neither day -> no data, and it did not reach back to "
-                    "D-2, which still holds " + str(int(got["steps"])))
+            assert st["value"] == 5020 and st["day"] == D[2], \
+                "steps did not fall through to the last complete day: " + str(st)
+            return ("settled pair -> no data; cumulative headlines " + D[2] +
+                    ", the last complete day, and names it")
         return without_days([TODAY, D[1]], body)
 
     def t03e_the_tile_shows_how_thin_the_baseline_is():
@@ -377,10 +384,103 @@ def main():
         for bad in ("implausible", "MIN_STEPS", "> 100", "plausib"):
             assert bad not in blk, "a plausibility threshold crept in: " + bad
         h = gc.get("/").get_data(as_text=True)
-        assert "d of history" in h and "median of '+d.n+' d'" in h, \
-            "n is not rendered on the tile, with or without an arrow"
-        return ("every tile carries n and the page prints it; no threshold "
-                "anywhere in the new block")
+        assert "days to compare with" in h, \
+            "the tile cannot say how few days it has"
+        assert "d.n+(d.n===1?' day':' days')" in h, \
+            "n is not on the provenance line, so a thin baseline looks like any other"
+        return ("every tile carries n and the page prints it on its own line; "
+                "no threshold anywhere in the new block")
+
+    # ---------------------------------------------- Phase K: kind and voice
+    def t03f_cumulative_headline_is_the_last_complete_day():
+        """A part-day total against whole-day medians is not a comparison: it
+        points down every morning by construction. Steps, exercise and
+        standing load therefore headline the last COMPLETE day."""
+        j = watch()
+        for k in ("steps", "exercise_minutes", "load_hours"):
+            d = j["strip"][k]
+            assert d["kind"] == "cumulative", k + " is not marked cumulative"
+            if d["value"] is not None:
+                assert d["day"] < TODAY, \
+                    k + " headlines a day that is still running: " + str(d["day"])
+        st = j["strip"]["steps"]
+        assert st["day"] == D[1], "steps should headline yesterday: " + str(st["day"])
+        assert st["value"] == YSTEPS, str(st["value"])
+        assert st["dir"] is not None, "the settled day carries no arrow"
+        return "steps headlines " + st["day"] + ", the last complete day, with an arrow"
+
+    def t03g_todays_running_figure_has_no_arrow():
+        j = watch()
+        st = j["strip"]["steps"]
+        assert st["today"] is not None, "today's running figure is missing"
+        assert st["today"]["value"] == 9000, str(st["today"])
+        assert st["today"]["day"] == TODAY, str(st["today"])
+        assert "dir" not in st["today"], \
+            "a part-day figure was given a direction: " + str(st["today"])
+        assert st["value"] != st["today"]["value"], \
+            "the headline and the running figure are the same number"
+        h = gc.get("/").get_data(as_text=True)
+        assert "so far today" in h, "the running figure is not labelled on the page"
+        return "today's 9,000 reported separately, labelled, with no arrow"
+
+    def t03h_settled_metrics_are_unchanged_by_the_split():
+        j = watch()
+        for k in ("resting_hr", "hrv_ms"):
+            d = j["strip"][k]
+            assert d["kind"] == "settled", k + " is not marked settled"
+            assert d["day"] == TODAY, \
+                k + " should take today when today has a reading: " + str(d["day"])
+            assert d.get("today") is None, \
+                "a settled metric grew a running figure: " + str(d)
+        return "resting HR and HRV still take today's reading when it exists"
+
+    def t03i_the_kind_is_declared_in_one_place():
+        src = open(gut_path, encoding="utf-8", newline="").read()
+        assert src.count("WATCH_KIND = {") == 1, "WATCH_KIND is declared more than once"
+        for k in ("steps", "exercise_minutes", "load_hours", "resting_hr", "hrv_ms"):
+            assert k in gl.WATCH_KIND, k + " has no declared kind"
+        assert set(gl.WATCH_KIND.values()) == {"cumulative", "settled"}, \
+            str(set(gl.WATCH_KIND.values()))
+        # and nothing decides it from the clock
+        blk = src.split("GUTLOG_V3150_READ -- what KIND", 1)[1][:3000]
+        for bad in ("datetime.now().hour", "now_hm()", "strftime(\"%H", "hour <", "hour >"):
+            assert bad not in blk, "a time-of-day threshold crept in: " + bad
+        return "one WATCH_KIND table, five metrics, no clock in the decision"
+
+    def t03j_every_figure_names_its_day():
+        j = watch()
+        for k, d in j["strip"].items():
+            if d["value"] is not None:
+                assert d["day"], k + " shows a figure without naming its day"
+            if d.get("today"):
+                assert d["today"].get("day") == TODAY, str(d["today"])
+        h = gc.get("/").get_data(as_text=True)
+        assert "function wkDay(" in h, "there is no day-naming helper on the page"
+        assert "'today'" in h and "'yesterday'" in h, \
+            "the page cannot name today or yesterday"
+        return "every tile with a figure carries a day, and the page can name it"
+
+    def t03k_no_third_person_in_any_rendered_string():
+        """The briefs are written about him, not to him, and 'On his legs'
+        made it onto the screen from one. Server suites never run page JS, so
+        this reads the string literals the page is built from."""
+        import re as _re
+        banned = _re.compile(r"\b(his|him|he)\b", _re.I)
+        src = open(gut_path, encoding="utf-8", newline="").read()
+        blk = src.split("GUTLOG_V3150_READ -- Watch card", 1)[1]
+        blk = blk.split("@media (prefers-reduced-motion", 1)[0]
+        js = src.split("const WK_LABEL=", 1)[1].split("function buildNowStatics", 1)[0]
+        bad = []
+        for lit in _re.findall(r"'((?:[^'\\]|\\.)*)'", js + blk):
+            if banned.search(lit):
+                bad.append(lit)
+        # and the server-side strings the payload carries
+        for name in ("WATCH_NOTE",):
+            if banned.search(getattr(gl, name, "") or ""):
+                bad.append(name)
+        assert not bad, "third person in a user-facing string: " + str(bad[:3])
+        assert "On your legs" in js, "the standing-load label is not second person"
+        return "no third-person pronoun in any string the Watch card renders"
 
     def t04_no_verdict_anywhere():
         """Inputs, not conclusions. No score, no readiness, no recovery."""
@@ -540,11 +640,18 @@ def main():
     # ------------------------------------------- standing load never exercise
     def t15_standing_load_is_never_exercise():
         j = watch()
-        ex = j["strip"]["exercise_minutes"]["value"]
-        lh = j["strip"]["load_hours"]["value"]
-        assert lh == 6.0, "today's operating hours are wrong: " + str(lh)
-        assert ex == 35, "exercise minutes moved with the operating day: " + str(ex)
-        assert ex < 6 * 60, "the load was added into exercise minutes"
+        exd = j["strip"]["exercise_minutes"]
+        lhd = j["strip"]["load_hours"]
+        # both are cumulative now, so both headline the last complete day and
+        # carry today's running figure separately
+        assert lhd["value"] == 8.0 and lhd["day"] == D[2], \
+            "the standing-load headline is not the last complete day: " + str(lhd)
+        assert lhd["today"] and lhd["today"]["value"] == 6.0, \
+            "today's operating hours are not reported: " + str(lhd["today"])
+        assert exd["value"] == 22 and exd["day"] == D[1], str(exd)
+        assert exd["today"] and exd["today"]["value"] == 35, str(exd["today"])
+        assert exd["value"] < 8 * 60 and exd["today"]["value"] < 6 * 60, \
+            "the load was added into exercise minutes"
         act = gc.get("/api/activity?day=" + TODAY).get_json()["summary"]
         assert act["minutes"] == 0 and act["load_minutes"] == 360, str(act)
         # and it is not folded into the median either
@@ -590,6 +697,12 @@ def main():
         ("03c median excludes the shown day", t03c_median_excludes_the_day_being_shown),
         ("03d no data only when neither day has one", t03d_no_data_only_when_neither_day_has_one),
         ("03e the tile shows how thin the baseline is", t03e_the_tile_shows_how_thin_the_baseline_is),
+        ("03f cumulative headlines the last complete day", t03f_cumulative_headline_is_the_last_complete_day),
+        ("03g today's running figure has no arrow", t03g_todays_running_figure_has_no_arrow),
+        ("03h settled metrics unchanged by the split", t03h_settled_metrics_are_unchanged_by_the_split),
+        ("03i the kind is declared in one place", t03i_the_kind_is_declared_in_one_place),
+        ("03j every figure names its day", t03j_every_figure_names_its_day),
+        ("03k no third person in a rendered string", t03k_no_third_person_in_any_rendered_string),
         ("04 no verdict anywhere", t04_no_verdict_anywhere),
         ("05 'not enough to say' is not 'level'", t05_a_level_day_is_not_a_missing_day),
         ("06 row spans the window, ends today", t06_row_spans_the_window_and_ends_today),

@@ -30,7 +30,14 @@ From v3.13.0 the Watch block does the same. A block guarded by "is the card
 there?" that simply skips is not a negative control: running it against the
 previous build gave 76 PASS / 0 FAIL, which reads as evidence and is the
 absence of it. When #nowWatch is missing, every property is now emitted as a
-named failure instead."""
+named failure instead.
+
+From v3.15.0 the Watch block also measures what it used to leave to taste: no
+computed font-size below 14px inside the card, #wkStrip not scrolling sideways
+at 390px *or* 360px, one full-width hero over two-per-row tiles, every tile
+naming its own day, and no third-person pronoun in any rendered string. The
+last is a real guard, not pedantry -- "On his legs" reached the screen from a
+brief written about him rather than to him."""
 import importlib.util, os, sys, tempfile, threading, time
 from werkzeug.serving import make_server
 from playwright.sync_api import sync_playwright
@@ -332,13 +339,20 @@ with sync_playwright() as p:
         "the epoch band has a boundary inside the window",
         "the today strip has its tiles",
         "a metric with no figure today reads 'no data'",
-        "the steps tile shows a direction against his own median",
-        "the steps tile says which feed answered",
+        "today's running figure sits under the settled headline",
+        "the steps tile shows a direction against the typical figure",
+        "the steps tile names the feed in words, not a slug",
         "the standing-load tile is marked as load",
         "standing load is not shown in exercise minutes",
         "the workout shows its IST clock time",
         "the footnote is on the screen",
         "no verdict appears on the page",
+        "nothing inside the card is smaller than 14px",
+        "the strip does not scroll sideways at 390px",
+        "the strip does not scroll sideways at 360px",
+        "every tile names its day",
+        "the hero is full width and the rest are two per row",
+        "no third-person pronoun is rendered",
     ]
     if not pg.locator("#nowWatch").count():
         # Same treatment as the operating-day tile: a guard that skips is a
@@ -367,16 +381,32 @@ with sync_playwright() as p:
         _payload = {
             "ok": True, "day": _days[-1], "days": 14, "since": _days[0], "link": True,
             "strip": {
-                "steps": {"value": 9000, "source": "applewatch", "dir": "up",
-                          "median": 5200, "n": 12},
-                "exercise_minutes": {"value": 35, "source": "applewatch", "dir": "up",
-                                     "median": 20, "n": 12},
-                "load_hours": {"value": 6.0, "source": "gutlog", "dir": None,
-                               "median": None, "n": 0},
-                "resting_hr": {"value": None, "source": "", "dir": None,
-                               "median": None, "n": 0},
-                "hrv_ms": {"value": 61, "source": "applewatch", "dir": "down",
-                           "median": 70, "n": 11}},
+                # cumulative: headline is the last complete day, today runs
+                # underneath with no arrow
+                "steps": {"kind": "cumulative", "value": 4902, "day": _days[-2],
+                          "stale": True, "source": "applewatch", "dir": "up",
+                          "median": 1214, "n": 10,
+                          "today": {"value": 62, "day": _days[-1],
+                                    "source": "applewatch"}},
+                "exercise_minutes": {"kind": "cumulative", "value": 19,
+                                     "day": _days[-2], "stale": True,
+                                     "source": "applewatch", "dir": "up",
+                                     "median": 10, "n": 5,
+                                     "today": {"value": 3, "day": _days[-1],
+                                               "source": "applewatch"}},
+                # a headline older than yesterday, so the tile has to name a
+                # weekday rather than lean on "yesterday"
+                "load_hours": {"kind": "cumulative", "value": 8.0,
+                               "day": _days[-4], "stale": True,
+                               "source": "gutlog", "dir": None,
+                               "median": None, "n": 1, "today": None},
+                # settled, and with nothing at all: must read "no data"
+                "resting_hr": {"kind": "settled", "value": None, "day": "",
+                               "stale": False, "source": "", "dir": None,
+                               "median": None, "n": 0, "today": None},
+                "hrv_ms": {"kind": "settled", "value": 61, "day": _days[-1],
+                           "stale": False, "source": "applewatch", "dir": "down",
+                           "median": 70, "n": 11, "today": None}},
             "row": _row,
             "workouts": [{"date": _days[-2], "kind": "walk", "wtype": "Walking",
                           "start": _days[-2] + "T07:11:29", "end": _days[-2] + "T07:41:29",
@@ -427,12 +457,15 @@ with sync_playwright() as p:
         hrt = pg.locator('#wkStrip .wktile[data-k="resting_hr"]')
         res("no data" in hrt.inner_text(),
             "a metric with no figure today reads 'no data'")
+        res("so far today" in pg.locator('#wkStrip .wktile[data-k="steps"]').inner_text(),
+            "today's running figure sits under the settled headline")
         stt = pg.locator('#wkStrip .wktile[data-k="steps"]').inner_text()
-        res("↑" in stt and "median" in stt,
-            "the steps tile shows a direction against his own median: " + stt)
-        res("watch" in stt, "the steps tile says which feed answered")
+        res("↑" in stt and "typical" in stt,
+            "the steps tile shows a direction against the typical figure: " + stt)
+        res("Apple Watch" in stt,
+            "the steps tile names the feed in words, not a slug: " + stt)
         ldt = pg.locator('#wkStrip .wktile[data-k="load_hours"]').inner_text()
-        res("load, not exercise" in ldt and "6" in ldt,
+        res("load, not exercise" in ldt and "8" in ldt,
             "the standing-load tile is marked as load: " + ldt)
         res("min" not in ldt.split("load, not exercise")[0],
             "standing load is not shown in exercise minutes: " + ldt)
@@ -444,6 +477,64 @@ with sync_playwright() as p:
         res("readiness" not in body_l.replace("no readiness", "")
             and "body battery" not in body_l and "fitness age" not in body_l,
             "no verdict appears on the page")
+        # --- v3.15.0: measured readability ---------------------------------
+        # He is 58 and reads this on a phone at 5am. These are measurements,
+        # not preferences, so they are assertions rather than a screenshot.
+        small = pg.evaluate("""() => {
+          const out = [];
+          document.querySelectorAll('#nowWatch *').forEach(el => {
+            if (!el.textContent || !el.textContent.trim()) return;
+            if (el.offsetParent === null) return;
+            const px = parseFloat(getComputedStyle(el).fontSize);
+            if (px < 14) out.push(el.className + ':' + px);
+          });
+          return out;
+        }""")
+        res(not small, "nothing inside the card is smaller than 14px"
+            + ("" if not small else ": " + ", ".join(small[:5])))
+        over = pg.evaluate("() => {const s=document.querySelector('#wkStrip');"
+                           "return [s.scrollWidth, s.clientWidth];}")
+        res(over[0] <= over[1], "the strip does not scroll sideways at 390px"
+            + ("" if over[0] <= over[1] else " (%d > %d)" % (over[0], over[1])))
+        pg.set_viewport_size({"width": 360, "height": 780}); time.sleep(0.4)
+        over2 = pg.evaluate("() => {const s=document.querySelector('#wkStrip');"
+                            "return [s.scrollWidth, s.clientWidth];}")
+        res(over2[0] <= over2[1], "the strip does not scroll sideways at 360px"
+            + ("" if over2[0] <= over2[1] else " (%d > %d)" % (over2[0], over2[1])))
+        days = pg.evaluate("""() => {
+          const out = [];
+          document.querySelectorAll('#wkStrip .wktile').forEach(t => {
+            const v = t.querySelector('.wv');
+            const d = t.querySelector('.wday');
+            out.push([t.dataset.k, (v ? v.textContent.trim() : ''),
+                      (d ? d.textContent.trim() : '')]);
+          });
+          return out;
+        }""")
+        missing = [k for k, v, d in days if v and v != 'no data' and not d]
+        res(days and not missing, "every tile names its day"
+            + ("" if not missing else ": " + ", ".join(missing)))
+        geom = pg.evaluate("""() => {
+          const s = document.querySelector('#wkStrip');
+          const hero = s.querySelector('.wktile.hero');
+          const rest = [...s.querySelectorAll('.wkgrid .wktile')];
+          return {strip: s.clientWidth,
+                  hero: hero ? Math.round(hero.getBoundingClientRect().width) : 0,
+                  xs: [...new Set(rest.map(t => Math.round(t.getBoundingClientRect().x)))].length,
+                  ys: [...new Set(rest.map(t => Math.round(t.getBoundingClientRect().y)))].length,
+                  n: rest.length};
+        }""")
+        res(geom["n"] == 4 and geom["xs"] == 2 and geom["ys"] == 2
+            and geom["hero"] >= geom["strip"] - 2,
+            "the hero is full width and the rest are two per row"
+            + ("" if (geom["n"] == 4 and geom["xs"] == 2 and geom["ys"] == 2)
+               else " -- got " + str(geom)))
+        pg.set_viewport_size({"width": 390, "height": 844}); time.sleep(0.4)
+        txt = pg.locator("#nowWatch").inner_text()
+        import re as _re
+        pron = _re.findall(r"\b(his|him|he)\b", txt, _re.I)
+        res(not pron, "no third-person pronoun is rendered"
+            + ("" if not pron else ": " + ", ".join(sorted(set(pron)))))
         pg.unroute("**/api/watch*")
         # leave the page where the next block expects to find it
         pg.click('#nav button[data-t="review"]'); time.sleep(0.5)

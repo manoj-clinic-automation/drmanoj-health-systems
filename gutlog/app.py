@@ -271,7 +271,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.3"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK
+SCHEMA_VERSION = "3.3.3"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -2113,6 +2113,20 @@ def api_episode_eased(eid):
 # and HRV accuracy depends on the underlying rhythm, so every number on this
 # screen is an input. The footnote says so once, quietly.
 WATCH_STRIP = ("steps", "exercise_minutes", "resting_hr", "hrv_ms")
+# GUTLOG_V3150_READ -- what KIND of quantity each tile holds, in one place.
+#
+# cumulative: it accumulates through the day. A part-day total compared with
+#   whole-day medians is not a comparison -- it points down every morning by
+#   construction. So the headline is the last COMPLETE day and today's running
+#   figure is shown separately, with no arrow on it.
+# settled: it is a reading rather than a total. Today's stands as soon as it
+#   exists, and falls back to yesterday when it does not.
+#
+# The distinction is in the shape of the quantity. Nothing here looks at the
+# clock, and nothing here should start to.
+WATCH_KIND = {"steps": "cumulative", "exercise_minutes": "cumulative",
+              "load_hours": "cumulative",
+              "resting_hr": "settled", "hrv_ms": "settled"}
 WATCH_NOTE = ("Shown as inputs, not conclusions. Heart-rate and HRV figures "
               "from a wrist sensor depend on the underlying rhythm for their "
               "accuracy, so no readiness, recovery or fitness score is "
@@ -2224,15 +2238,22 @@ def api_watch():
     strip = {}
     for k in WATCH_STRIP + ("load_hours",):
         s = series.get(k) or {}
-        # Today if it has a figure, else yesterday. He opens this between 5
-        # and 7am; the phone syncs later, so at the hour he actually looks
-        # today is usually still empty and a blank strip is correct and
-        # useless. Falling back is always labelled, never silent.
-        day = None
-        for cand in (tday, yday):
-            if s.get(cand) and s[cand].get("value") is not None:
-                day = cand
-                break
+        kind = WATCH_KIND.get(k, "settled")
+        if kind == "cumulative":
+            # The headline is the last COMPLETE day. Today is still running,
+            # so it cannot be set against whole-day medians without pointing
+            # down every morning; it is reported separately below.
+            cands = [d2 for d2 in s if d2 < tday]
+            day = max(cands) if cands else None
+        else:
+            # A reading, not a total: today's is valid the moment it exists.
+            # Falling back one day is always labelled, never silent -- the
+            # phone syncs after the hour this screen is actually read.
+            day = None
+            for cand in (tday, yday):
+                if s.get(cand) and s[cand].get("value") is not None:
+                    day = cand
+                    break
         cur = s.get(day) or {}
         v = float(cur["value"]) if cur.get("value") is not None else None
         # The median excludes the day being shown. Leave it in and the figure
@@ -2241,9 +2262,15 @@ def api_watch():
         hist = [float(x["value"]) for d2, x in s.items()
                 if d2 != day and x and x.get("value") is not None]
         d_, med, n = _direction(v, hist)
-        strip[k] = {"value": v, "source": cur.get("source") or "",
+        run = None
+        if kind == "cumulative":
+            t = s.get(tday) or {}
+            if t.get("value") is not None:
+                run = {"value": float(t["value"]), "day": tday,
+                       "source": t.get("source") or ""}
+        strip[k] = {"kind": kind, "value": v, "source": cur.get("source") or "",
                     "day": day or "", "stale": bool(day) and day != tday,
-                    "dir": d_, "median": med, "n": n}
+                    "dir": d_, "median": med, "n": n, "today": run}
 
     wk = [w for w in ((feed or {}).get("workouts") or []) if w.get("date", "") >= since]
     wk.sort(key=lambda w: (w.get("date", ""), w.get("start_hm", "")), reverse=True)
@@ -3156,34 +3183,61 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 .tag.k-pain{background:#FBEDEC;color:var(--err)}
 .tag.k-load{background:#EFE7F8;color:#6A3FA8}
 @media (max-width:430px){ #n_msk .chip.num{padding:8px 0;min-width:30px;text-align:center} }
-/* GUTLOG_V3130_WATCH -- today strip, fourteen-day row, epoch band */
-.wkstrip{display:flex;flex-wrap:wrap;gap:8px}
-.wktile{flex:1 1 30%;min-width:96px;border:1px solid var(--line);border-radius:11px;padding:8px 9px}
-.wktile .wl{font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
-.wktile .wv{font-size:19px;font-weight:800;line-height:1.15}
-.wktile .wv.none{font-size:14px;font-weight:600;color:var(--muted)}
-.wktile .wd{font-size:11.5px;color:var(--muted);margin-top:1px}
-.wktile .ar{font-weight:800}
-.wktile.load{border-style:dashed}
-.wkrow{display:flex;gap:3px;align-items:flex-end;margin:10px 0 0;height:64px}
-.wkcol{flex:1 1 0;display:flex;flex-direction:column;justify-content:flex-end;height:100%;position:relative}
-.wkcol .bar{background:var(--teal);border-radius:3px 3px 0 0;min-height:2px}
-.wkcol.nodata .bar{background:repeating-linear-gradient(45deg,#DCE5E2,#DCE5E2 3px,transparent 3px,transparent 6px);
-  height:100%;border-radius:3px;opacity:.8}
-.wkcol.today .bar{background:var(--teal-d)}
-.wkep{display:flex;gap:3px;height:5px;margin-top:3px}
+/* GUTLOG_V3150_READ -- Watch card, read on a phone at 5am.
+   Nothing below 14px. The old strip was five 116px tiles plus gaps = 612px
+   inside a 368px box, so it overflowed; block + a two-column grid cannot.
+   Every figure uses tabular-nums so digits stop jittering between refreshes. */
+.wkstrip{display:block}
+.wkgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.wktile{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:14px;min-width:0}
+.wktile .wl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+  font-size:14px;font-weight:600;color:var(--muted);margin:0}
+.wktile .wl .wday{font-weight:500;white-space:nowrap}
+.wktile .wv{font-size:24px;font-weight:700;line-height:1.2;margin:4px 0 0;
+  font-variant-numeric:tabular-nums}
+.wktile.hero .wv{font-size:32px}
+.wktile .wv.none{font-size:16px;font-weight:600;color:var(--muted)}
+.wktile .wc{font-size:15px;font-weight:500;color:var(--ink);margin:4px 0 0;
+  font-variant-numeric:tabular-nums}
+.wktile .wp{font-size:14px;color:var(--muted);margin:2px 0 0}
+.wktile .wr{font-size:14px;color:var(--muted);margin:6px 0 0;
+  font-variant-numeric:tabular-nums}
+/* the chart. 104px so fourteen bars have a readable shape; 2px between
+   adjacent bars; 4px rounded data-ends, square to the baseline. */
+.wkrow{display:flex;gap:2px;align-items:flex-end;margin:14px 0 0;height:104px;
+  border-bottom:1px solid var(--line)}
+.wkcol{flex:1 1 0;display:flex;flex-direction:column;justify-content:flex-end;
+  height:100%;min-width:0;cursor:pointer;background:none;border:0;padding:0}
+.wkcol .bar{background:var(--teal);border-radius:4px 4px 0 0;min-height:3px}
+.wkcol.nodata .bar{height:100%;border-radius:0;
+  background:repeating-linear-gradient(45deg,#E4ECE9,#E4ECE9 2px,transparent 2px,transparent 5px)}
+.wkcol.today .bar{background:var(--teal2)}
+.wkcol.sel .bar{outline:2px solid var(--ink);outline-offset:1px}
+.wkep{display:flex;gap:2px;height:6px;margin-top:4px}
 .wkep .seg{flex:1 1 0;border-radius:2px;background:transparent}
-.wkep .seg.on{background:#C9A227}
-.wklane{display:flex;gap:3px;height:9px;margin-top:3px;align-items:center}
-.wklane .mk{flex:1 1 0;height:7px;border-radius:2px;background:transparent}
-.wklane.pain .mk.on{background:var(--err)}
-.wklane.ot .mk.on{background:#6A3FA8}
-.wkkey{display:flex;flex-wrap:wrap;gap:10px;font-size:11.5px;color:var(--muted);margin-top:7px}
-.wkkey i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
-.wkdates{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:3px}
-.wknote{font-size:11.5px;color:var(--muted);margin:10px 0 0;line-height:1.45}
-.wkwo{display:flex;gap:8px;padding:7px 2px;border-top:1px solid var(--line);font-size:13.5px}
-.wkwo .wt{flex:0 0 84px;color:var(--muted);font-size:12.5px}
+.wkep .seg.on{background:#C8860A}
+/* lanes: 10px marks, and a SHAPE as well as a colour -- pain is a disc,
+   an operating day is a diamond, so neither is colour-alone */
+.wklane{display:flex;gap:2px;height:12px;margin-top:4px;align-items:center}
+.wklane .mk{flex:1 1 0;height:10px;position:relative}
+.wklane .mk.on::after{content:"";position:absolute;left:50%;top:50%;
+  width:10px;height:10px;margin:-5px 0 0 -5px}
+.wklane.pain .mk.on::after{background:var(--err);border-radius:50%;}
+.wklane.ot .mk.on::after{background:#6A3FA8;transform:rotate(45deg);border-radius:1px}
+.wkkey{display:flex;flex-wrap:wrap;gap:12px;font-size:14px;color:var(--muted);margin-top:10px}
+.wkkey i{display:inline-block;width:10px;height:10px;margin-right:5px;vertical-align:-1px}
+.wkkey i.pain{background:var(--err);border-radius:50%;}
+.wkkey i.ot{background:#6A3FA8;transform:rotate(45deg);border-radius:1px}
+.wkkey i.ep{background:#C8860A;border-radius:2px}
+.wkkey i.nd{background:repeating-linear-gradient(45deg,#E4ECE9,#E4ECE9 2px,transparent 2px,transparent 5px);
+  border:1px solid var(--line)}
+.wkdates{display:flex;justify-content:space-between;font-size:14px;color:var(--muted);margin-top:6px}
+.wkpick{font-size:15px;color:var(--ink);margin:8px 0 0;min-height:21px;
+  font-variant-numeric:tabular-nums}
+.wknote{font-size:14px;color:var(--muted);margin:12px 0 0;line-height:1.5}
+.wkwo{display:flex;gap:10px;padding:10px 2px;border-top:1px solid var(--line);font-size:15px}
+.wkwo .wt{flex:0 0 96px;color:var(--muted);font-size:14px;font-variant-numeric:tabular-nums}
 @media (prefers-reduced-motion:reduce){.toast,.pbar i,.chip{transition:none}}
 </style></head><body>
 <div style="display:flex;gap:8px;padding:8px 12px 4px;font-size:13.5px">
@@ -5028,10 +5082,13 @@ async function loadPain(){
    nothing here computes a verdict. Arrows are against his own trailing
    median, so they say "more than usual for you", not "short of a target". */
 const WK_LABEL={steps:'Steps',exercise_minutes:'Exercise',
-  load_hours:'On his legs',resting_hr:'Resting HR',hrv_ms:'HRV'};
+  load_hours:'On your legs',resting_hr:'Resting HR',hrv_ms:'HRV'};
 const WK_UNIT={steps:'',exercise_minutes:' min',load_hours:' h',
   resting_hr:' bpm',hrv_ms:' ms'};
 const WK_ARROW={up:'\u2191',down:'\u2193',level:'\u2192'};
+/* sources in words. A slug on a screen is a note to the person who wrote it */
+const WK_SOURCE={applewatch:'Apple Watch',healthconnect:'Health Connect',
+  gutlog:'logged'};
 
 function wkNum(v,k){
   if(v===null||v===undefined)return '';
@@ -5040,33 +5097,62 @@ function wkNum(v,k){
   return String(Math.round(v));
 }
 
-function wkTile(k,d){
+/* every figure names its day; signalling today by the absence of a label is
+   how '62 steps - 19 min - yesterday' came to read as all yesterday's */
+function wkDay(d){
+  if(!d)return '';
+  if(d===todayISO)return 'today';
+  const y=new Date(todayISO+'T12:00:00');
+  y.setDate(y.getDate()-1);
+  if(d===y.toLocaleDateString('en-CA'))return 'yesterday';
+  return new Date(d+'T12:00:00').toLocaleDateString('en-GB',
+    {weekday:'short',day:'numeric',month:'short'});
+}
+
+function wkSrc(s){
+  if(!s)return '';
+  return WK_SOURCE[s]||s;
+}
+
+function wkTile(k,d,hero){
   const w=document.createElement('div');
-  w.className='wktile'+(k==='load_hours'?' load':'');
+  w.className='wktile'+(hero?' hero':'');
   w.dataset.k=k;
-  w.innerHTML='<p class="wl"></p><p class="wv"></p><p class="wd"></p>';
-  w.querySelector('.wl').textContent=WK_LABEL[k]||k;
+  w.dataset.kind=d.kind||'';
+  w.innerHTML='<p class="wl"><span class="wn"></span><span class="wday"></span></p>'+
+    '<p class="wv"></p><p class="wc"></p><p class="wp"></p><p class="wr"></p>';
+  w.querySelector('.wn').textContent=WK_LABEL[k]||k;
+  const has=(d.value!==null&&d.value!==undefined);
+  w.querySelector('.wday').textContent=has?wkDay(d.day):'';
   const vv=w.querySelector('.wv');
-  if(d.value===null||d.value===undefined){
+  if(has){
+    vv.textContent=wkNum(d.value,k)+(WK_UNIT[k]||'');
+  }else{
     vv.textContent='no data';
     vv.classList.add('none');
-  }else{
-    vv.textContent=wkNum(d.value,k)+(WK_UNIT[k]||'');
   }
-  const bits=[];
-  if(d.stale)bits.push('yesterday');
-  if(d.dir&&d.median!==null&&d.median!==undefined){
-    bits.push(WK_ARROW[d.dir]+' vs '+wkNum(d.median,k)+' median of '+d.n+' d');
-  }else if(d.value!==null&&d.value!==undefined){
-    /* n is shown either way, so a thin baseline is visible as thin rather
-       than quietly standing behind an arrow */
-    bits.push(d.n?('only '+d.n+' d of history'):'no history to compare');
+  /* line 1: the comparison, in ink. Direction is never colour-alone -- the
+     glyph carries it and the text stays ink. */
+  const cmp=w.querySelector('.wc');
+  if(has&&d.dir&&d.median!==null&&d.median!==undefined){
+    cmp.textContent=WK_ARROW[d.dir]+' '+wkNum(d.value,k)+
+      ' \u00b7 typical '+wkNum(d.median,k);
+  }else if(has){
+    cmp.textContent=d.n?('only '+d.n+' days to compare with'):'nothing yet to compare with';
   }
-  if(d.source&&d.source!=='gutlog'&&d.value!==null&&d.value!==undefined){
-    bits.push(d.source==='applewatch'?'watch':d.source);
+  /* line 2: where it came from, and how thin the baseline is */
+  const prov=[];
+  if(has&&d.n)prov.push(d.n+(d.n===1?' day':' days'));
+  if(has&&d.source)prov.push(wkSrc(d.source));
+  if(k==='load_hours')prov.push('load, not exercise');
+  w.querySelector('.wp').textContent=prov.join(' \u00b7 ');
+  /* today's running total, under the settled headline, with NO arrow: a
+     part-day figure has nothing valid to be compared against */
+  const run=w.querySelector('.wr');
+  if(d.kind==='cumulative'&&d.today&&d.today.value!==null&&
+     d.today.value!==undefined){
+    run.textContent=wkNum(d.today.value,k)+(WK_UNIT[k]||'')+' so far today';
   }
-  if(k==='load_hours')bits.push('load, not exercise');
-  w.querySelector('.wd').textContent=bits.join(' \u00b7 ');
   return w;
 }
 
@@ -5075,22 +5161,33 @@ function wkChart(row){
   const vals=row.filter(r=>r.has_data&&r.steps).map(r=>r.steps);
   const top=vals.length?Math.max.apply(null,vals):0;
   const bars=document.createElement('div');bars.className='wkrow';
+  const pick=document.createElement('p');pick.className='wkpick';
+  pick.textContent='Tap a bar for that day.';
   row.forEach(r=>{
-    const c=document.createElement('div');
+    const c=document.createElement('button');
+    c.type='button';
     c.className='wkcol'+(r.has_data?'':' nodata')+(r.date===todayISO?' today':'');
     c.dataset.d=r.date;
     const b=document.createElement('div');b.className='bar';
     if(r.has_data&&top>0&&r.steps){
-      b.style.height=Math.max(3,Math.round(r.steps/top*100))+'%';
+      b.style.height=Math.max(4,Math.round(r.steps/top*100))+'%';
     }
     c.appendChild(b);
-    const bits=[r.date];
+    const bits=[wkDay(r.date)];
     bits.push(r.has_data?((r.steps?wkNum(r.steps,'steps'):'0')+' steps'+
-      (r.source?(' \u00b7 '+(r.source==='applewatch'?'watch':r.source)):'')):'no data');
-    if(r.ot)bits.push(r.ot_hours+' h on his legs');
+      (r.source?(' \u00b7 '+wkSrc(r.source)):'')):'no data');
+    if(r.ot)bits.push(r.ot_hours+' h on your legs');
     if(r.pain)bits.push('pain logged');
     if(r.epoch)bits.push(r.epoch);
-    c.title=bits.join(' \u00b7 ');
+    const txt=bits.join(' \u00b7 ');
+    c.title=txt;
+    c.setAttribute('aria-label',txt);
+    /* title= does nothing on a phone, so the day is tapped, not hovered */
+    c.onclick=()=>{
+      [...bars.children].forEach(x=>x.classList.remove('sel'));
+      c.classList.add('sel');
+      pick.textContent=txt;
+    };
     bars.appendChild(c);
   });
   box.appendChild(bars);
@@ -5113,14 +5210,18 @@ function wkChart(row){
   });
   const dd=document.createElement('div');dd.className='wkdates';
   dd.innerHTML='<span></span><span></span>';
-  dd.children[0].textContent=row.length?row[0].date.slice(5):'';
+  dd.children[0].textContent=row.length?wkDay(row[0].date):'';
   dd.children[1].textContent=row.length?'today':'';
   box.appendChild(dd);
+  box.appendChild(pick);
+  /* one bar series, so the title names it and it needs no legend; the lanes
+     and the band are separate encodings and do need one. Shape as well as
+     colour on every marker. */
   const key=document.createElement('div');key.className='wkkey';
-  key.innerHTML='<span><i style="background:var(--err)"></i>pain logged</span>'+
-    '<span><i style="background:#6A3FA8"></i>operating day</span>'+
-    '<span><i style="background:#C9A227"></i>medication epoch</span>'+
-    '<span><i style="background:#DCE5E2"></i>no data</span>';
+  key.innerHTML='<span><i class="pain"></i>pain logged</span>'+
+    '<span><i class="ot"></i>operating day</span>'+
+    '<span><i class="ep"></i>medication epoch</span>'+
+    '<span><i class="nd"></i>no data</span>';
   box.appendChild(key);
   return box;
 }
@@ -5139,20 +5240,25 @@ async function loadWatch(){
     $('#wkNote').textContent=j.note||'';
     return;
   }
-  ['steps','exercise_minutes','load_hours','resting_hr','hrv_ms'].forEach(k=>{
-    if(j.strip&&j.strip[k])st.appendChild(wkTile(k,j.strip[k]));
-  });
   const s=j.strip||{};
+  /* one hero, then two per row. Five across overflowed a 368px strip. */
+  if(s.steps)st.appendChild(wkTile('steps',s.steps,true));
+  const grid=document.createElement('div');grid.className='wkgrid';
+  ['exercise_minutes','load_hours','resting_hr','hrv_ms'].forEach(k=>{
+    if(s[k])grid.appendChild(wkTile(k,s[k],false));
+  });
+  st.appendChild(grid);
+  /* the header names the day of every figure it carries */
   const sum=[];
+  const hd=(s.steps&&s.steps.day)||'';
   if(s.steps&&s.steps.value!==null&&s.steps.value!==undefined)
-    sum.push(wkNum(s.steps.value,'steps')+' steps');
-  if(s.exercise_minutes&&s.exercise_minutes.value)
+    sum.push(wkDay(hd)+' '+wkNum(s.steps.value,'steps')+' steps');
+  if(s.exercise_minutes&&s.exercise_minutes.value&&
+     s.exercise_minutes.day===hd)
     sum.push(Math.round(s.exercise_minutes.value)+' min');
-  if(s.load_hours&&s.load_hours.value)sum.push(s.load_hours.value+' h on legs');
-  /* say so in the header too, or a fallback figure reads as today's */
-  const anyStale=['steps','exercise_minutes','load_hours','resting_hr','hrv_ms']
-    .some(k=>s[k]&&s[k].stale);
-  if(sum.length&&anyStale)sum.push('yesterday');
+  if(s.steps&&s.steps.today&&s.steps.today.value!==null&&
+     s.steps.today.value!==undefined)
+    sum.push('today '+wkNum(s.steps.today.value,'steps'));
   $('#wkSum').textContent=sum.length?sum.join(' \u00b7 '):'no data yet';
   $('#wkChart').appendChild(wkChart(j.row||[]));
   const ep=(j.epochs||[]).map(e=>e.label).filter(Boolean);
@@ -5167,7 +5273,7 @@ async function loadWatch(){
   (j.workouts||[]).forEach(w=>{
     const r=document.createElement('div');r.className='wkwo';
     r.innerHTML='<span class="wt"></span><span class="wm"></span>';
-    r.querySelector('.wt').textContent=w.date.slice(5)+' '+(w.start_hm||'');
+    r.querySelector('.wt').textContent=wkDay(w.date)+' '+(w.start_hm||'');
     const bits=[(w.kind||w.wtype||'workout')+' '+w.minutes+' min'];
     if(w.distance_km)bits.push(w.distance_km+' km');
     r.querySelector('.wm').textContent=bits.join(' \u00b7 ');
@@ -5175,7 +5281,6 @@ async function loadWatch(){
   });
   $('#wkNote').textContent=j.note||'';
 }
-
 function buildNowStatics(){
   bindFolds();
 

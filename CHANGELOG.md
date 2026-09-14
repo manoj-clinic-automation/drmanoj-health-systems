@@ -3,6 +3,76 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-14 — GutLog v3.15.0, Phase K: Watch card correctness, then readability
+
+DEPLOYED 08:24 IST. `app.py` sha256 `ea268dc4…`, 280,199 bytes,
+byte-identical to the repo build; `patch_gutlog_v3150.py`, 8 anchors.
+
+**Fixed — voice.** `On his legs` was third person: it came from a brief
+written *about* him, not *to* him. Every rendered string is now second person,
+and `test_phase_j` case 03k fails on a third-person pronoun in any string the
+card renders. The briefs will keep that voice, so the guard belongs in the
+code rather than in a habit; `test_ui_now` checks the rendered text too.
+
+**Fixed — a part-day total was being compared with whole-day medians.** At
+07:53 the card read *"62 steps, ↓ vs 1,214 median of 10 d"*, which points down
+every morning **by construction**. `WATCH_KIND` now declares, in one place,
+what kind of quantity each tile holds:
+*cumulative* (steps, exercise minutes, standing load) headlines the **last
+complete day** with its arrow and a median excluding it, and shows today's
+running figure underneath, labelled *so far today*, **with no arrow** —
+because there is nothing valid for it to be compared against; *settled*
+(resting HR, HRV) takes today's reading the moment it exists. **No time-of-day
+threshold anywhere**, and a test fails if one appears: the distinction is in
+the shape of the quantity, not the clock.
+
+**Fixed — every figure names its day.** Signalling "today" by the *absence* of
+a label is what made `62 steps · 19 min · yesterday` read as though both were
+yesterday's.
+
+**Live immediately after the restart:** steps headlines **4,902 from 13-Sep, ↑
+against a typical 930.5 over n=10**, with today's **284 reported separately
+and no arrow**. The typical moved from 1,213.5 to 930.5 because the median now
+excludes the headline day — correct, and the reason the old number looked
+plausible while being wrong.
+
+**Readability — the root cause was arithmetic, not taste.** `#wkStrip` was
+five 116px tiles plus gaps = **612px inside a 368px strip**, so it overflowed
+and everything else followed. Now one full-width hero over a two-column grid
+(~176px a cell, cannot scroll sideways); nothing below 14px; the four-fact
+meta string split into a comparison line in ink and a provenance line; sources
+named in words; tiles given a real surface; chart 64px → **104px** with 2px
+bar gaps, 4px rounded data-ends, a recessive baseline, and **tap-to-reveal**
+because `title=` does nothing on a phone; lane markers at 10px carrying a
+**shape** as well as a colour (disc / diamond), and direction never
+colour-alone.
+
+**Colour was computed, not eyeballed.** The marker set passes every check of
+the data-viz validator on the card surface — lightness band, chroma floor, CVD
+separation (worst all-pairs ΔE 15.6 deutan), normal-vision floor 19.1,
+contrast ≥ 3:1. The palette is otherwise untouched, as measured.
+
+**Dark mode is Phase L, with evidence rather than an excuse.** Flipping these
+marks onto a dark ground **fails** the validator: two of three fall outside the
+dark lightness band and three drop to 2.4–2.9:1. A real dark variant needs its
+own steps chosen against the dark surface, and because the card shares one
+`:root` palette with every other screen it also needs new ink/muted/line/card
+tokens and a pass over every component. That is app-wide, not a corner of a
+card, so it is its own phase rather than an automatic flip shipped today.
+
+**One deviation, flagged rather than quietly resolved:** the brief asked for a
+13px tile label and 13px provenance line *and* for a test asserting no
+computed font-size below 14px. Those contradict. 14px wins — the test is
+explicit and the stated reason is that small text is hard to read.
+
+**Tests** — `test_phase_j.py` **28/28** (22 before; six new cases for kind,
+the running figure, the one-place declaration, day naming and voice), and
+28/28 at 00:02, 07:30 and 23:58. Four existing cases were rewritten rather
+than loosened, because the semantics genuinely changed: they had encoded
+"headline = today". `test_ui_now.py` gained six measured assertions and its
+stub payload was updated to the new shape; it needs Playwright and was not run
+here.
+
 ## 2026-09-14 — GutLog v3.14.0: the watch strip falls back one day
 
 First real-use finding on the Phase J card, and a good one: at 07:30 all five

@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.14.0)
+# GutLog — DOSSIER (v3.15.0)
 
 Single source of truth. Update after every change.
 
@@ -73,6 +73,27 @@ the join is the point, because load and pain were in different applications.
   replaced hip cannot meet is noise, and noise teaches you to ignore the
   screen. Fewer than three comparable days gives *no* direction rather than a
   flat one — "not enough to say" and "level" are different statements.
+- **Cumulative or settled — declared in one place, `WATCH_KIND` (v3.15.0).**
+  A part-day total measured against whole-day medians is not a comparison: it
+  points down every morning by construction, which is how *"62 steps, ↓ vs
+  1,214 median"* reached the screen at 07:53.
+  - **cumulative** (steps, exercise minutes, standing load) — the headline is
+    the **last complete day**, with its arrow and a median that excludes it.
+    Today's running figure sits underneath, labelled *so far today*, with **no
+    arrow**: there is nothing valid for it to be compared against.
+  - **settled** (resting HR, HRV) — a reading rather than a total, so today's
+    stands the moment it exists and falls back one day when it does not.
+  The distinction is in the shape of the quantity. **No time-of-day threshold
+  anywhere**, and `test_phase_j` case 03i fails if one appears.
+- **Every figure names its day.** Signalling "today" by the *absence* of a
+  label is what made `62 steps · 19 min · yesterday` read as though both were
+  yesterday's. Each tile carries its own day; the header names the day of
+  every figure it shows.
+- **Second person, with a gate.** `On his legs` reached the screen from a
+  brief written *about* him rather than *to* him. Every rendered string is now
+  second person and `test_phase_j` case 03k fails on a third-person pronoun in
+  any string the card renders — the briefs will keep that voice, so the guard
+  belongs in the code rather than in a habit.
 - **It falls back one day (v3.14.0).** A metric with no figure for today shows
   **yesterday's, labelled "yesterday"**. He opens this between 5 and 7am and
   the phone syncs later, so the first real use found all five tiles reading
@@ -115,6 +136,53 @@ exercise** — not on the strip, not in the row, and not into the median.
 
 If FitLog is unreachable the card says so and still draws GutLog's own pain
 and operating days.
+
+### Readability (v3.15.0) — measured, not aesthetic
+
+The root cause was arithmetic, not taste: `#wkStrip` was five 116px tiles plus
+8px gaps — **612px inside a 368px strip** — so it overflowed, and every other
+complaint was downstream of that. Now one full-width **hero** (steps) over a
+two-column grid, which gives each cell ~176px and **cannot** scroll sideways.
+
+- **Nothing below 14px.** Label 14px/600 sentence case, hero value 32px/700,
+  tile value 24px/700, comparison 15px in ink, provenance 14px muted **on its
+  own line**, footnote 14px, header 15px. Every figure uses
+  `font-variant-numeric: tabular-nums` so digits stop jittering on refresh.
+  *Deviation, flagged:* the brief asked for a 13px label and provenance and
+  also for a test asserting nothing below 14px. Those contradict; 14px wins,
+  because the test is explicit and the stated reason is that small text is
+  hard to read.
+- **The four-fact meta string is split.** `↓ vs 1,214 median of 10 d ·
+  healthconnect` was four facts in one 11.5px string in a 116px column. Now
+  line 1 `↑ 4,902 · typical 1,214`, line 2 `10 days · Apple Watch`. Sources are
+  named in words — a slug on a screen is a note to whoever wrote it.
+- **Tiles have a surface**: `--card`, 1px `--line`, 12px radius, 14px padding,
+  10px gap. They had none, so they did not read as objects.
+- **Chart**: 64px → **104px**, 2px between adjacent bars, 4px rounded
+  data-ends square to a recessive baseline, and the no-data hatch kept but
+  made full-height so it cannot be mistaken for a short bar. **Tap-to-reveal**
+  per bar, because `title=` does nothing on a phone; the tapped day prints
+  under the chart and the bar takes an outline.
+- **Lane markers are 10px and carry a shape as well as a colour** — pain is a
+  disc, an operating day is a diamond — so neither is colour-alone. Direction
+  is likewise never colour-alone: the arrow glyph carries it and the text
+  stays ink.
+- **Colour was computed, not eyeballed.** The marker set (pain / operating day
+  / epoch) passes every check of the data-viz validator on the card surface:
+  lightness band, chroma floor, CVD separation (worst all-pairs ΔE **15.6**
+  deutan), normal-vision floor **19.1**, contrast ≥ 3:1. The palette is
+  otherwise untouched, as measured. `--amber` stays a band fill and never
+  becomes text under 18px.
+
+### Dark mode is Phase L, and here is why
+
+Not shipped, deliberately, and not as an automatic flip. Flipping these marks
+onto a dark ground **fails** the validator: two of three fall outside the dark
+lightness band and three drop to 2.4–2.9:1 against it. A real dark variant
+needs its own steps chosen against the dark surface — and because this card
+shares one `:root` palette with every other screen in the app, it also needs
+new ink, muted, line and card tokens and a pass over every existing component.
+That is an app-wide change with its own validation, not a corner of a card.
 
 ## Pain now (Now tab) — v3.12.0
 
@@ -431,6 +499,23 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-14 v3.15.0 — Phase K: Watch card correctness, then readability.
+  DEPLOYED 08:24 IST.** `app.py` sha256 `ea268dc4…`, 280,199 bytes,
+  byte-identical to the repo build. `patch_gutlog_v3150.py`, 8 anchors.
+  Three correctness fixes — second person with a gate, cumulative-vs-settled
+  declared once in `WATCH_KIND`, and every figure naming its day — then the
+  measured readability pass above. Live immediately after: steps headlines
+  **4,902 from 13-Sep, ↑ against a typical 930.5 over n=10**, with today's
+  **284 reported separately and no arrow on it**. The invalid part-day
+  comparison that started this is gone by construction rather than by
+  threshold. `test_phase_j.py` **28/28** (22 before, six new), and 28/28 at
+  00:02, 07:30 and 23:58 — 23:58 still headlines yesterday, which is the case
+  that would break if anything reached for the clock.
+  **Not run here:** `test_ui_now.py`, which needs Playwright; its Watch block
+  gained six measured assertions (nothing under 14px, no sideways scroll at
+  390px *and* 360px, every tile naming its day, hero full width with the rest
+  two per row, no third-person pronoun rendered) and the stub payload was
+  updated to the new shape.
 - **2026-09-14 v3.14.0 — the watch strip falls back one day. DEPLOYED 07:43
   IST.** `app.py` sha256 `b4649026…`, 275,081 bytes, byte-identical to the
   repo build. `patch_gutlog_v3140.py`, 5 anchors. First real-use finding on
