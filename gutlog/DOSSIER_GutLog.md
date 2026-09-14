@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.15.0)
+# GutLog — DOSSIER (v3.16.0)
 
 Single source of truth. Update after every change.
 
@@ -301,6 +301,84 @@ closed at epochs 2 and 3, with a new pair opened together at epoch 4.
 `/api/now` computes today's expected doses by reading whichever line is
 effective for today. Test 09 and 10 in `test_phase_a.py` gate this.
 
+## Colour and theme — v3.16.0
+
+**One palette, two selected modes, every pair measured.** The app renders four
+pages — scan, login, account, diary — and until v3.16.0 all four were light
+only, with 65 distinct colours across 208 declarations, most of them written
+as literal hex rather than as tokens.
+
+**Light, corrected.** Five text/background pairs in the shipped build were
+below the 4.5:1 floor. They are fixed at the token so they cannot recur
+per-site:
+
+| token | was | now | why |
+|---|---|---|---|
+| `--muted` | `#5B7370` | `#556C69` | 4.37:1 on `--chip`, 4.29:1 on the account body |
+| `--amber` | `#C8860A` | `#8A5A00` | 3.06:1 on the card |
+| `.b-ok` bg | `#E7F2E8` | `#EAF4EB` | 4.46:1 under `--ok` |
+| scan `.muted` | `#6A7773` | `#5B6B67` | 4.29:1 on its own body |
+
+`#8A5A00` was **already in the file** as amber ink (`.tag.k-bp`,
+`.rs-flag.AMBER`, `.rd-auto`), so collapsing `--amber` onto it removes a
+colour rather than adding one. Phase K had permitted `#C8860A` as *large text
+only*; Phase L forbids that, so it was re-tinted — see the report.
+
+**Dark, selected rather than flipped.** Tokens chosen against the dark surface
+and measured, never derived by inverting the light ones:
+
+```
+--bg #0E1513   --card #18211F   --line #2A3734   --chip #22302C
+--ink #E8F1EE  --muted #9FB3AD  --teal #4FC4B1   --teal2 #68D9C6
+--err #F5827A  --ok #79C97E     --amber #E0A83C  --hip #B9A0F0
+```
+
+**Accents invert, so ink on them must invert too.** `--teal`, `--ok` and
+`--amber` all become *light* in dark mode, which turns every white-on-accent
+surface into white-on-light. `.btn.primary`, `.chip.sel`, `.chip.just`,
+`.scanbtn` and the dose ticks take `#0E1513` instead — 6.8:1 to 9.2:1 across
+every accent. This was not spotted by reading the CSS; the screen-wide
+contrast assertion caught it at 1.12:1 and four more like it.
+
+**How the mode is chosen.** `prefers-color-scheme` by default. A three-state
+control (System / Light / Dark) in the app-switcher row overrides it and
+persists in `localStorage` under `gl_theme`. The override is applied by a
+synchronous `<head>` script *before first paint*, so there is no light flash
+on a dark phone. `color-scheme:dark` on the root makes date pickers,
+checkboxes and scrollbars follow without per-widget CSS. Every dark
+declaration is emitted twice — once inside
+`@media (prefers-color-scheme:dark)` guarded by `:not([data-theme="light"])`,
+once under `:root[data-theme="dark"]` — so an explicit choice wins in **both**
+directions.
+
+**Paper is not a theme.** The dark block is appended after the page's own
+`@media print` rules and is more specific than they are, so a print block at
+the very end forces white ground and black text in either mode.
+
+**One validated categorical set, replacing two unvalidated ones.** The lane
+markers and the pain/tea/coffee line chart were separate ad-hoc trios. The
+line-chart trio (`#B3372A`, `#C8860A`, `#8A5A2B`) **failed four of the
+validator's five checks**, including the hard one: normal-vision ΔE 10.1
+between pain and coffee — those two lines were hard to tell apart with *full*
+colour vision, not merely with a CVD. Both now draw from one set:
+
+| mode | steps | surface | deutan ΔE | tritan ΔE | normal-vision ΔE | contrast |
+|---|---|---|---|---|---|---|
+| light | `#B3372A` `#6A3FA8` `#B57B08` | `#FCFCF9` | **11.1** | 14.1 | **16.0** | all ≥ 3:1 |
+| dark | `#C1443A` `#7A5FD0` `#B58E08` | `#18211F` | **11.2** | 15.9 | **18.5** | all ≥ 3:1 |
+
+All five checks pass in both modes. Coffee moves from brown to violet:
+**brown cannot pass** — it is dark orange, the same hue family as both the red
+and the amber, so deutan collapses it into one of them at any lightness.
+Identity is never colour-alone anyway (legend plus shaped lane markers).
+
+**Measured coverage.** 94 text/background pairs across the four pages, both
+modes: **0 failures**, worst light 4.48:1 (large text, floor 3:1), worst dark
+6.24:1. Marks and borders are excluded on purpose — they are governed by the
+data-viz validator's ≥3:1-vs-surface rule, not by a text floor. `--teal2` is
+listed nowhere in that table because it is only ever a bar fill and a gradient
+stop, never a colour on text.
+
 ## Design decisions and why
 
 **Expected doses are computed, never pre-created.** No nightly job writes
@@ -349,6 +427,31 @@ Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · HTTPS liv
 via OLS reverse proxy.
 
 ## Test evidence
+- `tools/NEGATIVE_CONTROL.py` + `new_assertions_v3160.json` — **18 declared,
+  18 seen to fail** (2026-09-14, v3.16.0). CLAUDE.md rule 2a in force: an
+  assertion is evidence only if it has been seen to fail. Ten assertions fail
+  against the **reconstructed** v3.15.0 — the patcher's `--reverse` rebuilds
+  it byte-for-byte, so no copy of the old code is kept anywhere — and eight
+  guard properties v3.15.0 already had, so those are proved against
+  **deliberate mutations** of the current app instead (`tiny`: a 13px string
+  put back inside the Watch card; `wide`: `min-width:900px` on every card).
+  The harness aborts loudly if a run does not finish, because a suite that
+  dies part-way reports zero failures and would otherwise mark every
+  assertion unseen for a reason unrelated to the assertions. Its first real
+  catch was one of my own: a card-scoped contrast check that **passed**
+  against v3.15.0 and was therefore not evidence; widened to the whole
+  screen it failed there, and then found five genuine dark-mode faults in
+  v3.16.0 (worst 1.12:1 — `.btn.primary` repainted to the card colour by a
+  broader rule and then given dark ink).
+- `test_ui_now.py` — **ALL PASS** (2026-09-14, v3.16.0), Chromium, offline.
+  Now runs the readability measurements in **both themes**: nothing under
+  14px, nothing scrolling sideways, and every text colour clearing 4.5:1
+  (3:1 for large text) computed from what the browser actually painted, with
+  the effective background resolved by walking to the nearest opaque
+  ancestor. Sweeps six screens across 21 segmented sub-views at 390px and
+  360px in light and dark. Also asserts the run leaves no secret- or
+  live-data-shaped file beside `app.py` — it used to leave a real bearer
+  token there.
 - `test_phase_j.py` — **18/18 PASS** (2026-09-14, v3.13.0), **1/18 against
   v3.12.0** (the one pass is a check that skips without the local term list).
   Runs a real GutLog and a real FitLog on two loopback ports and builds the
@@ -499,6 +602,21 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-14 v3.16.0 — Phase L: readability fixes and app-wide dark mode.
+  DEPLOYED 09:59 IST.** `app.py` sha256 `c67ae491…`, 337,053 bytes,
+  byte-identical to the repo build. `patch_gutlog_v3160.py`, 33 anchors,
+  reversible (reversing it reproduces v3.15.0 at exactly 280,199 bytes and
+  sha `ea268dc4…`). `.card.fold .fs` 13.5px → **15px** as the Phase K brief
+  had specified; both `.hint` declarations → **14px**; five light-mode
+  contrast failures fixed at the token; dark mode across all four pages with
+  a persistent three-state override; one validated categorical set replacing
+  two unvalidated ones. New in the toolchain: `tools/NEGATIVE_CONTROL.py` and
+  CLAUDE.md rule 2a — *an assertion is evidence only if it has been seen to
+  fail*. 18 new assertions declared, **18 seen to fail** (10 against the
+  reconstructed v3.15.0, 8 against deliberate mutations). Server suites
+  after deploy: phase_a 18/18, phase_c 20/20, phase_e 13/13, phase_f 8/8,
+  phase_g 14/14, phase_i 18/18, phase_j 28/28. `test_ui_now.py` ALL PASS
+  locally under Chromium, both themes, at 390px and 360px.
 - **2026-09-14 v3.15.0 — Phase K: Watch card correctness, then readability.
   DEPLOYED 08:24 IST.** `app.py` sha256 `ea268dc4…`, 280,199 bytes,
   byte-identical to the repo build. `patch_gutlog_v3150.py`, 8 anchors.

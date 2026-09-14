@@ -52,3 +52,10 @@ gutlog/scan_lab/*.bin
 gutlog/scan_lab/*.npy
 gutlog/scan_lab/*.png
 gutlog/scan_lab/*.json
+
+# negative-control scratch builds (tools/NEGATIVE_CONTROL.py writes these beside app.py)
+gutlog/_nc_*.py
+*/_nc_*.py
+
+# test_ui_now.py screenshots (run output, not source)
+gutlog/ui_*.png

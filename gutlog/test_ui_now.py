@@ -46,6 +46,13 @@ app_path = sys.argv[1]
 work = tempfile.mkdtemp()
 os.environ.update(GUTLOG_DB=os.path.join(work, "t.db"), GUTLOG_UPLOADS=os.path.join(work, "up"),
                   GUTLOG_INSECURE="1", GUTLOG_SECRET="ui-test-not-real",
+                  # Without this the app mints its feed token beside app.py --
+                  # i.e. INTO THE REPOSITORY. It is gitignored, so it never got
+                  # committed, but it is a real 64-char bearer token sitting in
+                  # a public repo's working tree and it made NO_SECRETS refuse
+                  # on every run after the suite. The token belongs with the
+                  # throwaway database, not with the source.
+                  GUTLOG_FEED_TOKEN_FILE=os.path.join(work, "feed.token"),
                   GUTLOG_ICONS=os.path.dirname(os.path.abspath(app_path)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(app_path)))
 spec = importlib.util.spec_from_file_location("g", app_path); m = importlib.util.module_from_spec(spec)
@@ -55,6 +62,112 @@ B = "http://127.0.0.1:8799"
 ok = True
 def res(cond, msg):
     global ok; ok = ok and cond; print(("[PASS] " if cond else "[FAIL] ") + msg)
+
+# --- measurement helpers, shared by the light and the dark pass -------------
+#
+# WHICH ELEMENTS RENDER TEXT.  The first version of the size check walked
+# every descendant and read the INHERITED font-size off elements that paint
+# nothing -- .wkcol and .bar are empty divs, and they inherit 13.33px from the
+# UA default, so they failed a check about text they do not contain. An
+# element is measured here only if it owns a non-empty DIRECT text node.
+# That is the brief's "non-empty textContent and no element children" for a
+# leaf, and it additionally keeps <p>some text <b>and more</b></p>, which the
+# leaf-only rule would have dropped.
+_JS_OWNS_TEXT = """
+  function ownsText(el){
+    for (var i = 0; i < el.childNodes.length; i++){
+      var n = el.childNodes[i];
+      if (n.nodeType === 3 && n.textContent.trim()) return true;
+    }
+    return false;
+  }
+"""
+
+_JS_SMALL = """(sel) => {
+  %s
+  const out = [];
+  document.querySelectorAll(sel + ' *').forEach(el => {
+    if (!ownsText(el)) return;
+    if (el.offsetParent === null) return;
+    const px = parseFloat(getComputedStyle(el).fontSize);
+    if (px < 14) out.push((el.className || el.tagName) + ':' + px);
+  });
+  return out;
+}""" % (_JS_OWNS_TEXT,)
+
+# WCAG 2.1 contrast, measured on what the browser actually painted rather
+# than on what the stylesheet says. The effective background is the nearest
+# ancestor with an opaque background-color, which is how the page reads.
+_JS_CONTRAST = """(sel) => {
+  %s
+  function lum(c){
+    const m = (c || '').match(/[0-9.]+/g);
+    if (!m) return 1;
+    const f = v => { v = v/255; return v <= 0.03928 ? v/12.92
+                     : Math.pow((v + 0.055)/1.055, 2.4); };
+    return 0.2126*f(+m[0]) + 0.7152*f(+m[1]) + 0.0722*f(+m[2]);
+  }
+  function bgOf(el){
+    let n = el;
+    while (n && n.nodeType === 1){
+      const c = getComputedStyle(n).backgroundColor;
+      const m = (c || '').match(/[0-9.]+/g);
+      if (m && (m.length < 4 || +m[3] > 0.5)) return c;
+      n = n.parentElement;
+    }
+    return 'rgb(255, 255, 255)';
+  }
+  const out = [];
+  document.querySelectorAll(sel + ' *').forEach(el => {
+    if (!ownsText(el)) return;
+    if (el.offsetParent === null) return;
+    const cs = getComputedStyle(el);
+    if (parseFloat(cs.opacity) < 1) return;
+    const px = parseFloat(cs.fontSize);
+    const wt = parseInt(cs.fontWeight, 10) || 400;
+    const large = px >= 24 || (px >= 18.66 && wt >= 700);
+    const a = lum(cs.color), b = lum(bgOf(el));
+    const r = (Math.max(a,b) + 0.05) / (Math.min(a,b) + 0.05);
+    const need = large ? 3.0 : 4.5;
+    if (r < need - 0.005){
+      out.push((el.className || el.tagName) + ' ' + px + 'px ' +
+               r.toFixed(2) + ':1 (need ' + need + ')');
+    }
+  });
+  return out;
+}""" % (_JS_OWNS_TEXT,)
+
+# The old overflow check asked #wkStrip, a display:block div that reports
+# scrollWidth 0 / clientWidth 0 on the live card -- 0 <= 0 is true, so the
+# assertion could not fail and was not evidence of anything. This asks the
+# elements that actually scroll, and treats a zero measurement as a failure
+# rather than as a pass.
+_JS_OVERFLOW = """(sels) => {
+  const out = [];
+  sels.forEach(s => {
+    const e = (s === 'html') ? document.documentElement
+                             : document.querySelector(s);
+    if (!e){ out.push(s + ': missing'); return; }
+    const sw = e.scrollWidth, cw = e.clientWidth;
+    if (cw <= 0){ out.push(s + ': zero width (' + sw + '/' + cw + ')'); return; }
+    if (sw > cw + 1) out.push(s + ': ' + sw + ' > ' + cw);
+  });
+  return out;
+}"""
+
+_SCROLLERS = ["html", "body", "main", "#nowWatch", "#wkChart"]
+
+
+def set_theme(pg, mode):
+    """Force the page onto one theme. 'system' clears the override."""
+    pg.evaluate("""(m) => {
+      const r = document.documentElement;
+      if (m === 'system'){ r.removeAttribute('data-theme');
+                           try { localStorage.removeItem('gl_theme'); } catch(e){} }
+      else { r.setAttribute('data-theme', m);
+             try { localStorage.setItem('gl_theme', m); } catch(e){} }
+    }""", mode)
+    time.sleep(0.25)
 
 with sync_playwright() as p:
     br = p.chromium.launch()
@@ -348,8 +461,11 @@ with sync_playwright() as p:
         "the footnote is on the screen",
         "no verdict appears on the page",
         "nothing inside the card is smaller than 14px",
-        "the strip does not scroll sideways at 390px",
-        "the strip does not scroll sideways at 360px",
+        "the card and the page do not scroll sideways at 390px",
+        "the card and the page do not scroll sideways at 360px",
+        "the dark theme actually repaints the card",
+        "nothing inside the card is smaller than 14px in dark mode",
+        "the card and the page do not scroll sideways in dark mode",
         "every tile names its day",
         "the hero is full width and the rest are two per row",
         "no third-person pronoun is rendered",
@@ -480,27 +596,42 @@ with sync_playwright() as p:
         # --- v3.15.0: measured readability ---------------------------------
         # He is 58 and reads this on a phone at 5am. These are measurements,
         # not preferences, so they are assertions rather than a screenshot.
-        small = pg.evaluate("""() => {
-          const out = [];
-          document.querySelectorAll('#nowWatch *').forEach(el => {
-            if (!el.textContent || !el.textContent.trim()) return;
-            if (el.offsetParent === null) return;
-            const px = parseFloat(getComputedStyle(el).fontSize);
-            if (px < 14) out.push(el.className + ':' + px);
-          });
-          return out;
-        }""")
+        small = pg.evaluate(_JS_SMALL, "#nowWatch")
         res(not small, "nothing inside the card is smaller than 14px"
             + ("" if not small else ": " + ", ".join(small[:5])))
-        over = pg.evaluate("() => {const s=document.querySelector('#wkStrip');"
-                           "return [s.scrollWidth, s.clientWidth];}")
-        res(over[0] <= over[1], "the strip does not scroll sideways at 390px"
-            + ("" if over[0] <= over[1] else " (%d > %d)" % (over[0], over[1])))
+        # Contrast is NOT asserted here. It is asserted screen by screen in
+        # the app-wide sweep at the end, because the card was never where the
+        # contrast failures were: the pairs that were below 4.5:1 in v3.15.0
+        # were --muted on --chip and --amber on the card, which live on the
+        # other screens. A card-scoped contrast check passed against v3.15.0,
+        # so it was not evidence of anything -- the negative control caught
+        # that and it was moved rather than kept as decoration.
+        ovr = pg.evaluate(_JS_OVERFLOW, _SCROLLERS)
+        res(not ovr, "the card and the page do not scroll sideways at 390px"
+            + ("" if not ovr else ": " + "; ".join(ovr)))
         pg.set_viewport_size({"width": 360, "height": 780}); time.sleep(0.4)
-        over2 = pg.evaluate("() => {const s=document.querySelector('#wkStrip');"
-                            "return [s.scrollWidth, s.clientWidth];}")
-        res(over2[0] <= over2[1], "the strip does not scroll sideways at 360px"
-            + ("" if over2[0] <= over2[1] else " (%d > %d)" % (over2[0], over2[1])))
+        ovr2 = pg.evaluate(_JS_OVERFLOW, _SCROLLERS)
+        res(not ovr2, "the card and the page do not scroll sideways at 360px"
+            + ("" if not ovr2 else ": " + "; ".join(ovr2)))
+        pg.set_viewport_size({"width": 390, "height": 844}); time.sleep(0.3)
+        # --- v3.16.0: the same measurements again, in dark ------------------
+        # A dark mode that is never measured is a dark mode that is only
+        # claimed. Everything the light pass asserts, the dark pass asserts.
+        _light_ink = pg.evaluate(
+            "() => getComputedStyle(document.body).backgroundColor")
+        set_theme(pg, "dark")
+        _dark_ink = pg.evaluate(
+            "() => getComputedStyle(document.body).backgroundColor")
+        res(_light_ink != _dark_ink, "the dark theme actually repaints the card"
+            + ("" if _light_ink != _dark_ink
+               else " -- body stayed " + str(_light_ink)))
+        dsmall = pg.evaluate(_JS_SMALL, "#nowWatch")
+        res(not dsmall, "nothing inside the card is smaller than 14px in dark mode"
+            + ("" if not dsmall else ": " + ", ".join(dsmall[:5])))
+        dovr = pg.evaluate(_JS_OVERFLOW, _SCROLLERS)
+        res(not dovr, "the card and the page do not scroll sideways in dark mode"
+            + ("" if not dovr else ": " + "; ".join(dovr)))
+        set_theme(pg, "system")
         days = pg.evaluate("""() => {
           const out = [];
           document.querySelectorAll('#wkStrip .wktile').forEach(t => {
@@ -553,7 +684,7 @@ with sync_playwright() as p:
                   "plan": [{"pos": 1, "test": "Test one", "why": "because", "timing": "now"}],
                   "profile": {"updated": D1, "key_tests": ["Testarate"], "problems": [{"name": "Synthetic problem", "since": "2020", "status": "active"}],
                               "precautions": [{"flag": "RED", "title": "Synthetic precaution", "text": "why"}], "missing": ["Report Q"]}},
-                 open(os.path.join(rw, "f", "records_manifest.local.json"), "w"))
+                 open(os.path.join(rw, "f", "records_manifest.local.json"), "w", encoding="utf-8"))
         _sp = _iu.spec_from_file_location("imprec", os.path.join(os.path.dirname(os.path.abspath(app_path)), "import_records.py"))
         _im = _iu.module_from_spec(_sp); _sp.loader.exec_module(_im)
         m.PROFILE_FILE = os.path.join(work, "records_profile.local.json")
@@ -585,7 +716,7 @@ with sync_playwright() as p:
         pg.locator('.seg[data-seg="files"] button[data-s="vault"]').click(); time.sleep(0.4)
         res(pg.locator("#files-vault").is_visible() and pg.locator("#files-summary").is_hidden(), "second segment row switches to Upload")
     # --- v3.9.0: scanner ----------------------------------------------------
-    if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(app_path)), "scanner_widget.js")) and "def scan_page" in open(app_path).read():
+    if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(app_path)), "scanner_widget.js")) and "def scan_page" in open(app_path, encoding="utf-8").read():
         HERE = os.path.dirname(os.path.abspath(__file__))
         from PIL import Image as _Im, ImageDraw as _Dr
         _img = _Im.new("RGB", (900, 1200), (120, 120, 120)); _d = _Dr.Draw(_img)
@@ -607,7 +738,7 @@ with sync_playwright() as p:
         res(pg.locator("#files-reports").is_visible() and pg.locator("#rdList .rd-row.inbox").count() >= 1,
             "Done returns to Records, Reports with the scan waiting")
     # --- v3.10.0: machine-read reports ----------------------------------------
-    if "def _spawn_reader" in open(app_path).read():
+    if "def _spawn_reader" in open(app_path, encoding="utf-8").read():
         import sqlite3 as _sq3
         _c = _sq3.connect(os.environ["GUTLOG_DB"])
         _c.execute("INSERT INTO rec_docs(day,kind,title,source,finding,stored,orig,sha,status,created,origin,checked) "
@@ -621,8 +752,78 @@ with sync_playwright() as p:
         pg.locator('.seg[data-seg="files"] button[data-s="reports"]').click(); time.sleep(0.8)
         pg.locator("#rdList .rd-row", has_text="Auto CBC").first.locator(".rd-ok").click(); time.sleep(0.8)
         res(pg.locator("#rdList .rd-row", has_text="Auto CBC").first.locator(".rd-auto").count() == 0, "Looks right clears the badge")
+    # --- v3.16.0: .hint is app-wide, so it is checked app-wide --------------
+    # Every screen that carries a hint, at the two widths he actually holds:
+    # 390px (iPhone 14/15) and 360px (the narrowest Android still in use).
+    # The size is asserted on the COMPUTED value, so a later rule that wins
+    # the cascade fails here rather than being argued about.
+    _TABS = [("now", "Now"), ("log", "Log"), ("meals", "Meals"),
+             ("meds", "Meds"), ("files", "Records"), ("review", "Review")]
+    _JS_HINTS = """() => {
+      const out = [];
+      document.querySelectorAll('.hint').forEach(h => {
+        if (h.offsetParent === null) return;
+        const px = parseFloat(getComputedStyle(h).fontSize);
+        if (px < 14) out.push(px + 'px');
+      });
+      return out;
+    }"""
+    # Records keeps its hints on the Reports and Upload sub-views, not on the
+    # Summary it opens to, so a tab-only sweep measures zero there and proves
+    # nothing. Each tab is swept across its own segmented sub-views.
+    _JS_SEGS = """() => {
+      const sec = document.querySelector('section.tab.sel');
+      if (!sec) return [];
+      return [...sec.querySelectorAll('.seg button')]
+        .filter(b => b.offsetParent !== null)
+        .map(b => b.textContent.trim());
+    }"""
+    for _theme in ("light", "dark"):
+        set_theme(pg, _theme)
+        for _w, _h in ((390, 844), (360, 780)):
+            pg.set_viewport_size({"width": _w, "height": _h}); time.sleep(0.3)
+            for _t, _label in _TABS:
+                pg.click('nav button[data-t="%s"]' % _t); time.sleep(0.45)
+                _views = pg.evaluate(_JS_SEGS) or [None]
+                _n, _hs, _ov, _cb = 0, [], [], []
+                for _v in _views:
+                    if _v:
+                        try:
+                            pg.locator("section.tab.sel .seg button",
+                                       has_text=_v).first.click()
+                            time.sleep(0.45)
+                        except Exception:
+                            continue
+                    _hs += pg.evaluate(_JS_HINTS)
+                    _n += pg.evaluate(
+                        "() => [...document.querySelectorAll('.hint')]"
+                        ".filter(h => h.offsetParent !== null).length")
+                    _ov += pg.evaluate(_JS_OVERFLOW, ["html", "body", "main"])
+                    _cb += pg.evaluate(_JS_CONTRAST, "main")
+                _tag = "%s [%d/%s]" % (_label, _w, _theme)
+                res(_n > 0 and not _hs,
+                    "%s hints: %d over %d view(s), none under 14px"
+                    % (_tag, _n, len(_views))
+                    + ("" if not _hs else " -- " + ", ".join(_hs[:4]))
+                    + ("" if _n > 0 else " -- no visible hint to measure"))
+                res(not _ov, "%s no sideways scroll" % _tag
+                    + ("" if not _ov else ": " + "; ".join(sorted(set(_ov)))))
+                res(not _cb, "%s contrast: every text colour clears its floor"
+                    % _tag
+                    + ("" if not _cb else ": " + "; ".join(sorted(set(_cb))[:4])))
+    set_theme(pg, "system")
+    pg.set_viewport_size({"width": 390, "height": 844}); time.sleep(0.3)
+    pg.click('nav button[data-t="now"]'); time.sleep(0.4)
     pg.screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui_" + os.path.basename(app_path) + ".png"), full_page=True)
     res(not errs, "no JavaScript errors" + ("" if not errs else ": " + " | ".join(errs)))
+    # A test run must not leave anything secret-shaped in the source tree.
+    # This one did until v3.16.0: every run wrote a live-format feed token
+    # beside app.py and NO_SECRETS refused afterwards.
+    _appdir = os.path.dirname(os.path.abspath(app_path))
+    _litter = [f for f in ("feed.token", "health3.db", "gutlog.db")
+               if os.path.exists(os.path.join(_appdir, f))]
+    res(not _litter, "the run leaves no secret or live-data file beside app.py"
+        + ("" if not _litter else ": " + ", ".join(_litter)))
     br.close()
 srv.shutdown()
 print("RESULT: " + ("ALL PASS" if ok else "FAILURES"))

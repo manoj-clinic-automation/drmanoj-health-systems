@@ -1,0 +1,165 @@
+{
+  "_": [
+    "Phase L. Every assertion added to test_ui_now.py in v3.16.0, and how each",
+    "one was SEEN to fail. Read tools/NEGATIVE_CONTROL.py for why this file",
+    "exists.",
+    "control 'version' -- the assertion fails against the reconstructed",
+    "v3.15.0, which the patcher regenerates with --reverse.",
+    "control 'mutation' -- the assertion guards a property v3.15.0 ALREADY",
+    "had, so a version diff cannot make it fail. Those properties are broken",
+    "on purpose in a copy of the current app instead, which is the stronger",
+    "control anyway: it shows the assertion responds to the specific thing it",
+    "claims to measure.",
+    "min_hits is for family entries, where the name is a substring shared by",
+    "the six tabs at one width and theme. One of six failing would not show",
+    "that the other five are being measured at all."
+  ],
+  "suite": "test_ui_now.py",
+  "app": "app.py",
+  "patcher": "patch_gutlog_v3160.py",
+  "assertions": [
+    {
+      "name": "nothing inside the card is smaller than 14px in dark mode",
+      "control": "version",
+      "why": "v3.15.0 has no dark mode at all, so the card keeps .fs at 13.5px"
+    },
+    {
+      "name": "the dark theme actually repaints the card",
+      "control": "version",
+      "why": "v3.15.0 ignores data-theme, so the body colour does not move"
+    },
+    {
+      "name": "[390/light] hints:",
+      "min_hits": 6,
+      "control": "version",
+      "why": ".hint is 13px in v3.15.0, on every screen that has one"
+    },
+    {
+      "name": "[360/light] hints:",
+      "min_hits": 6,
+      "control": "version",
+      "why": ".hint is 13px in v3.15.0, on every screen that has one"
+    },
+    {
+      "name": "[390/dark] hints:",
+      "min_hits": 6,
+      "control": "version",
+      "why": ".hint is 13px in v3.15.0, on every screen that has one"
+    },
+    {
+      "name": "[360/dark] hints:",
+      "min_hits": 6,
+      "control": "version",
+      "why": ".hint is 13px in v3.15.0, on every screen that has one"
+    },
+    {
+      "name": "[390/light] contrast:",
+      "min_hits": 1,
+      "control": "version",
+      "why": "v3.15.0 --amber is 3.06:1 on the card and --muted 4.37:1 on --chip"
+    },
+    {
+      "name": "[360/light] contrast:",
+      "min_hits": 1,
+      "control": "version",
+      "why": "v3.15.0 --amber is 3.06:1 on the card and --muted 4.37:1 on --chip"
+    },
+    {
+      "name": "[390/dark] contrast:",
+      "min_hits": 1,
+      "control": "version",
+      "why": "v3.15.0 has no dark mode, so dark is the same failing light palette"
+    },
+    {
+      "name": "[360/dark] contrast:",
+      "min_hits": 1,
+      "control": "version",
+      "why": "v3.15.0 has no dark mode, so dark is the same failing light palette"
+    },
+
+    {
+      "name": "nothing inside the card is smaller than 14px",
+      "control": "mutation",
+      "mutation": {
+        "id": "tiny",
+        "why": "put one 13px string back inside the Watch card",
+        "find": ".wktile .wp{font-size:14px;color:var(--muted);margin:2px 0 0}",
+        "replace": ".wktile .wp{font-size:13px;color:var(--muted);margin:2px 0 0}"
+      }
+    },
+    {
+      "name": "the card and the page do not scroll sideways at 390px",
+      "control": "mutation",
+      "mutation": {
+        "id": "wide",
+        "why": "force every card wider than the phone",
+        "find": ".card{background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;",
+        "replace": ".card{min-width:900px;background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;"
+      }
+    },
+    {
+      "name": "the card and the page do not scroll sideways at 360px",
+      "control": "mutation",
+      "mutation": {
+        "id": "wide",
+        "why": "force every card wider than the phone",
+        "find": ".card{background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;",
+        "replace": ".card{min-width:900px;background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;"
+      }
+    },
+    {
+      "name": "the card and the page do not scroll sideways in dark mode",
+      "control": "mutation",
+      "mutation": {
+        "id": "wide",
+        "why": "force every card wider than the phone",
+        "find": ".card{background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;",
+        "replace": ".card{min-width:900px;background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;"
+      }
+    },
+    {
+      "name": "[390/light] no sideways scroll",
+      "min_hits": 6,
+      "control": "mutation",
+      "mutation": {
+        "id": "wide",
+        "why": "force every card wider than the phone",
+        "find": ".card{background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;",
+        "replace": ".card{min-width:900px;background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;"
+      }
+    },
+    {
+      "name": "[360/light] no sideways scroll",
+      "min_hits": 6,
+      "control": "mutation",
+      "mutation": {
+        "id": "wide",
+        "why": "force every card wider than the phone",
+        "find": ".card{background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;",
+        "replace": ".card{min-width:900px;background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;"
+      }
+    },
+    {
+      "name": "[390/dark] no sideways scroll",
+      "min_hits": 6,
+      "control": "mutation",
+      "mutation": {
+        "id": "wide",
+        "why": "force every card wider than the phone",
+        "find": ".card{background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;",
+        "replace": ".card{min-width:900px;background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;"
+      }
+    },
+    {
+      "name": "[360/dark] no sideways scroll",
+      "min_hits": 6,
+      "control": "mutation",
+      "mutation": {
+        "id": "wide",
+        "why": "force every card wider than the phone",
+        "find": ".card{background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;",
+        "replace": ".card{min-width:900px;background:#FCFCF9;border:1px solid #CFDBD3;border-radius:18px;padding:16px;"
+      }
+    }
+  ]
+}

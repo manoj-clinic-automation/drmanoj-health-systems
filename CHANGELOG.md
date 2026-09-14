@@ -3,6 +3,66 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-14 — GutLog v3.16.0, Phase L: readability fixes and app-wide dark mode
+
+DEPLOYED 09:59 IST. `app.py` sha256 `c67ae491…`, 337,053 bytes,
+byte-identical to the repo build; `patch_gutlog_v3160.py`, 33 anchors.
+
+**Fixed — the header summary was 13.5px.** The Phase K brief specified 15px;
+`.card.fold .fs` now is. This was a real bug, and the existing sub-14px
+assertion had been catching it correctly all along.
+
+**Fixed — two assertions that were not evidence.** The overflow check asked
+`#wkStrip`, a `display:block` div that reports `scrollWidth 0 / clientWidth 0`
+on the live card: `0 <= 0` is true, so it could not fail. It now asks the
+elements that actually scroll (`html`, `body`, `main`, `#nowWatch`,
+`#wkChart`) and **treats a zero measurement as a failure rather than a pass**.
+The size check measured inherited `font-size` on elements that paint nothing —
+`.wkcol` and `.bar` are empty divs inheriting 13.33px — so it now measures
+only elements that own a non-empty **direct text node**.
+
+**`.hint` raised to 14px app-wide**, and checked where it renders rather than
+where it is declared: six screens across 21 segmented sub-views, at 390px and
+360px, in both themes. 38 visible hints, none under 14px, nothing scrolling
+sideways.
+
+**Dark mode, all four pages.** Selected against the dark surface, not flipped:
+`prefers-color-scheme` by default plus a persistent three-state override
+(System / Light / Dark) applied before first paint. **94 text/background pairs
+measured across both modes: 0 failures** — worst light 4.48:1 (large text,
+floor 3:1), worst dark 6.24:1. Five light-mode pairs in the shipped build were
+already below 4.5:1 and are fixed at the token.
+
+**The chart palette was worse than the dark mode was going to be.** The
+pain/tea/coffee line trio failed four of the validator's five checks, with a
+normal-vision ΔE of **10.1** between pain and coffee — two lines hard to tell
+apart with *full* colour vision. One validated set now serves both the lane
+markers and the chart: light `#B3372A`/`#6A3FA8`/`#B57B08` on `#FCFCF9`
+(deutan 11.1, tritan 14.1, normal-vision 16.0) and dark
+`#C1443A`/`#7A5FD0`/`#B58E08` on `#18211F` (deutan 11.2, tritan 15.9,
+normal-vision 18.5), all ≥3:1 vs surface, all five checks passing in both.
+
+**New gate — `tools/NEGATIVE_CONTROL.py`, and CLAUDE.md rule 2a: an assertion
+is evidence only if it has been seen to fail.** It reconstructs the previous
+build by running the patcher in `--reverse` (verified: the reversal reproduces
+v3.15.0 byte-for-byte) and requires every newly declared assertion to appear
+in that run's failure list; for assertions guarding a property the previous
+build already had, it breaks that property on purpose in a copy of the current
+app instead. **18 declared, 18 seen to fail.** It earned its place
+immediately: a card-scoped contrast check *passed* against the previous build,
+which is to say it was decoration. Widening it to the whole screen made it
+fail there — and it then found **five real dark-mode faults in this very
+release**, the worst at 1.12:1.
+
+**Also fixed, found not asked for — every `test_ui_now.py` run was writing a
+live-format bearer token into the repository.** GutLog mints `feed.token`
+beside `app.py` when `GUTLOG_FEED_TOKEN_FILE` is unset, so each run dropped a
+real 64-char token into a public repo's working tree and made `NO_SECRETS.py`
+refuse afterwards. It was `.gitignore`d and **was never committed**, and the
+server's own token was never touched. The suite now points that path at its
+throwaway database directory and asserts it leaves nothing secret-shaped
+beside `app.py`.
+
 ## 2026-09-14 — GutLog v3.15.0, Phase K: Watch card correctness, then readability
 
 DEPLOYED 08:24 IST. `app.py` sha256 `ea268dc4…`, 280,199 bytes,
