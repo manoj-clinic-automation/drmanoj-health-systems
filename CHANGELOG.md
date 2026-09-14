@@ -3,6 +3,54 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-14 — PUBLISH_HEALTH.bat v2: it now says what happened, and the secret gate actually works
+
+Asked for: the window closed on success, so the one line worth reading — did
+this reach origin — was the one line nobody ever saw. Every exit path now
+ends `call :summary`, `pause`, `exit`, success and failure alike. The summary
+names all eight gates and prints **local HEAD and origin HEAD in full**, so
+the push is checked by eye rather than taken on trust. A gate that never ran
+reads "not reached", never green.
+
+**Found while testing it, and far more serious than the pause: the secret
+gate had a hole, and it was the three worst patterns.** `git diff --cached
+--name-only > file` writes LF line ends; `findstr` only recognises CRLF, so
+it read the whole staged list as ONE line and a `$` anchor could only match
+at the very end of the file. `[.]db$`, `[.]env$` and `[.]tmp$` — the diary
+databases, the bearer-token env file, and a patcher's half-written copy —
+**never matched**. Proved against a scratch repo with its own bare origin: a
+lone staged `health3.db` went through the v1 gate, was committed **and
+pushed**. The gate only ever appeared to work because a mixed commit usually
+also contained a `.bak` or `.token`, which are unanchored and did match.
+
+**Nothing ever leaked.** 199 distinct paths have been added across the whole
+history and not one matches the block list; nothing matching is tracked now.
+`.gitignore` was doing the real work. This was the second layer, and the
+second layer was not there.
+
+Fixed by matching the staged list **one path at a time through a pipe**,
+which terminates the line with CRLF whatever git wrote — so the anchors work,
+and the offending path is now *named* instead of the list being re-searched.
+Added a **gate self-test that runs on every publish**: nine names that must
+be blocked, five ordinary files that must not be. If the gate cannot catch
+what it must, or catches what it must not, the script refuses before it
+stages anything — a gate nobody has seen fail is not a gate (CLAUDE.md 2a,
+applied to a shell script).
+
+Third fix: with delayed expansion on, a bare `!!` in an `echo` is swallowed
+by the parser, so **every `!!` warning marker in the file had been invisible**
+— "REFUSING", "NOT FOUND", all of them printed bare. Carets are processed
+before delayed expansion, so one caret is not enough either; two are.
+
+Every path proved against a scratch repo with a bare origin, not reasoned
+about: ordinary change publishes; nothing-to-commit reports as such; a lone
+`health3.db`, `ingest.env`, `.tmp`, `.bak` and `feed.token` are each blocked
+by name with HEAD unchanged; the self-test refuses when deliberately made to
+under-catch *and* when made to over-catch; a failed push reports the sha that
+exists locally and did not reach origin; and an origin holding a different
+commit fails verification with both shas shown. The tested copy differs from
+the shipped file in exactly one line — the repo path.
+
 ## 2026-09-14 — GutLog v3.17.0 + FitLog v1.6.0, Phase M: Down days
 
 DEPLOYED FitLog 18:19 IST, GutLog 18:20 IST, FitLog first. GutLog `app.py`
