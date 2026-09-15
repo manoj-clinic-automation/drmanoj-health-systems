@@ -1,4 +1,4 @@
-# RxGuard v1.6.0
+# RxGuard v1.7.0
 
 `rx.dr-manoj.in` · service `rxguard` · port 8031 · `/root/rxguard`
 
@@ -71,6 +71,73 @@ token, RxGuard on a scratch database; covers reconciliation both ways, the
 named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
 days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
 GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
+
+## As taken, honestly — v1.7.0 (2026-09-15, BUILT, NOT YET DEPLOYED)
+
+`app.py` sha256 `291796f8…`, 153,331 bytes. `patch_rxguard_v170.py`, 12
+anchors, reversible — reversing reproduces v1.6.0 at exactly 142,647 bytes,
+byte-identical to the pre-patch file. **Deploy this before GutLog v3.18.0**:
+GutLog's home banner reads `/api/feed/status` from here.
+
+
+`/astaken` led with two REDs and ten AMBERs, and GutLog's home banner mirrored
+the count. Both REDs were cumulative burdens whose largest contributors had
+**no logged dose at all** inside the window — as-needed medicines that had
+simply not been needed. The engine already knew: it printed a POSSIBLY STALE
+paragraph under eight of the thirteen findings saying exactly that, with the
+alarming total first and the correction last. A daily red badge for a burden
+nobody is carrying is how a real red badge stops being read, so this is a
+correctness fix rather than a cosmetic one.
+
+**Two totals per burden.** *As taken* counts only molecules GutLog logged a
+dose of in the window or carries in its own regimen. *If all taken* is the old
+behaviour, every molecule on the list. The chip, the page headline and
+GutLog's banner all read the as-taken figure; the if-all-taken figure stays
+inside the finding, labelled `If every medicine on the list were taken`, and
+is counted nowhere. The `kind` column is deliberately **not** consulted — it
+is typed by hand, and one wrong `chronic` there would silently restore the
+inflated count.
+
+**One theoretical section, one caveat.** A finding that reaches a threshold
+only once the untaken medicines are added back — and any finding resting
+entirely on molecules with no dose — moves into a single collapsed section,
+*If you also take your as-needed medicines (n)*, which names those medicines
+once. The per-finding POSSIBLY STALE block is gone from this page; the same
+fact is now said once, in one place. The QT score is computed the same way —
+a cumulative total is a cumulative total, and leaving that one inflated while
+fixing the others would have been the same defect in a different category.
+
+**A finding with one taken drug in it stays current, whatever else it rests
+on.** A pairwise interaction between something taken and something not is
+still reported, still counted, and marked as before; only a finding whose
+molecules are *all* untaken moves. The stronger claim is the safer one, and
+downgrading a half-current interaction would be exactly the mistake this
+release exists to undo, in the opposite direction. The chronic "may have been
+stopped" case is still the Reconciliation section above, unchanged — a daily
+drug missing from GutLog's regimen is a reconciliation problem, not a
+theoretical finding.
+
+**The finding card collapses.** Severity chip, title and CONSEQUENCE stand;
+mechanism, why-it-applies, monitoring, action and source are one tap away. A
+finding carrying an ACTION says so *before* it is opened, so the one kind that
+must not be missed is never the one hidden. `/astaken` only — Quick check and
+Full analysis answer "what if this were added", and there the whole of the
+reasoning is the answer.
+
+**Two wording fixes.** The cumulative-burden MECHANISM no longer claims "plus
+the proposed change" on a page that has no proposed change. The
+absence-of-a-flag caveat is correct, kept, and moved to the page foot.
+
+Tests: `test_astaken_honest.py` **16/16**, and `tools/NEGATIVE_CONTROL.py
+--manifest new_assertions_v170.json` **PASS — 16/16 assertions seen to fail**
+(14 against the reconstructed v1.6.0, two by deliberate mutation). The one that
+matters is assertion 04: it asserts the *pair* of totals before and after a
+dose row is added for an untaken medicine, because "the burden is RED once the
+dose exists" was true of v1.6.0 too and would have proved nothing. Existing
+suites: `test_astaken.py` 15/15, `test_reconcile.py` 18/18 (its POSSIBLY STALE
+assertion updated to the new location), `smoke_test.py` 48/48, `validate.py`
+50/50. The fixture in `test_astaken_honest.py` uses molecules chosen for the
+thresholds they cross, none of them on the owner's record.
 
 ## Reconciliation — v1.5.0 (deployed 2026-09-14 04:42 IST)
 
@@ -201,6 +268,11 @@ on the server. Run `show_reds.py` for the current picture.
 - **Both REDs are stale for PRN reasons.** After v1.6.0 they read *"may be
   theoretical rather than current"* rather than *"may have been stopped"* —
   the distinction that was missing when this was first reported.
+  **Superseded by v1.7.0.** Saying it under each finding, after the total, was
+  not enough: the headline and GutLog's banner both still read the inflated
+  number every morning. From v1.7.0 the count is the as-taken one and neither
+  of these REDs is in it; both appear, named and uncounted, in the theoretical
+  section. Re-run `show_reds.py` for the current shape.
 
 `show_reds.py` answers the question from the terminal, read-only, without
 changing anything: every RED and AMBER, the molecules each rests on, and
@@ -312,6 +384,10 @@ kb_sources.py             v1.2.0: fetchers and draft builder (free sources)
 kb_sync.py                v1.2.0: cron / Fetch now sync; --report
 test_kb.py                v1.3.0: 32 checks against a fake source server
 knowledge/cache/          downloaded source data (gitignored, rebuilt)
+patch_rxguard_v170.py     v1.7.0 patcher, anchor-verified, --check/--reverse
+test_astaken_honest.py    v1.7.0: 16 checks over a real GutLog on loopback
+new_assertions_v170.json  the 16, declared for tools/NEGATIVE_CONTROL.py
+show_reds.py              terminal answer, read-only; output is the record
 ```
 
 The knowledge base is versioned separately from the code. Editing a rule
@@ -348,6 +424,27 @@ issue the certificate, and add the backup cron:
 
 First visit to `/login` sets the password. There is no registration route
 and no second user.
+
+### Upgrading an installed copy
+
+```bash
+cd /root/rxguard
+python3 patch_rxguard_v170.py --check        # anchors only, writes nothing
+python3 patch_rxguard_v170.py                # .bak-v170-<stamp> first
+python3 test_astaken_honest.py app.py        # expect 16/16
+python3 test_astaken.py /root/gutlog/app.py  # expect 15/15
+python3 test_reconcile.py /root/gutlog/app.py
+python3 smoke_test.py && python3 validate.py
+systemctl restart rxguard && curl -s localhost:8031/healthz   # ok 1.7.0
+```
+
+`--reverse OUT` reconstructs the previous version from a patched file; that is
+how `tools/NEGATIVE_CONTROL.py` gets a previous build to fail the new
+assertions against, and it doubles as a second rollback path beside the `.bak`.
+
+**v1.7.0 pairs with GutLog v3.18.0 and goes first.** GutLog's home banner reads
+this app's `/api/feed/status`, so shipping GutLog's neutral banner before this
+honest count gives a quiet-looking box around an inflated number.
 
 ## Before relying on it
 

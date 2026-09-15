@@ -1,0 +1,52 @@
+{
+  "_": [
+    "GutLog v3.18.0, server side. Four of the seven assertions are about",
+    "behaviour v3.17.0 did not have: it sent a tile for every metric whether",
+    "or not the metric held anything, and its footnote argued from a rhythm",
+    "claim that is not current. Against the reconstructed v3.17.0 each of the",
+    "four fails.",
+    "",
+    "Assertions 04 and 05 guard the OTHER direction -- that the new rule does",
+    "not throw away a tile that does hold something. v3.17.0 threw nothing",
+    "away, so no version control can make them fail; the withholding test is",
+    "widened from AND to OR in a copy of the current app instead, and both",
+    "catch it. That is the risk worth controlling here: a change that stops",
+    "drawing empty tiles is one line away from a change that stops drawing.",
+    "",
+    "Assertion 06 is the one that would otherwise prove nothing. 'load_hours",
+    "appears once an operating day is logged' was true of v3.17.0 as well --",
+    "it appeared whether or not anything was logged -- so the assertion is on",
+    "the PAIR, absent before and present after, which only a build that",
+    "withholds the empty tile can satisfy.",
+    "",
+    "Assertion 07 guards the login on /api/watch, which v3.17.0 already had,",
+    "so it is broken on purpose in a copy of the current app instead."
+  ],
+  "suite": "test_watch_tiles.py",
+  "app": "app.py",
+  "patcher": "patch_gutlog_v3180.py",
+  "assertions": [
+    {"name": "01 the footnote gives the honest reason and claims nothing about rhythm", "control": "version"},
+    {"name": "02 a tile with no figure, no median and nothing running is not sent", "control": "version"},
+    {"name": "03 the three metrics with nothing behind them are withheld by name", "control": "version"},
+    {"name": "04 a metric with a median but no reading today is still sent, with its window",
+     "control": "mutation",
+     "mutation": {
+       "id": "dropstoomuch",
+       "why": "widen the withholding test from AND to OR, so it throws away tiles that do hold something, and see both assertions catch it",
+       "find": "        if v is None and med is None and run is None:\n",
+       "replace": "        if v is None or med is None or run is None:\n"
+     }},
+    {"name": "05 withholding empty tiles leaves the tiles that have something alone",
+     "control": "mutation", "mutation": {"id": "dropstoomuch"}},
+    {"name": "06 logging an operating day is what brings the load tile back", "control": "version"},
+    {"name": "07 the watch feed still refuses to answer without a login",
+     "control": "mutation",
+     "mutation": {
+       "id": "nowatchlogin",
+       "why": "take @login_required off /api/watch and see the assertion catch it",
+       "find": "@app.route(\"/api/watch\")\n@login_required\ndef api_watch():\n",
+       "replace": "@app.route(\"/api/watch\")\ndef api_watch():\n"
+     }}
+  ]
+}

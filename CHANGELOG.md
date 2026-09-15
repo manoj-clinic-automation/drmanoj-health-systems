@@ -3,6 +3,127 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-15 — check C had never once run: git was found, not missing
+
+PUBLISH_HEALTH.bat refused with `could not run git: [WinError 2] The system
+cannot find the file specified`, four gates in. It reads as git being gone.
+**It was not.**
+
+**What is actually on this machine.** No Git for Windows, and there never has
+been: no `HKLM\SOFTWARE\GitForWindows`, no uninstall entry, nothing under
+Program Files, no App Paths entry, and no git directory on PATH — not in the
+process environment, not in the stored User PATH, not in Machine. The only git
+present is the copy bundled inside GitHub Desktop, at
+`%LOCALAPPDATA%\GitHubDesktop\app-<version>\resources\app\git\cmd\git.exe`
+(2.53.0.windows.4), under a folder whose name changes with every app update.
+GitHub Desktop's own logs stop on 2026-08-16, so it is not being used as a
+client either.
+
+**What changed: nothing about git.** PUBLISH_HEALTH.bat has resolved git out
+of that bundle since it was written and used it for its own add / commit /
+push — which is how the 14-Sep publish worked. It simply never passed that
+path to the Python child, so `tools/NO_SECRETS.py` looked for a bare `git` on
+PATH and found nothing. Check C was added on 14-Sep in `1140ed4`, one commit
+before HEAD. **The first publish attempt with a NO_SECRETS that contains check
+C is the one that refused, and it refused correctly.** Check C had never run on
+this machine at all.
+
+**Two fixes, deliberately in both places.**
+
+- `resolve_git()` in NO_SECRETS.py: `NO_SECRETS_GIT`, then PATH, then the
+  known installs including GitHub Desktop's bundle, newest first. Every
+  candidate is *run* before it is trusted — existing on disk is not the same
+  as working, and a stale `app-*` folder left by an update keeps its files.
+  `NO_SECRETS_GIT` is treated as an **instruction, not a hint**: if it is set
+  and does not work, that is an error and the search stops. Being told which
+  git to use and quietly using another is how a check ends up reporting on
+  something other than what the caller meant.
+- **GATE 0** in PUBLISH_HEALTH.bat: resolve git, prove it answers `--version`,
+  export it as `NO_SECRETS_GIT`, and report it on its own summary row. It
+  refuses at the top, by name, instead of surfacing four gates later as a
+  missing-file error. A resolution only one caller knows is a resolution that
+  gets lost again, which is why it now exists in the checker too.
+
+**Check C is not weakened and cannot pass when it cannot run.** That is the
+whole risk in this change and it is where the evidence went.
+`tools/test_no_secrets_git.py` **8/8**, negative control **8/8 seen to fail** —
+six against the reconstructed pre-fix build, and the two that matter under
+mutation `weaken`, which drops `tracked_err` from the blocking test so a run
+that could not reach git exits 0. Both refusal assertions catch it.
+
+The harness also caught a bad assertion of mine before it shipped: assertion 06
+originally ran NO_SECRETS in bare mode, which walks the tree, finds the
+gitignored `.bak` rollback copies and blocks on check A — so it would have
+passed against a build with check C torn out entirely. It now runs
+`--files-from` a clean list and asserts `secrets check: clean` first, so the
+only thing that can block is C refusing. Exactly the failure mode rule 2a
+exists for, found by the rule.
+
+`tools/test_publish_gate0.py` **12/12** lifts GATE 0's text verbatim out of the
+batch file and runs it three ways — resolved, present-but-not-git, and
+genuinely absent — with the last two required to refuse. Its negative control
+needs no batch patcher: point it at `git show HEAD:PUBLISH_HEALTH.bat` and all
+twelve fail.
+
+**Verified end to end**: `NO_SECRETS.py --files-from … .` now reports
+`tracked-file clinical check: 204 files carried by git, none naming a drug
+outside the allowlist`, and exits 0.
+
+## 2026-09-15 — the as-taken count stops counting medicines nobody took (RxGuard v1.7.0, GutLog v3.18.0)
+
+**The defect.** `/astaken` led with two REDs and ten AMBERs and GutLog's home
+banner mirrored the count. Both REDs were cumulative burdens whose largest
+contributors had **no logged dose at all** in the window — as-needed medicines
+that had simply not been needed. The engine already knew: it printed a
+POSSIBLY STALE paragraph under eight of the thirteen findings saying exactly
+that, with the alarming total first and the correction last. A daily red badge
+for a burden nobody is carrying is how a real red badge stops being read, so
+this is a correctness fix and not a cosmetic one.
+
+**RxGuard v1.7.0.** Every cumulative burden now has two totals: *as taken*,
+over molecules GutLog logged a dose of in the window or carries in its own
+regimen, and *if all taken*, the old behaviour. The chip, the page headline
+and GutLog's banner read the first; the second stays inside the finding,
+labelled, counted nowhere. Findings that reach a threshold only with the
+untaken medicines added back — and any finding resting entirely on untaken
+molecules — move to one collapsed section that names those medicines **once**,
+and the per-finding POSSIBLY STALE block is deleted. Finding cards collapse to
+chip, title and consequence, with an ACTION marker visible before opening. The
+burden mechanism stops claiming "plus the proposed change" on a page that has
+none, and the absence-of-a-flag caveat moves to the page foot. Scoped to
+`/astaken`: Quick check and Full analysis genuinely are about a proposed
+change and are untouched. The hand-typed `kind` column is deliberately not
+consulted — one wrong `chronic` there would silently restore the old count.
+
+**GutLog v3.18.0.** Three Watch tiles were drawing a label with nothing under
+it: `load_hours` arrived `n: 0` with every field null, and `resting_hr` and
+`hrv_ms` arrived with a six-day median and no reading today. `/api/watch` now
+withholds a tile that holds nothing and the card refuses to draw one anyway;
+a tile with only a median shows the median, muted, with *"6-day median, no
+reading today"* under it and no day label. The Watch footnote stops arguing
+from a clinical premise carried forward from an old investigation that a
+current one contradicts, and keeps the honest reason, which never depended on
+it — the basis for that correction stays in the health record on the server
+and is not restated here (rule 5d). The medicines banner is neutral unless
+RxGuard has a RED it can stand behind.
+
+**Gates.** Three negative controls, 29 declared assertions, **29 seen to
+fail**; 22 against the reconstructed previous build and 7 by deliberate
+mutation where the previous build already had the property. The assertion that
+matters most compares a *pair* of totals across adding one dose row, because
+"the burden is RED once the dose exists" was true of the old build too and
+would have proved nothing. Suites: `test_astaken_honest.py` 16/16,
+`test_watch_tiles.py` 7/7, `test_ui_now.py` ALL PASS, plus `test_astaken.py`
+15/15, `test_reconcile.py` 18/18, `smoke_test.py` 48/48, `validate.py` 50/50.
+
+**Deploy order: RxGuard first.** GutLog's banner reads RxGuard's count, so
+shipping the neutral banner before the honest count gives a quiet-looking box
+around an inflated number.
+
+**Out of scope, on purpose.** The sleep tile and the activity rings on the
+Watch card, and the four sleep-timing fields: the Apple Watch has sent nothing
+since 2026-09-13 and there is nothing to verify them against.
+
 ## 2026-09-14 — clinical detail purged from history, and NO_SECRETS now asks what is ALREADY tracked
 
 **The question nobody had asked.** The clinical check only ever looked at what

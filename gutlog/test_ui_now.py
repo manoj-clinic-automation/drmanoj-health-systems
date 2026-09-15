@@ -44,6 +44,65 @@ from playwright.sync_api import sync_playwright
 
 app_path = sys.argv[1]
 work = tempfile.mkdtemp()
+
+# ---- screenshots go OUTSIDE the repository, by construction ----------------
+# 2026-09-15. Until today this suite wrote ELEVEN PNGs straight into the app
+# folder, and ten of them were tracked. A run against the live database
+# therefore committed his medicine list with brand names and strengths, his
+# stock counts, his dose times and three days of blood pressure into a PUBLIC
+# repository -- as pictures, which NO_SECRETS reads as bytes and can say
+# nothing about. Nine images had to be purged from history.
+#
+# .gitignore would be a backstop, not a remedy: a `git add -f`, an edited
+# ignore file, or the next suite someone writes re-exposes it. A file never
+# written into the tree cannot be committed by accident, so the location is
+# enforced here rather than trusted.
+#
+# GUTLOG_UI_SHOTS moves them elsewhere. It may NOT point inside the repository
+# or beside the app under test, and the suite refuses rather than writing
+# there. The end-of-run guard then checks the property actually held.
+_SUITE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_APP_DIR = os.path.dirname(os.path.abspath(app_path))
+SHOT_DIR = os.path.abspath(os.environ.get("GUTLOG_UI_SHOTS")
+                           or os.path.join(tempfile.gettempdir(),
+                                           "gutlog_ui_shots"))
+
+
+def _inside(child, parent):
+    try:
+        return os.path.commonpath([child, parent]) == parent
+    except ValueError:      # different drives cannot contain one another
+        return False
+
+
+for _forbidden in (_SUITE_ROOT, _APP_DIR):
+    if _inside(SHOT_DIR, _forbidden):
+        print("REFUSING: screenshots would land inside " + _forbidden)
+        print("   " + SHOT_DIR)
+        print("   Screenshots of this app are pictures of the record. They do")
+        print("   not go in the tree. Unset GUTLOG_UI_SHOTS or point it out.")
+        print("RESULT: FAILURES")
+        sys.exit(1)
+os.makedirs(SHOT_DIR, exist_ok=True)
+
+
+def shot(name):
+    """Full path for a screenshot -- outside the repository by construction."""
+    return os.path.join(SHOT_DIR, name)
+
+
+def _images_beside_app():
+    """(name -> size, mtime) for every image in the app folder right now."""
+    out = {}
+    for n in os.listdir(_APP_DIR):
+        if n.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")):
+            st = os.stat(os.path.join(_APP_DIR, n))
+            out[n] = (st.st_size, st.st_mtime)
+    return out
+
+
+_IMAGES_BEFORE = _images_beside_app()
+
 os.environ.update(GUTLOG_DB=os.path.join(work, "t.db"), GUTLOG_UPLOADS=os.path.join(work, "up"),
                   GUTLOG_INSECURE="1", GUTLOG_SECRET="ui-test-not-real",
                   # Without this the app mints its feed token beside app.py --
@@ -297,7 +356,7 @@ with sync_playwright() as p:
         res(rv["status"] == "TAKEN" and rv["logged_dose"] == "290", "variant backfilled as 290")
         res(pg.locator("#dvMiss .dvmiss").count() == 0 and pg.locator("#dvList .dvrow").count() == 2,
             "yesterday now shows 2 logged, none missing")
-        pg.locator("#dayView").screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "dayview.png"))
+        pg.locator("#dayView").screenshot(path=shot("dayview.png"))
     # --- Phase C (v3.6.0): stock + vitals log ----------------------------
     if "function loadStock(" in pg.content():
         import sqlite3 as _sq
@@ -328,10 +387,10 @@ with sync_playwright() as p:
         pg.click('#nav button[data-t="now"]'); time.sleep(0.8)
         res(pg.locator("#nowStock .stockalert").count() == 1 and meds[2]["name"] in pg.locator("#nowStock").inner_text(),
             "Now tab shows the refill banner")
-        pg.locator("#nowStock").screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "banner.png"))
+        pg.locator("#nowStock").screenshot(path=shot("banner.png"))
         pg.click("#nowStock .stockalert"); time.sleep(0.8)
         res(pg.locator("#meds-stock").is_visible(), "tapping the banner opens Stock")
-        pg.locator("#meds-stock").screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "stock.png"))
+        pg.locator("#meds-stock").screenshot(path=shot("stock.png"))
         for i, (d, t, s_, di, pu) in enumerate([(1, "07:10", 132, 84, 70), (1, "21:00", 124, 80, 66),
                                                 (2, "07:05", 138, 88, 72), (3, "20:30", 121, 79, 64)]):
             day = (_dt.date.today() - _dt.timedelta(days=d)).isoformat()
@@ -340,7 +399,7 @@ with sync_playwright() as p:
         res(pg.locator("#vtChart svg path").count() == 3 and pg.locator("#vtTable tr").count() == 5,
             "Vitals log: 3 lines charted, 4 readings listed")
         res("average 129/83" in pg.locator("#vtSum").inner_text(), "Vitals summary average 129/83")
-        pg.locator("#vitalsLog").screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "vitals.png"))
+        pg.locator("#vitalsLog").screenshot(path=shot("vitals.png"))
     # --- v3.7.0: medicine status, salts, activity -------------------------
     if pg.locator("#nowAct").count():
         HERE = os.path.dirname(os.path.abspath(__file__))
@@ -359,7 +418,7 @@ with sync_playwright() as p:
         nr.locator(".ns").click(); time.sleep(0.7)
         nr = pg.locator("#saltList .strow", has_text=meds[2]["name"]).first
         res("not a single drug" in nr.inner_text(), "Not a single drug marks the row")
-        pg.locator("#meds-salts").screenshot(path=os.path.join(HERE, "salts.png"))
+        pg.locator("#meds-salts").screenshot(path=shot("salts.png"))
         pg.click('#nav button[data-t="now"]'); time.sleep(0.8)
         pg.click("#nowAct .fold-h"); time.sleep(0.3)
         tiles = pg.locator("#actTiles .ptile")
@@ -380,7 +439,7 @@ with sync_playwright() as p:
             "two entries listed, header 45 min")
         res("Walk 30 min" in pg.locator("#actList").inner_text() and "moderate" in pg.locator("#actList").inner_text(),
             "row reads Walk 30 min, moderate")
-        pg.locator("#nowAct").screenshot(path=os.path.join(HERE, "activity.png"))
+        pg.locator("#nowAct").screenshot(path=shot("activity.png"))
         pg.locator("#actList .exrow", has_text="Meditation").locator(".u").click(); time.sleep(0.8)
         res(pg.locator("#actList .exrow").count() == 1 and "30 min" in pg.locator("#actSum").inner_text(),
             "Undo removes the entry")
@@ -452,7 +511,12 @@ with sync_playwright() as p:
         "the watch chart carries a down-day lane and names it in the key",
         "the epoch band has a boundary inside the window",
         "the today strip has its tiles",
-        "a metric with no figure today reads 'no data'",
+        # v3.18.0 replaces "reads 'no data'" here. A metric that arrives with
+        # a median and no reading today is not an absence, and drawing it as
+        # one threw the median away; the tile shows the median and says which
+        # window it came from.
+        "a metric with no reading today shows its median instead of an absence",
+        "the median tile names the window the median came from",
         "today's running figure sits under the settled headline",
         "the steps tile shows a direction against the typical figure",
         "the steps tile names the feed in words, not a slug",
@@ -470,6 +534,22 @@ with sync_playwright() as p:
         "every tile names its day",
         "the hero is full width and the rest are two per row",
         "no third-person pronoun is rendered",
+        # v3.18.0. The live answer on 2026-09-15 had load_hours at n=0 with
+        # every field null. /api/watch now withholds such a tile
+        # (test_watch_tiles.py asserts that server-side); the card refuses to
+        # draw one anyway, because a service worker holding an older answer
+        # would otherwise put the empty label straight back on the screen.
+        "the sparse stub actually served /api/watch",
+        "a tile that holds nothing is not drawn at all",
+    ]
+    # The medicines banner is the only cue he sees every morning, so it has to
+    # earn attention. Kept in step with the block below for the same reason as
+    # the watch list: a run against a build without the banner must report the
+    # same names, failed, rather than quietly report nothing.
+    _BANNER_CHECKS = [
+        "the medicines banner is stubbed and drawn",
+        "with no RED the banner is neutral, not an alert",
+        "with a RED the banner is an alert and names it",
     ]
     if not pg.locator("#nowWatch").count():
         # Same treatment as the operating-day tile: a guard that skips is a
@@ -479,6 +559,7 @@ with sync_playwright() as p:
         res(False, "the Watch card is present -- no #nowWatch on this build")
         for _m in _WATCH_CHECKS:
             res(False, _m + " -- no Watch card on this build")
+        import json as _wj
     else:
         import json as _wj
         _days = [(_dt.date.today() - _dt.timedelta(days=n)).isoformat()
@@ -517,10 +598,13 @@ with sync_playwright() as p:
                                "day": _days[-4], "stale": True,
                                "source": "gutlog", "dir": None,
                                "median": None, "n": 1, "today": None},
-                # settled, and with nothing at all: must read "no data"
+                # settled, no reading today, six days of median behind it --
+                # the live shape on 2026-09-15. From v3.18.0 the median is
+                # the figure and the window is stated; before that it read
+                # "no data" and the median was thrown away.
                 "resting_hr": {"kind": "settled", "value": None, "day": "",
                                "stale": False, "source": "", "dir": None,
-                               "median": None, "n": 0, "today": None},
+                               "median": 90, "n": 6, "today": None},
                 "hrv_ms": {"kind": "settled", "value": 61, "day": _days[-1],
                            "stale": False, "source": "applewatch", "dir": "down",
                            "median": 70, "n": 11, "today": None}},
@@ -579,8 +663,13 @@ with sync_playwright() as p:
         strip = pg.locator("#wkStrip .wktile")
         res(strip.count() >= 5, "the today strip has its tiles")
         hrt = pg.locator('#wkStrip .wktile[data-k="resting_hr"]')
-        res("no data" in hrt.inner_text(),
-            "a metric with no figure today reads 'no data'")
+        _hrtx = hrt.inner_text().replace("\n", " ") if hrt.count() else "(no tile)"
+        _hrday = (hrt.locator(".wday").inner_text().strip() if hrt.count() else "x")
+        res("90 bpm" in _hrtx and "no data" not in _hrtx and not _hrday,
+            "a metric with no reading today shows its median instead of an "
+            "absence: " + _hrtx)
+        res("6-day median" in _hrtx and "no reading today" in _hrtx,
+            "the median tile names the window the median came from: " + _hrtx)
         res("so far today" in pg.locator('#wkStrip .wktile[data-k="steps"]').inner_text(),
             "today's running figure sits under the settled headline")
         stt = pg.locator('#wkStrip .wktile[data-k="steps"]').inner_text()
@@ -646,11 +735,16 @@ with sync_playwright() as p:
             const v = t.querySelector('.wv');
             const d = t.querySelector('.wday');
             out.push([t.dataset.k, (v ? v.textContent.trim() : ''),
-                      (d ? d.textContent.trim() : '')]);
+                      (d ? d.textContent.trim() : ''),
+                      (v ? v.className : '')]);
           });
           return out;
         }""")
-        missing = [k for k, v, d in days if v and v != 'no data' and not d]
+        # A median tile is the exception and must be the other way round: it
+        # names no day at all, because the figure belongs to a window rather
+        # than to a date, and a date on it would read as today's reading.
+        missing = [k for k, v, d, c in days
+                   if v and v != 'no data' and 'med' not in c and not d]
         res(days and not missing, "every tile names its day"
             + ("" if not missing else ": " + ", ".join(missing)))
         geom = pg.evaluate("""() => {
@@ -674,9 +768,85 @@ with sync_playwright() as p:
         pron = _re.findall(r"\b(his|him|he)\b", txt, _re.I)
         res(not pron, "no third-person pronoun is rendered"
             + ("" if not pron else ": " + ", ".join(sorted(set(pron)))))
+        # --- v3.18.0: the tile that used to draw nothing --------------------
+        # The v3.17.0 live answer for load_hours, exactly: n=0 and every field
+        # null. /api/watch no longer sends it; a service worker holding an
+        # older answer still could, so the card is asked here to refuse it on
+        # its own.
+        _sparse = dict(_payload)
+        _sparse["strip"] = dict(_payload["strip"])
+        _sparse["strip"]["load_hours"] = {"kind": "cumulative", "value": None,
+                                          "day": "", "stale": False, "source": "",
+                                          "dir": None, "median": None, "n": 0,
+                                          "today": None}
+        _sparse["strip"]["hrv_ms"] = {"kind": "settled", "value": None, "day": "",
+                                      "stale": False, "source": "", "dir": None,
+                                      "median": None, "n": 0, "today": None}
+        _hits2 = []
+
+        def _sparse_stub(route):
+            _hits2.append(route.request.url)
+            route.fulfill(status=200, content_type="application/json",
+                          body=_wj.dumps(_sparse))
+
         pg.unroute("**/api/watch*")
-        # leave the page where the next block expects to find it
-        pg.click('#nav button[data-t="review"]'); time.sleep(0.5)
+        pg.route("**/api/watch*", _sparse_stub)
+        pg.goto(B + "/"); pg.wait_for_load_state("networkidle"); time.sleep(0.6)
+        pg.click("#nowWatch .fold-h"); time.sleep(0.4)
+        res(bool(_hits2), "the sparse stub actually served /api/watch"
+            + ("" if _hits2 else " -- 0 route hits, so something served it instead"))
+        _drawn = [k for k in ("load_hours", "hrv_ms")
+                  if pg.locator('#wkStrip .wktile[data-k="%s"]' % k).count()]
+        _txt2 = pg.locator("#wkStrip").inner_text().replace("\n", " ")
+        res(not _drawn and "no data" not in _txt2,
+            "a tile that holds nothing is not drawn at all"
+            + ("" if not _drawn else " -- drawn anyway: " + ", ".join(_drawn))
+            + ("" if "no data" not in _txt2 else " -- strip reads: " + _txt2))
+        pg.unroute("**/api/watch*")
+    # --- v3.18.0: the medicines banner ------------------------------------
+    # Red means RxGuard has a RED it can stand behind, which from RxGuard
+    # v1.7.0 means one built out of medicines actually taken. Everything else
+    # this banner carries is housekeeping, and housekeeping painted amber
+    # every morning is how a real alert stops being seen.
+    if not pg.locator("#nowMedStatus").count():
+        for _m in _BANNER_CHECKS:
+            res(False, _m + " -- no #nowMedStatus on this build")
+    else:
+        def _medstat(payload):
+            _mh = []
+
+            def _stub(route):
+                _mh.append(route.request.url)
+                route.fulfill(status=200, content_type="application/json",
+                              body=_wj.dumps(payload))
+
+            pg.route("**/api/medstatus*", _stub)
+            pg.goto(B + "/"); pg.wait_for_load_state("networkidle"); time.sleep(0.6)
+            el = pg.locator("#nowMedStatus .stockalert")
+            out = (bool(_mh), el.count(),
+                   el.first.get_attribute("class") if el.count() else "",
+                   el.first.inner_text() if el.count() else "")
+            pg.unroute("**/api/medstatus*")
+            return out
+
+        _quiet = _medstat({"need_salt": 1,
+                           "rx": {"ok": True, "red": 0, "amber": 3, "drafts": 2,
+                                  "pairs": 0, "theoretical": 3}})
+        res(_quiet[0] and _quiet[1] == 1, "the medicines banner is stubbed and drawn"
+            + ("" if (_quiet[0] and _quiet[1] == 1)
+               else " -- hits=%s, banners=%d" % (_quiet[0], _quiet[1])))
+        res("info" in _quiet[2] and "red" not in _quiet[2]
+            and "amber" not in _quiet[2] and "RED" not in _quiet[3],
+            "with no RED the banner is neutral, not an alert: "
+            + (_quiet[2] or "(none)") + " / " + (_quiet[3] or "(none)").replace("\n", " "))
+        _loud = _medstat({"need_salt": 0,
+                          "rx": {"ok": True, "red": 2, "amber": 1, "drafts": 0,
+                                 "pairs": 0, "theoretical": 0}})
+        res("red" in (_loud[2] or "") and "RxGuard shows 2 RED" in (_loud[3] or ""),
+            "with a RED the banner is an alert and names it: "
+            + (_loud[2] or "(none)") + " / " + (_loud[3] or "(none)").replace("\n", " "))
+    # leave the page where the next block expects to find it
+    pg.click('#nav button[data-t="review"]'); time.sleep(0.5)
     # --- v3.8.0: records --------------------------------------------------
     if pg.locator("#files-summary").count():
         HERE = os.path.dirname(os.path.abspath(__file__))
@@ -705,19 +875,19 @@ with sync_playwright() as p:
         res("RED" in pg.locator("#rsBody").inner_text() and "Testarate" in pg.locator("#rsBody").inner_text(),
             "Summary shows precautions and key results")
         res(pg.locator(".save").is_hidden(), "no Save button on Summary")
-        pg.locator("#files-summary").screenshot(path=os.path.join(HERE, "rec_summary.png"))
+        pg.locator("#files-summary").screenshot(path=shot("rec_summary.png"))
         pg.locator('.seg[data-seg="files"] button[data-s="reports"]').click(); time.sleep(0.7)
         res(pg.locator("#rdList .rd-row").count() == 2 and "Scan B" in pg.locator("#rdList .rd-row").first.inner_text(),
             "Reports newest first")
         pg.locator("#rdKinds .chip", has_text="Blood").click(); time.sleep(0.6)
         res(pg.locator("#rdList .rd-row").count() == 1, "filter by kind")
         res(pg.locator("#rdList a.rs-link").first.get_attribute("href").startswith("/rec/doc/"), "report opens the original")
-        pg.locator("#files-reports").screenshot(path=os.path.join(HERE, "rec_reports.png"))
+        pg.locator("#files-reports").screenshot(path=shot("rec_reports.png"))
         pg.locator('.seg[data-seg="files"] button[data-s="trends"]').click(); time.sleep(0.7)
         res(pg.locator("#rtList .rt-spark").count() == 1, "trend chart drawn")
         pg.locator("#rtList .rt-head").first.click(); time.sleep(0.6)
         res(pg.locator("#rtList .rt-det .rs-hi").count() == 1, "series table marks the flagged value")
-        pg.locator("#files-trends").screenshot(path=os.path.join(HERE, "rec_trends.png"))
+        pg.locator("#files-trends").screenshot(path=shot("rec_trends.png"))
         pg.locator('.seg[data-seg="files"] button[data-s="plan"]').click(); time.sleep(0.6)
         pg.locator("#rpList button").first.click(); time.sleep(0.6)
         res("Done" in pg.locator("#rpList button").first.inner_text(), "plan item marked done")
@@ -736,7 +906,7 @@ with sync_playwright() as p:
         pg.select_option("#s_type", "Imaging report")
         pg.locator("#scanroot #cam").set_input_files(_png); time.sleep(1.5)
         pg.locator("#scanroot #addwhole").click(); time.sleep(0.8)
-        pg.screenshot(path=os.path.join(HERE, "scan_page.png"), full_page=False)
+        pg.screenshot(path=shot("scan_page.png"), full_page=False)
         pg.locator("#scanroot #savebtn").click(); time.sleep(2.0)
         _files = pg.request.get(B + "/api/records/docs").json()["uploads"]
         res(any(f["source"] == "Imaging report" for f in _files), "scanned page uploaded as an Imaging report")
@@ -948,7 +1118,7 @@ with sync_playwright() as p:
     set_theme(pg, "system")
     pg.set_viewport_size({"width": 390, "height": 844}); time.sleep(0.3)
     pg.click('nav button[data-t="now"]'); time.sleep(0.4)
-    pg.screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui_" + os.path.basename(app_path) + ".png"), full_page=True)
+    pg.screenshot(path=shot("ui_" + os.path.basename(app_path) + ".png"), full_page=True)
     res(not errs, "no JavaScript errors" + ("" if not errs else ": " + " | ".join(errs)))
     # A test run must not leave anything secret-shaped in the source tree.
     # This one did until v3.16.0: every run wrote a live-format feed token
@@ -958,6 +1128,21 @@ with sync_playwright() as p:
                if os.path.exists(os.path.join(_appdir, f))]
     res(not _litter, "the run leaves no secret or live-data file beside app.py"
         + ("" if not _litter else ": " + ", ".join(_litter)))
+    # 2026-09-15. The screenshots are pictures of his record, and NO_SECRETS
+    # reads bytes -- it can say nothing about a PNG. The only defence that
+    # holds is never writing one into the tree. This asserts the property
+    # rather than trusting the paths above: any image added or changed beside
+    # app.py during the run is a screenshot that went to the wrong place.
+    _after = _images_beside_app()
+    _new = sorted(n for n in _after if n not in _IMAGES_BEFORE)
+    _touched = sorted(n for n in _after
+                      if n in _IMAGES_BEFORE and _after[n] != _IMAGES_BEFORE[n])
+    res(not _new and not _touched,
+        "the run writes no image into the repository tree"
+        + ("" if not (_new or _touched)
+           else ": added [" + ", ".join(_new) + "] changed ["
+                + ", ".join(_touched) + "]"))
     br.close()
 srv.shutdown()
+print("screenshots written to: " + SHOT_DIR)
 print("RESULT: " + ("ALL PASS" if ok else "FAILURES"))

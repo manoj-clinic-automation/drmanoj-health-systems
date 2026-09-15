@@ -62,6 +62,16 @@ REM      "REFUSING" and "NOT FOUND" line printed without its marker. Carets
 REM      are processed before delayed expansion, so one caret is not enough
 REM      either; two are. That is why the markers below are written doubled.
 REM
+REM  2026-09-15 - GATE 0: git is resolved, PROVED to run, and handed to the
+REM  Python children as NO_SECRETS_GIT. The publish refused with
+REM  "could not run git: WinError 2" from check C, four gates in, and it read
+REM  as git being gone. It was not. This script has always resolved git for
+REM  its OWN calls out of GitHub Desktop's bundled copy - there is no Git for
+REM  Windows on this machine and none on PATH - and simply never passed that
+REM  path on. Check C was added the day before, so it had never once run here.
+REM  A resolution that only one caller knows is a resolution that will be lost
+REM  again, so the search now exists in tools\NO_SECRETS.py as well.
+REM
 REM  :selftest runs on EVERY publish and refuses if the gate cannot catch a
 REM  name it must catch or wrongly catches one it must not. A gate nobody has
 REM  seen fail is not a gate - CLAUDE.md rule 2a, applied to this script.
@@ -76,6 +86,7 @@ set REPO_DIR=D:\dr-manoj-git\drmanoj-health-systems
 REM ---- what the run will report at the end -----------------------------------
 REM  "not reached" is deliberate and is NOT a pass: it means the run stopped
 REM  before that gate ran. A gate that never ran must never read as green.
+set "G_GIT=not reached"
 set "G_LOCK=not reached"
 set "G_SELFTEST=not reached"
 set "G_PATHS=not reached"
@@ -99,20 +110,62 @@ exit /b 1
 set MSG=%~1
 if not defined MSG set MSG=publish: pending health-systems changes
 
-set GIT=
-where git >nul 2>&1 && set GIT=git
-if not defined GIT if exist "C:\Program Files\Git\cmd\git.exe" set GIT="C:\Program Files\Git\cmd\git.exe"
-if not defined GIT if exist "C:\Program Files (x86)\Git\cmd\git.exe" set GIT="C:\Program Files (x86)\Git\cmd\git.exe"
-if not defined GIT for /d %%D in ("%LOCALAPPDATA%\GitHubDesktop\app-*") do if exist "%%D\resources\app\git\cmd\git.exe" set GIT="%%D\resources\app\git\cmd\git.exe"
-if defined GIT goto :git_ok
-echo ^^!^^! git.exe not found
+REM ---- GATE 0: git must be found AND must actually run ----------------------
+REM  2026-09-15. This script always resolved git for ITSELF - there is no Git
+REM  for Windows on this machine and the only git is the copy inside GitHub
+REM  Desktop, under a version-stamped folder. What it never did was tell the
+REM  Python child, so tools\NO_SECRETS.py looked for a bare "git" on PATH,
+REM  found nothing, and check C refused - four gates in, with a message about
+REM  a missing file rather than about a missing PATH entry. GITEXE is kept
+REM  UNQUOTED so it can be handed to Python as an environment value; GIT stays
+REM  quoted for use here.
+set "GITEXE="
+for /f "delims=" %%G in ('where git 2^>nul') do if not defined GITEXE set "GITEXE=%%G"
+if not defined GITEXE if exist "C:\Program Files\Git\cmd\git.exe" set "GITEXE=C:\Program Files\Git\cmd\git.exe"
+if not defined GITEXE if exist "C:\Program Files (x86)\Git\cmd\git.exe" set "GITEXE=C:\Program Files (x86)\Git\cmd\git.exe"
+REM  last match wins, which is the newest app-* folder in practice; the
+REM  --version probe below is what actually decides whether it is usable.
+if not defined GITEXE for /d %%D in ("%LOCALAPPDATA%\GitHubDesktop\app-*") do if exist "%%D\resources\app\git\cmd\git.exe" set "GITEXE=%%D\resources\app\git\cmd\git.exe"
+if defined GITEXE goto :git_found
+
+set "G_GIT=FAILED - no git.exe found anywhere this script knows to look"
+echo.
+echo ^^!^^! REFUSING - git.exe was not found.
+echo    Looked on PATH, in Program Files, Program Files x86, and inside
+echo    %%LOCALAPPDATA%%\GitHubDesktop\app-*.
+echo    Install Git for Windows, or open GitHub Desktop once so its bundled
+echo    copy is present. NOTHING committed or pushed.
 call :summary
 pause
 exit /b 1
 
+:git_found
+set GIT="%GITEXE%"
+REM  Found on disk is not the same as usable. A half-removed install, or a
+REM  stale app-* folder left behind by an update, leaves the file there.
+%GIT% --version >nul 2>&1
+if not errorlevel 1 goto :git_runs
+set "G_GIT=FAILED - found %GITEXE% but it will not run"
+echo.
+echo ^^!^^! REFUSING - git was found but will not run:
+echo       %GITEXE%
+echo    NOTHING committed or pushed.
+call :summary
+pause
+exit /b 1
+
+:git_runs
+REM  Hand the SAME git to every child process. tools\NO_SECRETS.py reads this
+REM  and treats it as an instruction: if it is set and does not work, that is
+REM  an error there too rather than a quiet fall-back to some other git.
+set "NO_SECRETS_GIT=%GITEXE%"
+for /f "delims=" %%V in ('%GIT% --version') do set "G_GIT=PASS - %%V"
+
 :git_ok
 cd /d "%REPO_DIR%"
-echo Using git: %GIT%
+echo Using git: %GITEXE%
+for /f "delims=" %%V in ('%GIT% --version') do echo            %%V
+echo NO_SECRETS_GIT=%NO_SECRETS_GIT%
 echo Message  : %MSG%
 echo.
 
@@ -398,6 +451,7 @@ echo.
 echo  ==========================================================
 echo   PUBLISH_HEALTH - RESULT
 echo  ==========================================================
+echo   git found and runs    : %G_GIT%
 echo   stale git lock sweep  : %G_LOCK%
 echo   secret gate self-test : %G_SELFTEST%
 echo   staged-path gate      : %G_PATHS%

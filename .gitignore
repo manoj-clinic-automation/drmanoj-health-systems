@@ -62,6 +62,26 @@ gutlog/scan_lab/*.json
 gutlog/_nc_*.py
 */_nc_*.py
 
-# test_ui_now.py screenshots (run output, not source)
-gutlog/ui_*.png
+# ---------------------------------------------------------------------------
+# 2026-09-15. IMAGES AND OTHER BINARIES.
+#
+# Fifteen PNGs were tracked here and nine were pictures of the health record:
+# the regimen with Indian brand names and strengths, stock counts, dated dose
+# times, and two separate windows of blood pressure. Every NO_SECRETS run
+# reported clean and was right to - A, B and C read TEXT, and a PNG is bytes.
+# All nine came from gutlog/test_ui_now.py writing screenshots into the app
+# folder, on every run, where `git add -A` collected them.
+#
+# THESE LINES ARE THE BACKSTOP, NOT THE REMEDY. `git add -f`, an edit to this
+# file, or the next suite somebody writes all defeat them. The remedy is that
+# test_ui_now.py now writes its screenshots OUTSIDE the repository entirely
+# (GUTLOG_UI_SHOTS, refused if it points back inside) and asserts at the end
+# of every run that it wrote no image into the tree. The second layer is
+# NO_SECRETS check D, which refuses ANY tracked binary outside its two-icon
+# allowlist - including a PNG renamed .md.
+gutlog/*.png
+!gutlog/icon-192.png
+!gutlog/icon-512.png
+Claude outputs/
+fitlog-ingest/files.zip
 

@@ -1,0 +1,56 @@
+{
+  "_": [
+    "RxGuard v1.7.0 -- /astaken counts what was taken.",
+    "Thirteen of the fifteen new assertions are about behaviour v1.6.0 did not",
+    "have, so the reconstructed previous build fails them: it counts every",
+    "molecule on the list whether or not it was taken, has no theoretical",
+    "section, no if-all-taken figure, no collapsed card and no action marker,",
+    "and still prints the POSSIBLY STALE paragraph under each finding.",
+    "",
+    "Two of them (login, the GutLog-down message) guard behaviour v1.6.0",
+    "ALREADY had, so a version control cannot make them fail. Each is broken",
+    "on purpose in a copy of the current app instead, which is the stronger",
+    "control: it shows the assertion responds to the thing it measures.",
+    "",
+    "Note assertion 04 in particular. Asserting 'the burden is RED once a",
+    "dose for the untaken medicine exists' would pass on BOTH branches --",
+    "v1.6.0 said RED with or without the dose -- and would be worth nothing.",
+    "It asserts the PAIR of totals instead, before and after the dose row, so",
+    "it can only hold on a build that distinguishes them."
+  ],
+  "suite": "test_astaken_honest.py",
+  "app": "app.py",
+  "patcher": "patch_rxguard_v170.py",
+  "assertions": [
+    {"name": "01 the headline counts 0 RED when nothing red was actually taken", "control": "version"},
+    {"name": "02 a cumulative burden totals only the molecules with a logged dose", "control": "version"},
+    {"name": "03 the if-all-taken figure is kept, labelled, and counted nowhere", "control": "version"},
+    {"name": "04 logging a dose for an untaken medicine moves the as-taken total", "control": "version"},
+    {"name": "05 findings resting only on untaken molecules are moved out of the count", "control": "version"},
+    {"name": "06 one collapsed section names the untaken medicines exactly once", "control": "version"},
+    {"name": "07 the per-finding POSSIBLY STALE block is gone from the page", "control": "version"},
+    {"name": "08 a finding shows severity, title and consequence until it is opened", "control": "version"},
+    {"name": "09 a finding carrying an action says so while still collapsed", "control": "version"},
+    {"name": "10 no burden on this page claims a proposed change it does not have", "control": "version"},
+    {"name": "11 the absence-of-a-flag caveat sits at the page foot", "control": "version"},
+    {"name": "12 the count GutLog's banner reads is the as-taken one", "control": "version"},
+    {"name": "13 the untaken list and the headline both follow the dose log", "control": "version"},
+    {"name": "14 nothing new on this page is typed below 14px", "control": "version"},
+    {"name": "15 the page still refuses to render without a login",
+     "control": "mutation",
+     "mutation": {
+       "id": "nologin",
+       "why": "take @login_required off /astaken and see the assertion catch it",
+       "find": "    @app.route(\"/astaken\")\n    @login_required\n    def astaken():\n",
+       "replace": "    @app.route(\"/astaken\")\n    def astaken():\n"
+     }},
+    {"name": "16 GutLog being down is still a message, not an exception",
+     "control": "mutation",
+     "mutation": {
+       "id": "nodownmsg",
+       "why": "replace the unreachable-feed message and see the assertion catch it",
+       "find": "        return None, \"GutLog is not reachable (%s).\" % type(e).__name__\n",
+       "replace": "        return None, \"\"\n"
+     }}
+  ]
+}

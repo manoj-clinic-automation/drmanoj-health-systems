@@ -243,7 +243,15 @@ def main():
         assert "Reconciliation" in h, "no reconciliation section on the page"
         assert "Mark stopped on " + Y8 in h, "the one-tap stop date is not GutLog's"
         assert "Mark stopped on " + TODAY not in h, "today's date was offered"
-        assert "Possibly stale" in h, "the stale marking does not reach the page"
+        # v1.7.0 (RXGUARD_V170_HONEST) deleted the per-finding POSSIBLY STALE
+        # block from this page. The same fact is now said once -- the
+        # reconciliation tap above for a chronic drug GutLog has dropped, and
+        # the untaken-medicine section at the foot -- instead of being repeated
+        # under every finding that happened to touch it. What must still hold
+        # is that the drug is named on the page at all.
+        assert "Possibly stale" not in h, \
+            "the per-finding stale block is back; v1.7.0 says it once, elsewhere"
+        assert "tizanidine" in h, "the possibly-stopped drug is not named on the page"
         assert "Add as active, started " + Y30 in h, "the mirror case offers no tap"
         return "page offers 'Mark stopped on " + Y8 + "' and the inverted case"
 

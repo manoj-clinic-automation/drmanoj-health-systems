@@ -1,0 +1,42 @@
+{
+  "_": [
+    "tools/NO_SECRETS.py -- git resolution (2026-09-15).",
+    "",
+    "Six of the eight are behaviour the previous build did not have: it had no",
+    "resolve_git at all, and its check C could not reach git on this machine,",
+    "so it refused on every run. Those fail against the reconstructed build.",
+    "",
+    "Assertions 06 and 07 are the two that matter most and the two a version",
+    "control CANNOT prove. They say NO_SECRETS still exits non-zero and says",
+    "so when git cannot be reached at all -- and the previous build did that",
+    "too, because it could never reach git. An assertion that agrees with both",
+    "branches is not evidence, and this is exactly the assertion an over-eager",
+    "fix would quietly break.",
+    "",
+    "So they are controlled by mutation `weaken`, which drops tracked_err from",
+    "the blocking test -- the precise weakening the owner asked to be guarded",
+    "against. Under it, a run that cannot reach git exits 0 and reads as a",
+    "clean publish; both assertions catch it."
+  ],
+  "suite": "test_no_secrets_git.py",
+  "app": "NO_SECRETS.py",
+  "patcher": "patch_no_secrets_gitresolve.py",
+  "assertions": [
+    {"name": "01 git is resolved on this machine without being on PATH", "control": "version"},
+    {"name": "02 check C reads the index instead of refusing", "control": "version"},
+    {"name": "03 NO_SECRETS_GIT naming a missing file refuses, and does not fall back", "control": "version"},
+    {"name": "04 a named git that exists but will not run is refused too", "control": "version"},
+    {"name": "05 with git genuinely absent the resolver finds nothing and says why", "control": "version"},
+    {"name": "06 NO_SECRETS still refuses, loudly, when git cannot be reached",
+     "control": "mutation",
+     "mutation": {
+       "id": "weaken",
+       "why": "drop tracked_err from the blocking test, so a check that could not run exits 0, and see both refusal assertions catch it",
+       "find": "    blocked = bool(path_hits or secret_hits or tracked_hits or tracked_err\n                   or binary_hits)\n",
+       "replace": "    blocked = bool(path_hits or secret_hits or tracked_hits\n                   or binary_hits)\n"
+     }},
+    {"name": "07 a working git that cannot answer also blocks",
+     "control": "mutation", "mutation": {"id": "weaken"}},
+    {"name": "08 against the real tree check C runs and the tree passes", "control": "version"}
+  ]
+}

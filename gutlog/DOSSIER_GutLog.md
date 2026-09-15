@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.17.0)
+# GutLog — DOSSIER (v3.18.0)
 
 Single source of truth. Update after every change.
 
@@ -128,11 +128,60 @@ the join is the point, because load and pain were in different applications.
   facts and a chart that conflates them lies about a rest day.
 
 **Deliberately absent:** readiness, recovery, body battery, fitness age, or
-any other number pretending to summarise a body. A wrist sensor's HR and HRV
-accuracy depends on the underlying rhythm, so every figure here is an input
-and one quiet footnote says so. `test_phase_j.py` case 04 fails if any such
-word reaches the payload or the page. **Standing load is never added to
-exercise** — not on the strip, not in the row, and not into the median.
+any other number pretending to summarise a body. Every figure here is an input
+to a judgement, never a judgement, and one quiet footnote says so.
+`test_phase_j.py` case 04 fails if any such word reaches the payload or the
+page. **Standing load is never added to exercise** — not on the strip, not in
+the row, and not into the median.
+
+**The footnote stopped arguing from a stale clinical premise (v3.18.0).** It
+used to read *"Heart-rate and HRV figures from a wrist sensor depend on the
+underlying rhythm for their accuracy, so no readiness, recovery or fitness
+score is derived from them here."* The second clause was an inference about
+the wearer's own rhythm, carried forward from an old investigation; a current
+one says otherwise, so the sentence was false as written and had been restated
+every time the card was read. The reason for showing inputs rather than scores
+never rested on it, so the claim is gone and the reason stands on its own —
+*"Shown as inputs, not conclusions. No readiness, recovery or fitness score is
+derived from them."* The clinical basis for the correction is in the health
+record on the server and is deliberately not restated here (CLAUDE.md rule
+5d). FitLog's separate note about HR during a medication titration is a
+different claim, still true, and untouched.
+
+A note on the class of defect, because it is the reusable part: the wrong
+sentence was not a bug in code, it was a **premise written into a string years
+before and never re-checked**. Nothing in the test suite could have caught it —
+every assertion about that footnote asserted that it was present and unchanged.
+`test_watch_tiles.py` now asserts the footnote's exact wording, which at least
+means the next change to it has to be deliberate.
+
+### Tiles that hold nothing are not drawn — v3.18.0
+
+The live answer on 2026-09-15: `load_hours` came back `n: 0` with every field
+null, and `resting_hr` and `hrv_ms` came back with a six-day median but
+`value: null`, `day: ""`, `source: ""`. Three tiles drew a label with nothing
+under it, and the two that had a median threw it away.
+
+- **`/api/watch` withholds a tile with no figure, no median and nothing
+  running today.** The decision is made once, on the server, so the card can
+  go on drawing whatever it is handed.
+- **The card refuses to draw one anyway** (`wkHas`). Two guards on purpose:
+  this is the last line before the screen, and an answer the service worker
+  cached from an older build would otherwise put the empty label straight back
+  in front of him with nothing in the server to stop it.
+- **A tile that has only a median shows the median**, muted, with the line
+  beneath reading *"6-day median, no reading today"* and **no day label** — the
+  figure belongs to a window, not to a date, and a date on it would read as
+  today's reading. `"no data"` is now reserved for a tile that has a running
+  figure today and nothing settled behind it.
+
+Server-side: `test_watch_tiles.py` **7/7**, negative control
+`new_assertions_v3180.json` **PASS (7/7 seen to fail)**. Browser side:
+`test_ui_now.py`, negative control `new_assertions_v3180_ui.json`. The two
+that could not fail on a version change are mutation-controlled: widening the
+withholding test from AND to OR (does it throw away tiles that *do* hold
+something?) and typing the new median figure at 12px (does the card's 14px
+floor actually measure the new element?).
 
 If FitLog is unreachable the card says so and still draws GutLog's own pain
 and operating days.
@@ -183,6 +232,30 @@ needs its own steps chosen against the dark surface — and because this card
 shares one `:root` palette with every other screen in the app, it also needs
 new ink, muted, line and card tokens and a pass over every existing component.
 That is an app-wide change with its own validation, not a corner of a card.
+
+## Medicines banner (Now tab) — v3.18.0
+
+`#nowMedStatus`, fed by `/api/medstatus`: medicines still needing a salt, plus
+whatever RxGuard's `/api/feed/status` reports — drafts and interaction pairs
+waiting for review, and its RED count.
+
+It used to paint itself **amber for housekeeping every single morning** (a
+salt to fill in, a draft to review) and **red for a RxGuard count that until
+RxGuard v1.7.0 included burdens built out of medicines that had not been
+taken**. From v3.18.0 red means RxGuard has a RED it can stand behind;
+everything else is neutral (`.stockalert.info`, themed tokens, no extra dark
+rules needed). This banner is the only cue he sees daily, so it should earn
+attention rather than spend it — the same argument as the ring targets the
+Watch card refuses to draw.
+
+The count itself is RxGuard's to get right, and RxGuard v1.7.0 is where that
+was fixed; this end only stops shouting about it.
+
+Browser assertions in `test_ui_now.py` (`/api/medstatus` stubbed, service
+workers blocked): with no RED the banner is neutral and says nothing about
+RED; with a RED it is an alert and names it. The second is mutation-controlled
+— it passes on v3.17.0 too, so the banner is made neutral-even-with-a-RED on
+purpose and the assertion has been seen catching it.
 
 ## Pain now (Now tab) — v3.12.0
 
@@ -499,11 +572,45 @@ Concrete paths and commands are in `gutlog/INFRA_GutLog.local.md` (gitignored).
    own database and never touches the live one
 6. OLS reverse proxy → loopback port · CyberPanel SSL · DNS A record
 
+**Order matters when a companion app is in the same release.** GutLog's home
+banner reads RxGuard's `/api/feed/status`, so for the v3.18.0 / RxGuard v1.7.0
+pair, **deploy RxGuard first**. The other way round gives a quiet-looking box
+around an inflated count — the worst of both changes at once.
+
 ## Environment (verified on server, 2026-09-10)
 Python 3.9.25 · SQLite 3.34.1 · Flask · gunicorn, 2 sync workers · HTTPS live
 via OLS reverse proxy.
 
 ## Test evidence
+> **Run the two negative controls one at a time.** Both reconstruct the
+> previous build to the same path, `gutlog/_nc_prev.py` beside `app.py`
+> (`tools/NEGATIVE_CONTROL.py` requires it there so the suite's own imports
+> resolve), and each deletes it on the way out. Running them concurrently
+> pulled that file out from under the browser suite mid-run on 2026-09-15 —
+> which aborts loudly, as designed, but wastes a fifteen-minute run.
+
+- `test_watch_tiles.py` — **7/7 PASS** (2026-09-15, v3.18.0), and 7/7 under
+  `RUN_AT_TIME` at 00:02, 05:05 and 23:58; **7 declared, 7 seen to fail**.
+  Server side only: it hands `/api/watch` a FitLog answer directly rather
+  than standing FitLog up, because the question is what the endpoint does
+  with an answer. Asserts the footnote's wording and that it argues nothing
+  about rhythm; that no tile with a null value, a null median and nothing
+  running is sent; that the three metrics with nothing behind them are
+  withheld **by name**; that the median-only metric IS sent, with its median
+  and its `n`; that the tiles which do hold something are untouched; and that
+  logging an operating day is what brings the load tile back — asserted as a
+  *pair*, absent before and present after, because "it appears once something
+  is logged" was true of v3.17.0 too. The login guard is mutation-controlled,
+  and so is the withholding rule itself (widened from AND to OR, to prove the
+  suite would notice a rule that threw away tiles that do hold something).
+- `test_ui_now.py`, Watch and banner — **6 declared, 6 seen** against the
+  reconstructed v3.17.0 and two deliberate mutations. The main watch fixture
+  now carries `resting_hr` in the live median-only shape, so the tile's
+  median, its window text and its *absence of a day label* are all asserted
+  on the card rather than only in the payload; a second, sparser stub carries
+  the v3.17.0 all-null `load_hours` to prove the card refuses to draw it even
+  when the server does send one. The banner block stubs `/api/medstatus`
+  twice, once with a RED and once without.
 - `test_phase_m.py` — **19/19 PASS** (2026-09-14, v3.17.0), and 19/19 under
   `RUN_AT_TIME` at 00:02, 05:05 and 23:58; **18 declared new assertions, 18
   seen to fail** against the reconstructed v3.16.0. Half one runs GutLog
@@ -699,15 +806,47 @@ rediscovered the expensive way.
    defined-if-called check inside `patch_gutlog_v341.py`. Run
    `test_ui_now.py` before shipping any patch that touches the Now-tab script.
 
+8. **The sleep tile and the activity rings on the Watch card are unverified,
+   and deliberately untouched in v3.18.0.** The Apple Watch has sent nothing
+   since 2026-09-13, so there is no data to check them against and anything
+   written for them would be written blind. The four sleep-timing fields (dose
+   time, lights-out, wake time, woke-early) are in the same position. Both wait
+   for the feed to resume; do not "fix" them from a screenshot.
+
+9. **One GutLog medicine still has no molecule recorded** beyond the three in
+   gap 5 — a rehydration sachet entered separately — so RxGuard cannot check
+   it at all and reports it as "no molecule recorded". A one-line data fix in
+   GutLog on the server, the owner's to make; it is not a code change and no
+   patch here will do it.
+
 ## What's next
 - **Phase C** — RxGuard interaction check across the live med stack (blocked in
   part by gap 5 — unmapped molecules are invisible to it)
+- **Sleep tile and activity rings on the Watch card** — blocked on the Apple
+  Watch feed resuming (gap 8)
 - Stock and refill alerts, driven by `prnmeds.stock` / `pack_size`
 - FitLog read-endpoint cutover — FitLog consuming GutLog data rather than
   duplicating it
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-15 v3.18.0 — Watch tiles that hold nothing, the rhythm sentence,
+  and the medicines banner. BUILT, NOT YET DEPLOYED.** `app.py` sha256
+  `6fee0b4a…`, 366,177 bytes. `patch_gutlog_v3180.py`, 9 anchors, reversible
+  (reversing reproduces v3.17.0 at exactly 363,598 bytes, byte-identical to
+  the pre-patch file). No schema change — 3.3.4 unchanged; the marker list on
+  `SCHEMA_VERSION` gains `GUTLOG_V3180_HONEST`. Three changes: `/api/watch`
+  withholds a tile with no figure, no median and nothing running today, and
+  the card refuses to draw one anyway; a tile with only a median shows the
+  median with its window named instead of "no data"; the footnote drops the
+  rhythm claim; the medicines banner is neutral unless RxGuard has a RED.
+  Gates: `test_watch_tiles.py` 7/7 and `test_ui_now.py` ALL PASS; negative
+  controls **server-side 7 declared, 7 seen** and **browser-side 6 declared,
+  6 seen**, five of the thirteen by deliberate mutation because they guard
+  properties v3.17.0 already had. Sleep tiles and activity rings deliberately
+  untouched (gap 8). Pairs with RxGuard v1.7.0, which is what makes the
+  banner's RED count honest; deploy RxGuard first or the banner reads an
+  inflated count from a neutral-looking box.
 - **2026-09-14 v3.17.0 — Phase M: Down days. DEPLOYED 18:20 IST** (FitLog
   v1.6.0 at 18:19, first). `app.py` sha256 `86887cf6…`, 363,598 bytes,
   byte-identical to the repo build. `patch_gutlog_v3170.py`, 24 anchors,

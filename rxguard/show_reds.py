@@ -12,6 +12,13 @@ The question this exists to answer: a RED is worth acting on only if the drugs
 underneath it are still being taken. Before v1.5.0 there was no way to tell
 from the page.
 
+From v1.7.0 the RED and AMBER counts below are the AS-TAKEN counts, the same
+ones the page and GutLog's banner read: a burden is totalled over the
+molecules GutLog logged a dose of in the window, or carries in its regimen.
+Anything that would apply only if the untaken medicines were taken is printed
+after them, under its own heading, so this answer is never shorter than the
+page's — it is sorted, not shortened.
+
   python3 show_reds.py                 # live database, 14-day GutLog window
   python3 show_reds.py --days 30
   python3 show_reds.py --db /path/to/other.db
@@ -102,6 +109,22 @@ def main():
                 if f.get("unlisted"):
                     print("    NOTE     : involves a medicine not on your list")
                 print("")
+
+        # RXGUARD_V170_HONEST -- the counted lists above are what was actually
+        # taken. Everything the old build counted alongside them is still here,
+        # under a heading that says what it is.
+        theo = v.get("theoretical") or []
+        print("")
+        print("Would apply only if the untaken medicines were taken x " + str(len(theo)))
+        print("-" * 72)
+        if v.get("not_taken_text"):
+            print("  " + v["not_taken_text"])
+        for f in theo:
+            print("  " + f["flag"] + "  " + f["title"])
+            print("    rests on : " + (", ".join(
+                rx.display_name(k) for k in (f.get("involves") or [])) or "-"))
+        if not theo:
+            print("  nothing")
 
         rec = v.get("rec") or {"stopped": [], "missing": []}
         print("")

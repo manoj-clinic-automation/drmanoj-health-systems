@@ -1,0 +1,50 @@
+{
+  "_": [
+    "GutLog v3.18.0, browser side: the Watch card and the medicines banner in",
+    "test_ui_now.py. Four of the six are behaviour v3.17.0 did not have -- it",
+    "drew 'no data' over a metric that had arrived with a six-day median, it",
+    "drew a tile for load_hours that held nothing at all, and it painted the",
+    "medicines banner amber for housekeeping every morning.",
+    "",
+    "Two guard the other direction and cannot fail on a version change, so",
+    "each is broken on purpose in a copy of the current app:",
+    "  smallmed  gives the new median figure 12px type, and the card's",
+    "            existing 14px floor has to catch it. That is what discharges",
+    "            'no sub-14px type in anything new' for this change: the floor",
+    "            is now shown to be measuring the new element and not merely",
+    "            the ones it measured before.",
+    "  neverred  makes the banner neutral even with a RED, so the assertion",
+    "            that it still shouts when it should has been seen failing.",
+    "",
+    "Two assertions in the block are deliberately NOT declared, because they",
+    "are fixture self-checks rather than claims about the app: 'the sparse",
+    "stub actually served /api/watch' and 'the medicines banner is stubbed",
+    "and drawn'. Both exist so that a bypassed route fails loudly instead of",
+    "leaving the assertions below testing the live handler."
+  ],
+  "suite": "test_ui_now.py",
+  "app": "app.py",
+  "patcher": "patch_gutlog_v3180.py",
+  "assertions": [
+    {"name": "a metric with no reading today shows its median instead of an absence", "control": "version"},
+    {"name": "the median tile names the window the median came from", "control": "version"},
+    {"name": "a tile that holds nothing is not drawn at all", "control": "version"},
+    {"name": "with no RED the banner is neutral, not an alert", "control": "version"},
+    {"name": "nothing inside the card is smaller than 14px",
+     "control": "mutation", "min_hits": 1,
+     "mutation": {
+       "id": "smallmed",
+       "why": "type the new median figure at 12px and see the card's 14px floor catch it",
+       "find": ".wktile .wv.med{color:var(--muted)}\n",
+       "replace": ".wktile .wv.med{color:var(--muted);font-size:12px}\n"
+     }},
+    {"name": "with a RED the banner is an alert and names it",
+     "control": "mutation",
+     "mutation": {
+       "id": "neverred",
+       "why": "make the banner neutral even when RxGuard has a RED, and see the assertion catch it",
+       "find": "d.className='stockalert medstat '+(j.rx&&j.rx.red?'red':'info');\n",
+       "replace": "d.className='stockalert medstat info';\n"
+     }}
+  ]
+}

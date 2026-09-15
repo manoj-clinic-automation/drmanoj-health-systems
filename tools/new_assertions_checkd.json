@@ -1,0 +1,41 @@
+{
+  "_": [
+    "tools/NO_SECRETS.py check D -- no tracked binaries outside an allowlist.",
+    "",
+    "Six of the seven are behaviour the pre-D build did not have: it tracked",
+    "fifteen PNGs, nine of them pictures of the health record, and reported",
+    "clean every time. Against the reconstructed build each of the six fails.",
+    "",
+    "Assertion 05 is the one a version control cannot prove. It says an",
+    "allowlisted icon is NOT refused -- and the pre-D build did not refuse it",
+    "either, because it refused nothing. An allowlist that is never shown to",
+    "let anything through is decoration, and the pressure on a check that",
+    "blocks a needed file is to switch the check off. So it is controlled by",
+    "mutation `emptyallow`, which empties BINARY_ALLOW: the two PWA icons are",
+    "then refused and the assertion catches it.",
+    "",
+    "Assertion 02 is the owner's stated requirement in as direct a form as it",
+    "can be put: a PNG is created in a throwaway git repository, added, and",
+    "NO_SECRETS is run against that tree. Nothing is simulated and the real",
+    "repository's index is never touched."
+  ],
+  "suite": "test_no_secrets_binaries.py",
+  "app": "NO_SECRETS.py",
+  "patcher": "patch_no_secrets_checkd.py",
+  "assertions": [
+    {"name": "01 the allowlist is the two icons and every entry states its reason", "control": "version"},
+    {"name": "02 adding any new tracked PNG fails the check, by name", "control": "version"},
+    {"name": "03 binary content under a text extension is caught too", "control": "version"},
+    {"name": "04 a tracked archive is refused on the same footing as an image", "control": "version"},
+    {"name": "05 an allowlisted binary is not refused",
+     "control": "mutation",
+     "mutation": {
+       "id": "emptyallow",
+       "why": "empty BINARY_ALLOW so the two PWA icons are refused, and see the assertion catch an allowlist that lets nothing through",
+       "find": "BINARY_ALLOW = {\n    \"gutlog/icon-192.png\":\n        \"PWA manifest icon, served by gutlog/pwa.py - an abstract glyph, no \"\n        \"content, and the app will not install without it\",\n    \"gutlog/icon-512.png\":\n        \"the same icon at 512px, same manifest, same reason\",\n}\n",
+       "replace": "BINARY_ALLOW = {}\n"
+     }},
+    {"name": "06 with git unreachable the binary check refuses rather than passing", "control": "version"},
+    {"name": "07 the real tree carries no tracked binary outside the allowlist", "control": "version"}
+  ]
+}

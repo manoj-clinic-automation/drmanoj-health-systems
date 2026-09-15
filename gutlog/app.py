@@ -274,7 +274,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN
+SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -2437,9 +2437,17 @@ def api_episode_eased(eid):
 # holds the data, GutLog holds the pain and the operating days, and this is
 # the only place the two are put side by side.
 #
-# No verdict is computed here and none should be added. A wrist sensor's HR
-# and HRV accuracy depends on the underlying rhythm, so every number on this
-# screen is an input. The footnote says so once, quietly.
+# No verdict is computed here and none should be added. Every number on this
+# screen is an input to a judgement, never a judgement. The footnote says so
+# once, quietly.
+#
+# GUTLOG_V3180_HONEST -- that footnote used to justify itself with a claim
+# about the wearer's cardiac rhythm, carried forward from an old
+# investigation. A current one says otherwise, so the claim was false as
+# written. The reason for showing inputs rather than scores never rested on
+# it, so the claim is gone and the reason stands on its own. The clinical
+# basis is in the health record on the server; it does not belong in a public
+# repository and is deliberately not restated here (CLAUDE.md rule 5d).
 WATCH_STRIP = ("steps", "exercise_minutes", "resting_hr", "hrv_ms")
 # GUTLOG_V3150_READ -- what KIND of quantity each tile holds, in one place.
 #
@@ -2455,10 +2463,8 @@ WATCH_STRIP = ("steps", "exercise_minutes", "resting_hr", "hrv_ms")
 WATCH_KIND = {"steps": "cumulative", "exercise_minutes": "cumulative",
               "load_hours": "cumulative",
               "resting_hr": "settled", "hrv_ms": "settled"}
-WATCH_NOTE = ("Shown as inputs, not conclusions. Heart-rate and HRV figures "
-              "from a wrist sensor depend on the underlying rhythm for their "
-              "accuracy, so no readiness, recovery or fitness score is "
-              "derived from them here.")
+WATCH_NOTE = ("Shown as inputs, not conclusions. No readiness, recovery or "
+              "fitness score is derived from them.")
 
 
 def _median(xs):
@@ -2599,6 +2605,14 @@ def api_watch():
             if t.get("value") is not None:
                 run = {"value": float(t["value"]), "day": tday,
                        "source": t.get("source") or ""}
+        # GUTLOG_V3180_HONEST -- a tile with no figure, no median and nothing
+        # running today has nothing to say, and it said it: a label with an
+        # empty value under it, which reads as a fault in the app rather than
+        # as an absence of data. It is not sent at all. The decision is made
+        # once, here, rather than in the drawing code, so the card can go on
+        # drawing whatever it is handed.
+        if v is None and med is None and run is None:
+            continue
         strip[k] = {"kind": kind, "value": v, "source": cur.get("source") or "",
                     "day": day or "", "stale": bool(day) and day != tday,
                     "dir": d_, "median": med, "n": n, "today": run}
@@ -3908,6 +3922,7 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 #actTiles .ptile.open .pscore{display:block}
 #actTiles .pscore .chips{margin-bottom:8px}
 #actTiles .pscore .btn.primary{margin-top:4px}
+.stockalert.info{background:var(--chip);border-color:var(--line);color:var(--ink)}
 .stockalert.medstat{flex-wrap:wrap}
 .stockalert .ml{display:flex;flex-wrap:wrap;gap:6px 12px}
 .stockalert .mlink{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer;text-align:left}
@@ -3992,6 +4007,7 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
   font-variant-numeric:tabular-nums}
 .wktile.hero .wv{font-size:32px}
 .wktile .wv.none{font-size:16px;font-weight:600;color:var(--muted)}
+.wktile .wv.med{color:var(--muted)}
 .wktile .wc{font-size:15px;font-weight:500;color:var(--ink);margin:4px 0 0;
   font-variant-numeric:tabular-nums}
 .wktile .wp{font-size:14px;color:var(--muted);margin:2px 0 0}
@@ -5216,7 +5232,12 @@ async function loadMedStatus(){
     if(j.rx&&j.rx.red)parts.push(['RxGuard shows '+j.rx.red+' RED',()=>window.open('https://rx.dr-manoj.in/astaken','_blank')]);
     if(!parts.length)return;
     const d=document.createElement('div');
-    d.className='stockalert medstat '+(j.rx&&j.rx.red?'red':'amber');
+    /* GUTLOG_V3180_HONEST -- red only when RxGuard has a RED it can stand
+       behind, which from RxGuard v1.7.0 means one built out of medicines
+       actually taken. Everything else this banner carries is housekeeping --
+       a salt to fill in, a draft to review -- and housekeeping painted amber
+       every morning is how a real alert stops being seen. */
+    d.className='stockalert medstat '+(j.rx&&j.rx.red?'red':'info');
     d.innerHTML='<b>Medicines</b><span class="ml"></span>';
     const ml=d.querySelector('.ml');
     parts.forEach(p=>{const a=document.createElement('button');a.type='button';a.className='mlink';
@@ -6359,10 +6380,21 @@ function wkTile(k,d,hero){
     '<p class="wv"></p><p class="wc"></p><p class="wp"></p><p class="wr"></p>';
   w.querySelector('.wn').textContent=WK_LABEL[k]||k;
   const has=(d.value!==null&&d.value!==undefined);
+  const med=(d.median!==null&&d.median!==undefined)?d.median:null;
+  /* GUTLOG_V3180_HONEST -- a settled metric can arrive with no reading today
+     and several days of median behind it. Printing 'no data' over that threw
+     the median away, and the label with an empty value under it read as a
+     broken tile rather than as an absence. The median becomes the figure and
+     the line beneath states the window it came from, so it can never be
+     mistaken for a reading taken today. */
+  const medonly=(!has&&med!==null&&d.n>0);
   w.querySelector('.wday').textContent=has?wkDay(d.day):'';
   const vv=w.querySelector('.wv');
   if(has){
     vv.textContent=wkNum(d.value,k)+(WK_UNIT[k]||'');
+  }else if(medonly){
+    vv.textContent=wkNum(med,k)+(WK_UNIT[k]||'');
+    vv.classList.add('med');
   }else{
     vv.textContent='no data';
     vv.classList.add('none');
@@ -6370,11 +6402,13 @@ function wkTile(k,d,hero){
   /* line 1: the comparison, in ink. Direction is never colour-alone -- the
      glyph carries it and the text stays ink. */
   const cmp=w.querySelector('.wc');
-  if(has&&d.dir&&d.median!==null&&d.median!==undefined){
+  if(has&&d.dir&&med!==null){
     cmp.textContent=WK_ARROW[d.dir]+' '+wkNum(d.value,k)+
-      ' \u00b7 typical '+wkNum(d.median,k);
+      ' \u00b7 typical '+wkNum(med,k);
   }else if(has){
     cmp.textContent=d.n?('only '+d.n+' days to compare with'):'nothing yet to compare with';
+  }else if(medonly){
+    cmp.textContent=d.n+'-day median, no reading today';
   }
   /* line 2: where it came from, and how thin the baseline is */
   const prov=[];
@@ -6479,11 +6513,19 @@ async function loadWatch(){
     return;
   }
   const s=j.strip||{};
+  /* GUTLOG_V3180_HONEST -- the server withholds a tile that holds nothing and
+     the card refuses to draw one anyway. Two guards on purpose: this is the
+     last line before the screen, and an answer cached by the service worker
+     from an older build would otherwise put an empty label back in front of
+     him with nothing in the server to stop it. */
+  const wkHas=d=>!!d&&((d.value!==null&&d.value!==undefined)||
+    (d.median!==null&&d.median!==undefined&&d.n>0)||
+    (d.today&&d.today.value!==null&&d.today.value!==undefined));
   /* one hero, then two per row. Five across overflowed a 368px strip. */
-  if(s.steps)st.appendChild(wkTile('steps',s.steps,true));
+  if(wkHas(s.steps))st.appendChild(wkTile('steps',s.steps,true));
   const grid=document.createElement('div');grid.className='wkgrid';
   ['exercise_minutes','load_hours','resting_hr','hrv_ms'].forEach(k=>{
-    if(s[k])grid.appendChild(wkTile(k,s[k],false));
+    if(wkHas(s[k]))grid.appendChild(wkTile(k,s[k],false));
   });
   st.appendChild(grid);
   /* the header names the day of every figure it carries */
