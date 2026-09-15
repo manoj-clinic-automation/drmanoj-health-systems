@@ -62,13 +62,31 @@ through is decoration, and the pressure on a check that blocks a needed file is
 to switch the check off.
 
 **The rewrite.** `git filter-repo --invert-paths` over the fourteen paths.
-32 commits and 197 files survive; every commit sha changed.
+32 commits and 197 files survive.
 
 | | |
 |---|---|
 | Before (what GitHub served) | `512c390` |
 | After (what GitHub serves now) | `30453ce` |
-| Old→new map for all 32 | `.git/filter-repo/commit-map`, copied outside the repo |
+
+**Two corrections to what was first written here**, both found while preparing
+the GitHub purge request:
+
+- *"Every commit sha changed"* was wrong. **Two** commits predate the first
+  tracked image — `0154e22` (Initial commit) and `494ec2f` (10-Sep) — so
+  filter-repo had no reason to touch them and they are still reachable from
+  HEAD. **29** shas were served by GitHub and are now unreachable, not 32.
+  (`d42b1c9` is stale too but was never pushed, so GitHub never served it.)
+- The `commit-map` filter-repo leaves behind is **per invocation**, and this
+  purge took two — the first exited 0 having missed a path, see below. The
+  saved map therefore described the *second* run, mapping the intermediate
+  history to the final one, not the original to the final. Useless for the
+  purpose it was produced for. The correct list is a set difference between
+  the pre-rewrite `.git` backup and the repository now, written to
+  `_github_purge_request_stale_shas_20260915.txt` outside the repo.
+
+Both errors came from trusting a tool's own report instead of measuring the
+thing being claimed — the same shape as the exit-0 miss below.
 
 Verified from a **fresh clone of what GitHub now serves**: 32 commits, 197
 files, the only images in the entire history are the two PWA icons, and each of
