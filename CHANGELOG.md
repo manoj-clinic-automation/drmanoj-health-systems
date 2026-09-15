@@ -3,6 +3,87 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-15 — nine pictures of the record were in the public tree, and no text check could ever have seen them
+
+**What was there.** Fifteen PNGs and one zip were tracked in this PUBLIC
+repository. Nine of the images were pictures of the health record: the full
+regimen with Indian brand names and strengths, stock counts and a dated pillbox
+fill, dated dose times, a refill banner naming two medicines, logged activity,
+an interaction review headed *"the medicines you take now"* listing four
+molecules with doses plus two more in named findings, and **two separate
+windows of blood pressure readings** — 08–10 Sep and 11–13 Sep, four dated
+readings each with averages and extremes.
+
+Every NO_SECRETS run reported clean and was **right to**. Checks A, B and C
+read text. A PNG is bytes. The checker could not have seen this however
+carefully it looked.
+
+**Judgement could not have been the defence either.** Of the sixteen, one that
+looked like a scan of a real lab report was synthetic — its values match
+`gutlog/scan_lab/make_images.py` exactly — and one that looked like a harmless
+UI screenshot carried a real date in a filename field. Classifying pictures by
+eye is a thing somebody has to get right every time, forever. So all fourteen
+non-icon binaries were purged, not the nine: over-purging costs nothing when
+only two icons are referenced by code.
+
+**The mechanism.** `gutlog/test_ui_now.py` wrote **eleven** screenshots into
+the app folder on every run — `banner.png` and `salts.png` included, which had
+looked hand-made — and `git add -A` collected them. The committed versions came
+from a run against the live database. Every other suite in the repo already
+wrote to a temp directory; this was the only one.
+
+**The remedy, in three layers.**
+
+1. **The suite writes outside the tree.** `GUTLOG_UI_SHOTS`, defaulting under
+   the system temp directory, and the suite **refuses to start** if that path
+   resolves inside the repository or beside the app under test. It then asserts
+   at the end of every run that no image beside `app.py` was added or changed.
+   A file never written into the tree cannot be committed by accident.
+2. **NO_SECRETS check D.** Any tracked file with a binary or image extension is
+   refused unless it is in `BINARY_ALLOW` — two PWA icons, each carrying its
+   reason. No screenshot is on it and none should be: a synthetic screenshot
+   becomes a live one the next time its suite meets a real database. D also
+   reads the first bytes of every tracked file that is *not* binary by
+   extension, because an extension rule alone is defeated by renaming. The
+   tracked listing is now fetched unconditionally — it used to be fetched
+   inside `if terms:` for C's sake, which would have left D unarmed on any
+   machine without the gitignored word list.
+3. **`.gitignore`**, stated in the file as the backstop it is and not the
+   remedy.
+
+**Gates.** `tools/test_no_secrets_binaries.py` **7/7**, negative control
+**7/7 seen to fail**. The owner's requirement is asserted in as direct a form
+as it can be put: a PNG is created in a throwaway git repository, added, and
+NO_SECRETS is run against that tree — nothing simulated, and the real index
+never touched. Assertion 05 (an allowlisted icon is *not* refused) cannot fail
+on a version change, so it is controlled by mutation `emptyallow`: empty the
+allowlist and the icons are refused. An allowlist never shown to let anything
+through is decoration, and the pressure on a check that blocks a needed file is
+to switch the check off.
+
+**The rewrite.** `git filter-repo --invert-paths` over the fourteen paths.
+32 commits and 197 files survive; every commit sha changed.
+
+| | |
+|---|---|
+| Before (what GitHub served) | `512c390` |
+| After (what GitHub serves now) | `30453ce` |
+| Old→new map for all 32 | `.git/filter-repo/commit-map`, copied outside the repo |
+
+Verified from a **fresh clone of what GitHub now serves**: 32 commits, 197
+files, the only images in the entire history are the two PWA icons, and each of
+the nine real-data paths returns 0 commits. A magic-byte scan of all 321 blobs
+in all commits finds no binary but those two icons.
+
+**One near miss worth recording.** The first filter-repo run exited 0 and left
+`gutlog/activity.png` in every commit. The paths file had been written with
+PowerShell `Set-Content -Encoding UTF8`, which prepends a BOM, so the **first**
+entry — and only the first — did not match. The blob-level verification caught
+it; the exit code would not have. The same BOM trap had already corrupted a
+`↑` in `test_ui_now.py` earlier the same day via `Get-Content -Raw` on a
+BOM-less UTF-8 file. **Do not round-trip source or path lists through
+PowerShell 5.1 file cmdlets.**
+
 ## 2026-09-15 — check C had never once run: git was found, not missing
 
 PUBLISH_HEALTH.bat refused with `could not run git: [WinError 2] The system
