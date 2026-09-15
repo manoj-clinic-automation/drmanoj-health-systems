@@ -72,12 +72,31 @@ named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
 days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
 GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
 
-## As taken, honestly — v1.7.0 (2026-09-15, BUILT, NOT YET DEPLOYED)
+## As taken, honestly — v1.7.0 (DEPLOYED 2026-09-15 09:40 IST)
 
-`app.py` sha256 `291796f8…`, 153,331 bytes. `patch_rxguard_v170.py`, 12
-anchors, reversible — reversing reproduces v1.6.0 at exactly 142,647 bytes,
-byte-identical to the pre-patch file. **Deploy this before GutLog v3.18.0**:
-GutLog's home banner reads `/api/feed/status` from here.
+`app.py` sha256 `291796f8…`, 153,331 bytes on the server, **byte-identical to
+the repo build**. `patch_rxguard_v170.py`, 12 anchors, reversible — reversing
+reproduces v1.6.0 at exactly 142,680 bytes, which was verified against the
+server's pre-patch file by hash before anything was written. Rollback:
+`cp /root/rxguard/app.py.bak-v170-20260915_094048 /root/rxguard/app.py`.
+Deployed **before** GutLog v3.18.0, because GutLog's home banner reads
+`/api/feed/status` from here and the reverse order would have put calm styling
+around the old inflated count.
+
+Server gates before the restart, all green: `test_astaken_honest.py` 16/16,
+`test_astaken.py` 15/15, `test_reconcile.py` 18/18, `test_conditions.py`
+10/10, `test_kb.py` 32/32, `smoke_test.py` 49/49 (49 rather than 48 — the
+live-list check only runs on the server), `validate.py` 50/50. `/healthz`
+reports `ok 1.7.0`.
+
+**On the real list, the headline went from `2 RED 10 AMBER` to `0 RED 7
+AMBER`**, with 4 findings moved into the theoretical section and 1 not
+checkable. Confirmed on the rendered page: 12 finding cards, all 12 collapsed
+with the title and consequence in the head and the mechanism behind the tap,
+3 carrying an action marker, the theoretical section present, no per-finding
+POSSIBLY STALE block anywhere, the caveat at the foot, and no "plus the
+proposed change". Structure only was read off the page; the findings
+themselves stayed on the server.
 
 
 `/astaken` led with two REDs and ten AMBERs, and GutLog's home banner mirrored

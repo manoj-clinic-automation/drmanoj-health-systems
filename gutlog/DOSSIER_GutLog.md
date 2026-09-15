@@ -831,8 +831,25 @@ rediscovered the expensive way.
 
 ## Changelog
 - **2026-09-15 v3.18.0 — Watch tiles that hold nothing, the rhythm sentence,
-  and the medicines banner. BUILT, NOT YET DEPLOYED.** `app.py` sha256
-  `6fee0b4a…`, 366,177 bytes. `patch_gutlog_v3180.py`, 9 anchors, reversible
+  and the medicines banner. DEPLOYED 09:42 IST** (RxGuard v1.7.0 at 09:40,
+  first). `app.py` sha256 `6fee0b4a…`, 366,177 bytes on the server,
+  byte-identical to the repo build; the pre-patch file was hash-checked
+  against the reconstructed v3.17.0 before anything was written. Rollback:
+  `cp /root/gutlog/app.py.bak-v3180-20260915_094235 /root/gutlog/app.py`.
+  **Migration verified by reading `schema_version` out of the database**, not
+  from `systemctl` — `_migrate()` runs from `db()`, per request, so a green
+  service says nothing. 3.3.4 before the restart, one unauthenticated `GET
+  /login` (HTTP 200) to force a request through `db()`, 3.3.4 after: no schema
+  change in this release, which is what was expected and is now evidence
+  rather than assumption. Server gates before the restart: `test_watch_tiles`
+  7/7, phase a 18/18, b 16/16, c 20/20, d 18/18, e 13/13, f 8/8, g 14/14,
+  i 18/18, j 28/28, m 19/19. `test_phase_h.py` did not run: it is not
+  deployed to the server and needs Node, which is not installed there; its
+  only failing case offline is the Node one, on both builds. `test_ui_now.py`
+  is offline-only by rule and was not run there. Live confirmation on the real
+  feed: 4 tiles drawn, **no empty tile**, `load_hours` correctly withheld with
+  no operating day logged in the window, and the footnote carries no rhythm
+  claim. The medicines banner will render neutral — RxGuard now reports 0 RED. `patch_gutlog_v3180.py`, 9 anchors, reversible
   (reversing reproduces v3.17.0 at exactly 363,598 bytes, byte-identical to
   the pre-patch file). No schema change — 3.3.4 unchanged; the marker list on
   `SCHEMA_VERSION` gains `GUTLOG_V3180_HONEST`. Three changes: `/api/watch`
