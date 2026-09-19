@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.18.0)
+# GutLog — DOSSIER (v3.19.0)
 
 Single source of truth. Update after every change.
 
@@ -338,6 +338,104 @@ where it is already logged (409). Extras move to any past day.
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
 
+## The monthly medicine order — v3.19.0
+
+He reorders in the **last week of each month, for the month after**, and keeps a
+buffer of ten days on top of the month. So the order is a **top-up to a target
+of 40 days of stock, never a flat 40 days bought every month** — buying the
+whole target every month is how a cupboard fills with eleven months of one
+medicine and runs out of another. The 40 is a setting (7–120 days).
+
+v3.6.0 already keeps a live count: every logged dose and every pillbox fill
+comes out of stock. v3.19.0 turns that count into the list he forwards to staff
+on WhatsApp.
+
+### The rule
+
+Per medicine, the target is
+
+| basis | target |
+|---|---|
+| `schedule` | the schedule's units a day × the day setting |
+| `keep` | the keep-on-hand figure (an SOS medicine, which has no daily rate) |
+| `usage` | the 14-day average use × the day setting |
+
+and it is set not against today's count but against the **stock expected on the
+1st** of the month being ordered:
+
+```
+expected = today's count + (what a filled pillbox still holds) − (use × days to the 1st)
+order    = ceil(target − expected), rounded UP to whole packs
+```
+
+Two things that look like details and are not:
+
+- **The week still to run comes off first.** Ordering against today's count on
+  the 24th would under-order by a week of doses every single month.
+- **A filled pillbox has left stock but has not been swallowed.** Its remaining
+  days are added back before the month's use is taken off, so *filling the
+  pillbox never changes the order*. Without this, the order would jump the day
+  he fills the box and shrink again as he empties it. Asserted as an invariant
+  (the same figure before and after a fill), with a mutation control that
+  deletes the term and requires the assertion to catch it.
+
+Nothing is precomputed. The plan is computed at read time, so it cannot go
+stale between the day it is generated and the day he sends it.
+
+### What is never silently dropped
+
+A medicine that cannot be ordered automatically is **named on the card with the
+reason**, never left out:
+
+| reason | meaning |
+|---|---|
+| `strengths vary - count and order it yourself` | the schedule uses dose variants, so it is not stock-tracked at all (since v3.6.0) |
+| `not counted yet` | no stock count has ever been entered for it |
+| `schedule ends before the 1st` | the regimen line stops before the month being ordered starts |
+
+An order list whose omissions are invisible is worse than no list: it reads as
+complete.
+
+### Send, and received
+
+**Send on WhatsApp** opens `wa.me` with the order text; **Copy** copies it.
+Either one saves the order for that month — the record of what was asked for
+exists whether or not the message was actually sent, because the saved order is
+what "received" is later checked against. Sending again before the order arrives
+replaces it.
+
+**Order received** adds every line to stock in one tap, once; **Undo** takes it
+all back out. Once received, that month's order is closed.
+
+### Packs
+
+Each stock row gets a **Pack** form: pack size (the existing `prnmeds.pack_size`
+that Bought already prefills from), a pack type (strip, bottle, pouch, sachet…)
+so the order reads in the words the chemist uses, and a keep-on-hand figure for
+an SOS medicine. Without a pack size the line falls back to bare units.
+
+### The Now banner
+
+In the **last seven days of the month**, while no order is saved for the month
+after and there is something to order, an Order banner sits under the refill
+banner in its own container. Tapping it opens the Stock tab at the card.
+
+### Routes
+
+| Route | Method | Does |
+|---|---|---|
+| `/api/order` | GET | the plan, the saved order if any, and `due` |
+| `/api/order/save` | POST | saves the month's order (Send / Copy) |
+| `/api/order/received` | POST | adds every line to stock, once |
+| `/api/order/received/undo` | POST | takes a receipt back out |
+| `/api/order/days` | POST | the 7–120 day setting |
+| `/api/stock/pack` | POST | pack size, pack type, keep-on-hand for one medicine |
+
+All six are `@login_required`, and that guard is mutation-controlled: the
+control strips the decorator off `/api/order` and requires the suite to catch
+it, because a route that quietly answers without a login is exactly the failure
+a version-only control would miss.
+
 ## Schema
 
 | Table | Purpose |
@@ -352,6 +450,8 @@ silently cannot be trusted later; one that changed visibly can.
 | `labs` · `consults` · `doctors` · `courses` · `patches` · `files` | Labs, visits, drug courses, patch on/off times, attachments |
 | `settings` | key/value — schema_version, credential hashes, auth_epoch |
 | `edits` | Retime audit (v3.5.0). tbl, rid, old_day, old_time, new_day, new_time, at. Created by `SCHEMA` on first request — no migration step |
+| `stock_order_cfg` | Pack details per medicine (v3.19.0). med_id, pack_type, keep_units. Created by `SCHEMA` — no migration step, no `schema_version` bump |
+| `stock_orders` | One saved order per month (v3.19.0). id, month, status, created, received_at, lines (JSON), text. Created by `SCHEMA` — no migration step, no `schema_version` bump |
 
 ### med_schedule — effective dating
 
@@ -589,6 +689,34 @@ via OLS reverse proxy.
 > pulled that file out from under the browser suite mid-run on 2026-09-15 —
 > which aborts loudly, as designed, but wastes a fifteen-minute run.
 
+- `test_phase_n.py` — **14/14 PASS** (2026-09-19, v3.19.0), on Windows and on
+  the server under Python 3.9; **14 declared new assertions, 14 seen to fail**,
+  three of them by deliberate mutation of the current build rather than by
+  version, because those three are the ones that would be cheapest to get
+  wrong while still passing: ordering a flat target instead of a top-up
+  (`need = target - expected` → `need = target`), forgetting the days a filled
+  pillbox still holds, and serving the plan without a login. Asserts that ten
+  malformed pack / days / order / receipt calls are refused including an empty
+  order; that the count runs from the stock expected on the 1st and rounds up
+  to whole packs; that 45 units on the 1st orders nothing while 35 orders one
+  strip and not a flat month; that a 7-day pillbox fill leaves the expected
+  figure identical; that an SOS medicine tops up to its keep figure; that a
+  medicine with neither schedule nor keep is ordered from its 14-day use; that
+  uncounted, variant and stopping-this-month medicines are each **named with
+  the reason**; that Send saves once per month and clears the due flag; that
+  received adds every line exactly once and undo takes it all back; that the
+  day setting moves the target; that the due window is the last seven days of
+  28-, 30- and 31-day months and that December orders January; and that the
+  whole build parses as 3.9 with Jinja-clean order JS.
+- `test_ui_order.py` — **ALL PASS, 17 checks** (offline Chromium, 2026-09-19,
+  v3.19.0). Runs the page's own JavaScript: the Order banner on Now, the tap
+  through to Stock, the card listing whole strips, Send opening `wa.me` with
+  the order text and the order being saved, Order received moving stock
+  10.0 → 60.0 and the buttons swapping to Undo, the Pack form saving size,
+  type and keep, and an SOS medicine joining the plan the moment it has a keep
+  figure. Also: no sideways scroll at 360px in **both** light and dark, and no
+  page JS error. Run this before shipping any patch that touches the order or
+  stock script — `test_phase_n.py` never runs page JS (CLAUDE.md §2, gap 7).
 - `test_watch_tiles.py` — **7/7 PASS** (2026-09-15, v3.18.0), and 7/7 under
   `RUN_AT_TIME` at 00:02, 05:05 and 23:58; **7 declared, 7 seen to fail**.
   Server side only: it hands `/api/watch` a FitLog answer directly rather
@@ -813,7 +941,30 @@ rediscovered the expensive way.
    time, lights-out, wake time, woke-early) are in the same position. Both wait
    for the feed to resume; do not "fix" them from a screenshot.
 
-9. **One GutLog medicine still has no molecule recorded** beyond the three in
+9. **A medicine whose schedule uses dose variants is not stock-tracked**, and
+   therefore cannot be ordered automatically. This is not new in v3.19.0 — it
+   has held since v3.6.0, because a variant schedule has no single units-a-day
+   figure to count against. The order card **names** such a medicine with
+   "strengths vary — count and order it yourself" rather than dropping it, so
+   the omission is visible; but it is still a line he has to add by hand. One
+   medicine is in this position today.
+
+10. **A received order closes that month.** Once *Order received* is tapped,
+    that month's order is finished; a later top-up in the same month needs
+    *Undo received* first. Deliberate — a month with two open orders has no
+    single answer to "what was ordered" — but it is a real edge for a month
+    where something runs out unexpectedly.
+
+11. **Three suites cannot run on the Windows workstation, for POSIX reasons
+    only.** `test_phase_c` (feed token mode 0o600), `test_phase_e` (profile
+    mode) and `test_phase_g` (`import fcntl`) fail there on **every** build,
+    v3.18.0 included — verified by running them against the reconstructed
+    previous build, which fails identically. They are green on the server
+    (20/20, 13/13, 14/14). `test_phase_h` needs Node, which is on neither
+    machine. Do not read a Windows red on these four as a regression, and do
+    not read their Windows absence as coverage either — gate on the server run.
+
+12. **One GutLog medicine still has no molecule recorded** beyond the three in
    gap 5 — a rehydration sachet entered separately — so RxGuard cannot check
    it at all and reports it as "no molecule recorded". A one-line data fix in
    GutLog on the server, the owner's to make; it is not a code change and no
@@ -824,12 +975,49 @@ rediscovered the expensive way.
   part by gap 5 — unmapped molecules are invisible to it)
 - **Sleep tile and activity rings on the Watch card** — blocked on the Apple
   Watch feed resuming (gap 8)
-- Stock and refill alerts, driven by `prnmeds.stock` / `pack_size`
+- Stock, refill alerts and the monthly order — **done** (v3.6.0 and v3.19.0).
+  What remains is data, not code: twelve medicines on the interim sheet have no
+  GutLog entry at the same strength, and one uses dose variants (gap 9)
 - FitLog read-endpoint cutover — FitLog consuming GutLog data rather than
   duplicating it
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-19 v3.19.0 — the monthly medicine order. DEPLOYED 21:12 IST.**
+  `app.py` sha256 `9205fb73…`, 384,632 bytes on the server, **byte-identical to
+  the repo build**; the pre-patch file was hash-checked against the
+  reconstructed v3.18.0 (`6fee0b4a…`, 366,177 bytes) on both machines before
+  anything was written, and the reverse patch reproduces v3.18.0 byte-for-byte.
+  Rollback: `cp /root/gutlog/app.py.bak-v3190-20260919_211238
+  /root/gutlog/app.py`. Database backed up before the patch
+  (`health3.db.pre-v3190-20260919_211202`) and again by the seeder before it
+  wrote (`health3.db.bak-seedorder-20260919_211601`).
+  `patch_gutlog_v3190.py`, **13 anchors**, reversible, refuses Jinja-breaking
+  tokens in the new text. **No schema-version bump** — the two new tables
+  (`stock_order_cfg`, `stock_orders`) are `CREATE TABLE IF NOT EXISTS` in
+  `SCHEMA`, so they arrive on the first request like `edits` did; confirmed by
+  reading the live database with Python `sqlite3` after the restart: both
+  tables present with the expected columns, 0 rows, `schema_version` still
+  3.3.4, no existing stock figure changed. No column changes.
+  Server gates before the restart: **phase_n 14/14**, a 18/18, b 16/16,
+  c 20/20, d 18/18, e 13/13, f 8/8, g 14/14, i 18/18, j 28/28, m 19/19,
+  watch_tiles 7/7. Offline gates: `test_ui_now.py` **196 PASS / 0 FAIL**,
+  `test_ui_order.py` ALL PASS, negative control **14 declared, 14 seen to
+  fail**, three of them by deliberate mutation. `test_phase_h.py` needs Node,
+  which is on neither machine, and `test_migration_v330.py` targets the live
+  database rather than a build — neither ran (gap 11). Live confirmation on
+  the real data with a logged-in session: `/api/order` 200 for October 2026,
+  40-day target, 12-day gap, `due` false (correct — the window opens on the
+  24th); anonymous `/api/order` 302. Seeded from the interim master sheet with
+  `seed_order_from_sheet.py` (dry run read first, one hand-written map entry
+  for a strength the matcher normalises differently, its own backup taken):
+  **11 medicines** given pack size, pack type and keep-on-hand, with a stock
+  count set only where none existed — 12 sheet rows were left unmatched
+  because GutLog has no entry at the same strength or the sheet row is a
+  combination product, and 1 uses dose variants (gap 9). The seed data files
+  were deleted from the server afterwards; they name medicines and live only
+  on the workstation, gitignored (CLAUDE.md §5d). Order plan after the seed:
+  5 lines, 3 named as not orderable with the reason.
 - **2026-09-15 v3.18.0 — Watch tiles that hold nothing, the rhythm sentence,
   and the medicines banner. DEPLOYED 09:42 IST** (RxGuard v1.7.0 at 09:40,
   first). `app.py` sha256 `6fee0b4a…`, 366,177 bytes on the server,

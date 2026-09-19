@@ -113,6 +113,11 @@ CREATE TABLE IF NOT EXISTS stock_events (
   qty REAL NOT NULL, at TEXT NOT NULL, note TEXT DEFAULT '', created TEXT);
 CREATE TABLE IF NOT EXISTS stock_meds (
   med_id INTEGER PRIMARY KEY, mode TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS stock_order_cfg (
+  med_id INTEGER PRIMARY KEY, pack_type TEXT DEFAULT '', keep_units REAL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS stock_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, month TEXT NOT NULL, status TEXT DEFAULT 'OPEN',
+  created TEXT, received_at TEXT DEFAULT '', lines TEXT DEFAULT '[]', text TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS med_salts (
   med_id INTEGER PRIMARY KEY, strength TEXT DEFAULT '', no_salt INTEGER DEFAULT 0, updated TEXT);
 CREATE TABLE IF NOT EXISTS activities (
@@ -274,7 +279,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST
+SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -1467,6 +1472,12 @@ def api_stock():
                       "ORDER BY at DESC, id DESC LIMIT 1").fetchone()
     preview = [{"med_id": r["med_id"], "name": r["name"], "per_day": r["per_day"]}
                for r in rows if r["tracked"] and r["mode"] == "pillbox" and r["per_day"] > 0]
+    # GUTLOG_V3190_ORDER -- the pack details ride along for the Pack form
+    cfg = _order_cfg()
+    for r in rows:
+        c = cfg.get(r["med_id"])
+        r["pack_type"] = (c["pack_type"] if c else "") or ""
+        r["keep_units"] = float(c["keep_units"] or 0) if c else 0.0
     return jsonify(rows=rows, last_fill=lf["at"] if lf else "", fill_preview=preview)
 
 
@@ -1555,6 +1566,260 @@ def api_stock_fill_undo():
     if not r:
         return jsonify(ok=False, err="No fill to undo."), 400
     db().execute("DELETE FROM stock_events WHERE kind='FILL' AND note=?", (r["note"],))
+    db().commit()
+    return jsonify(ok=True)
+
+
+# ---- GUTLOG_V3190_ORDER -- the monthly medicine order.
+# He orders in the last week of each month for the month after, and wants a
+# buffer of ten days on top of the month, so stock is TOPPED UP to a target of
+# ORDER_DAYS days (default 40) -- never a flat 40 days bought every month,
+# which would pile up. The target is judged on the stock expected on the 1st
+# of the ordering month, not on today's count: a week of doses still comes
+# out before the new month starts, and what already sits in a filled pillbox
+# has left stock but has not been swallowed yet.
+#
+#   target  scheduled medicine     -> schedule units a day x ORDER_DAYS
+#           keep-on-hand set       -> that many units (SOS medicines)
+#           otherwise              -> 14-day average use x ORDER_DAYS
+#   order   target - expected-on-the-1st, rounded UP to whole packs
+#
+# Nothing here is stored except the order he sends and the pack details he
+# types; the plan itself is computed at read time, like every stock figure.
+import math
+
+ORDER_DAYS_DEFAULT = 40
+PACK_TYPES = ("strip", "bottle", "pouch", "box", "tube", "sachet", "vial", "pack")
+_PACK_PLURAL = {"box": "boxes", "pouch": "pouches"}
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December")
+
+
+def _order_days():
+    try:
+        v = int(setting("order_days") or ORDER_DAYS_DEFAULT)
+    except (TypeError, ValueError):
+        v = ORDER_DAYS_DEFAULT
+    return v if 7 <= v <= 120 else ORDER_DAYS_DEFAULT
+
+
+def _month_after(d):
+    return date(d.year + 1, 1, 1) if d.month == 12 else date(d.year, d.month + 1, 1)
+
+
+def _pack_word(ptype, n):
+    ptype = ptype or "pack"
+    if n == 1:
+        return ptype
+    return _PACK_PLURAL.get(ptype, ptype + "s")
+
+
+def _order_cfg():
+    return dict((r["med_id"], r) for r in db().execute(
+        "SELECT med_id, pack_type, keep_units FROM stock_order_cfg").fetchall())
+
+
+def _last_fills(con):
+    """The most recent pillbox fill of each medicine. A fill of 7 days made
+    2 days ago still holds 5 days of doses that have left stock."""
+    out = {}
+    for r in con.execute(
+            "SELECT med_id, qty, at FROM stock_events WHERE kind='FILL' "
+            "ORDER BY at, id").fetchall():
+        out[r["med_id"]] = r
+    return out
+
+
+def _order_plan(tday=None):
+    con = db()
+    tday = tday or date.fromisoformat(today())
+    first = _month_after(tday)
+    gap = (first - tday).days
+    days = _order_days()
+    cfg = _order_cfg()
+    fills = _last_fills(con)
+    sched_units = {}
+    for l in con.execute(
+            "SELECT med_id, dose_text, variants FROM med_schedule WHERE valid_from<=? "
+            "AND (valid_to='' OR valid_to IS NULL OR valid_to>=?)",
+            (first.isoformat(), first.isoformat())).fetchall():
+        if not (l["variants"] or "").strip():
+            sched_units[l["med_id"]] = sched_units.get(l["med_id"], 0.0) + _units(l["dose_text"])
+    lines, skipped = [], []
+    for r in _stock_rows():
+        c = cfg.get(r["med_id"])
+        ptype = (c["pack_type"] if c else "") or ""
+        keep = float(c["keep_units"] or 0) if c else 0.0
+        if not r["trackable"]:
+            skipped.append({"name": r["name"], "why": "strengths vary - count and order it yourself"})
+            continue
+        su = sched_units.get(r["med_id"], 0.0)
+        if r["can_pillbox"] and su <= 0:
+            skipped.append({"name": r["name"], "why": "schedule ends before the 1st"})
+            continue
+        if su > 0:
+            target, basis = su * days, "schedule"
+        elif keep > 0:
+            target, basis = keep, "keep"
+        elif r["per_day"] > 0:
+            target, basis = r["per_day"] * days, "usage"
+        else:
+            continue
+        if not r["tracked"]:
+            skipped.append({"name": r["name"], "why": "not counted yet"})
+            continue
+        use = su if su > 0 else r["per_day"]
+        # A filled pillbox has already left stock but not been swallowed:
+        # the days it still holds are added back before the month's use is
+        # taken off, so filling the box never changes the order.
+        in_box = 0.0
+        f = fills.get(r["med_id"])
+        if r["mode"] == "pillbox" and f and use > 0:
+            filled_on = date.fromisoformat(f["at"][:10])
+            in_box = max(0.0, float(f["qty"]) / use - (tday - filled_on).days)
+        expected = r["current"] + use * in_box - use * gap
+        need = target - expected
+        if need < 0.5:
+            continue
+        units = int(math.ceil(need - 1e-9))
+        ps = int(r["pack_size"] or 0)
+        packs = int(math.ceil(units / float(ps))) if ps > 0 else 0
+        if packs:
+            qty_txt = "%d %s of %d" % (packs, _pack_word(ptype or "pack", packs), ps)
+            units = packs * ps
+        else:
+            qty_txt = "%d units" % units
+        lines.append({"med_id": r["med_id"], "name": r["name"], "basis": basis,
+                      "current": r["current"], "expected": round(expected, 1),
+                      "target": round(target, 1), "units": units, "packs": packs,
+                      "pack_size": ps, "pack_type": ptype, "qty": qty_txt})
+    label = _MONTHS[first.month - 1] + " " + str(first.year)
+    text = "Medicines order - " + label + "\n" + "\n".join(
+        "%d. %s - %s" % (i + 1, l["name"], l["qty"]) for i, l in enumerate(lines))
+    dim = (first - date(tday.year, tday.month, 1)).days
+    return {"month": first.strftime("%Y-%m"), "label": label, "days": days,
+            "gap": gap, "lines": lines, "skipped": skipped,
+            "text": text if lines else "", "last_week": tday.day > dim - 7}
+
+
+def _order_saved(month):
+    r = db().execute("SELECT id, month, status, created, received_at, lines, text "
+                     "FROM stock_orders WHERE month=? ORDER BY id DESC LIMIT 1",
+                     (month,)).fetchone()
+    if not r:
+        return None
+    return {"id": r["id"], "month": r["month"], "status": r["status"],
+            "created": r["created"], "received_at": r["received_at"] or "",
+            "lines": json.loads(r["lines"] or "[]"), "text": r["text"]}
+
+
+@app.route("/api/order")
+@login_required
+def api_order():
+    p = _order_plan()
+    p["saved"] = _order_saved(p["month"])
+    p["due"] = bool(p["last_week"] and not p["saved"] and p["lines"])
+    p["pack_types"] = list(PACK_TYPES)
+    return jsonify(p)
+
+
+@app.route("/api/order/save", methods=["POST"])
+@login_required
+def api_order_save():
+    p = _order_plan()
+    if not p["lines"]:
+        return jsonify(ok=False, err="Nothing to order - stock covers the target."), 400
+    s = _order_saved(p["month"])
+    if s and s["status"] == "RECEIVED":
+        return jsonify(ok=False, err="This month's order is already received. Undo that first."), 400
+    blob = json.dumps(p["lines"])
+    if s:
+        db().execute("UPDATE stock_orders SET lines=?, text=?, created=? WHERE id=?",
+                     (blob, p["text"], now_s(), s["id"]))
+        oid = s["id"]
+    else:
+        cur = db().execute("INSERT INTO stock_orders(month, status, created, lines, text) "
+                           "VALUES(?,?,?,?,?)", (p["month"], "OPEN", now_s(), blob, p["text"]))
+        oid = cur.lastrowid
+    db().commit()
+    return jsonify(ok=True, id=oid, text=p["text"], n=len(p["lines"]))
+
+
+def _order_by_id(d):
+    try:
+        oid = int(d.get("id"))
+    except (TypeError, ValueError):
+        return None
+    return db().execute("SELECT * FROM stock_orders WHERE id=?", (oid,)).fetchone()
+
+
+@app.route("/api/order/received", methods=["POST"])
+@login_required
+def api_order_received():
+    o = _order_by_id(J())
+    if not o:
+        return jsonify(ok=False, err="No such order."), 400
+    if o["status"] != "OPEN":
+        return jsonify(ok=False, err="Already marked received."), 400
+    at, n = _now_at(), 0
+    for l in json.loads(o["lines"] or "[]"):
+        q = float(l.get("units") or 0)
+        if q <= 0 or not _stock_med({"med_id": l.get("med_id")}):
+            continue
+        db().execute("INSERT INTO stock_events(med_id,kind,qty,at,note,created) "
+                     "VALUES(?,?,?,?,?,?)",
+                     (l["med_id"], "ADD", q, at, "order:" + str(o["id"]), now_s()))
+        n += 1
+    db().execute("UPDATE stock_orders SET status='RECEIVED', received_at=? WHERE id=?",
+                 (at, o["id"]))
+    db().commit()
+    return jsonify(ok=True, n=n)
+
+
+@app.route("/api/order/received/undo", methods=["POST"])
+@login_required
+def api_order_received_undo():
+    o = _order_by_id(J())
+    if not o or o["status"] != "RECEIVED":
+        return jsonify(ok=False, err="That order is not marked received."), 400
+    db().execute("DELETE FROM stock_events WHERE kind='ADD' AND note=?",
+                 ("order:" + str(o["id"]),))
+    db().execute("UPDATE stock_orders SET status='OPEN', received_at='' WHERE id=?", (o["id"],))
+    db().commit()
+    return jsonify(ok=True)
+
+
+@app.route("/api/order/days", methods=["POST"])
+@login_required
+def api_order_days():
+    try:
+        v = int(J().get("days"))
+    except (TypeError, ValueError):
+        v = 0
+    if not 7 <= v <= 120:
+        return jsonify(ok=False, err="Days must be 7 to 120."), 400
+    set_setting("order_days", str(v))
+    return jsonify(ok=True, days=v)
+
+
+@app.route("/api/stock/pack", methods=["POST"])
+@login_required
+def api_stock_pack():
+    d = J()
+    mid = _stock_med(d)
+    try:
+        ps = int(float(d.get("pack_size") or 0))
+        keep = float(d.get("keep") or 0)
+    except (TypeError, ValueError):
+        return jsonify(ok=False, err="Pack size and keep must be numbers."), 400
+    ptype = (d.get("pack_type") or "").strip().lower()
+    if not mid or not 0 <= ps <= 1000 or not 0 <= keep <= 10000 or \
+            (ptype and ptype not in PACK_TYPES):
+        return jsonify(ok=False, err="Check the pack details."), 400
+    db().execute("UPDATE prnmeds SET pack_size=? WHERE id=?", (ps, mid))
+    db().execute("INSERT INTO stock_order_cfg(med_id, pack_type, keep_units) VALUES(?,?,?) "
+                 "ON CONFLICT(med_id) DO UPDATE SET pack_type=excluded.pack_type, "
+                 "keep_units=excluded.keep_units", (mid, ptype, keep))
     db().commit()
     return jsonify(ok=True)
 
@@ -3927,6 +4192,18 @@ padding:5px 13px;font-weight:800;font-size:13px;cursor:pointer}
 .stockalert .ml{display:flex;flex-wrap:wrap;gap:6px 12px}
 .stockalert .mlink{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer;text-align:left}
 #saltList .vtm .st{flex:0 0 34% }
+/* GUTLOG_V3190_ORDER -- monthly order card and the pack form */
+.ordl{padding:8px 0;border-bottom:1px solid var(--line)}
+.ordl b{font-size:15px}
+.ordl .oq{float:right;font-weight:800;color:var(--teal-d);margin-left:8px}
+.ordl .od{clear:both;font-size:12.5px;color:var(--muted);margin-top:2px}
+.ordbtns{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.ordbtns .btn{margin:0}
+.ordbtns [hidden]{display:none}
+.strow .pk{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.strow .pk .btn{margin-top:8px}
+#ordCard .btn.go,#stList .pk .btn{background:var(--teal);border-color:var(--teal);color:var(--card)}
+#ordCard .btn.ghost{background:var(--card);color:var(--teal);border-color:var(--line)}
 .tag.k-act{background:#E6F4EA;color:#2E7D32}
 /* GUTLOG_V380_RECORDS */
 .seg[data-seg="files"]+.seg[data-seg="files"]{margin-top:-6px}
@@ -4271,6 +4548,7 @@ function thmCycle(){
 <!-- ============ NOW ============ -->
 <section class="tab sel" id="tab-now">
   <div id="nowStock"></div>
+  <div id="nowOrder"></div>
   <div id="nowMedStatus"></div>
   <div class="card" id="nowBP">
     <p class="q">Blood pressure</p>
@@ -4555,6 +4833,20 @@ function thmCycle(){
   </div>
 
   <div class="sub" id="meds-stock">
+    <div class="card" id="ordCard">
+      <p class="q">Monthly order</p>
+      <p class="hint ord-sub" style="margin:0 2px 8px"></p>
+      <div id="ordLines"></div>
+      <div class="ordbtns">
+        <button type="button" class="btn tiny go" id="ordSend" hidden>Send on WhatsApp</button>
+        <button type="button" class="btn tiny ghost" id="ordCopy" hidden>Copy</button>
+        <button type="button" class="btn tiny go" id="ordRecv" hidden>Order received</button>
+        <button type="button" class="mini" id="ordRecvUndo" hidden>Undo received</button>
+      </div>
+      <p class="hint" id="ordSkip" style="margin:8px 2px 0"></p>
+      <div class="vtm"><span class="lb">Keep stock for</span><input type="number" id="ordDays" min="7" max="120" inputmode="numeric">
+        <span class="lb">days</span><button type="button" class="btn tiny ghost" id="ordDaysSave">Set</button></div>
+    </div>
     <div class="card" id="stPill">
       <p class="q">Pillbox</p>
       <p class="hint st-last" style="margin:0 2px 8px"></p>
@@ -5414,6 +5706,7 @@ async function loadStock(){
     try{await post('/api/stock/fill/undo',{});toast('Last fill undone');loadStock();loadStockAlerts();}
     catch(err){toast(err.message);}
   };
+  loadOrder();
   const list=$('#stList');list.innerHTML='';
   j.rows.forEach(r=>list.appendChild(stockRow(r)));
 }
@@ -5433,10 +5726,11 @@ function stockRow(r){
     if(r.per_day>0)bits.push(fmtQ(r.per_day)+'/day');
     if(r.why)bits.push(r.why);
     else if(r.days_left!=null)bits.push('about '+Math.floor(r.days_left)+' days');
+    if(packTxt(r))bits.push(packTxt(r));
     ss.textContent=bits.join(' · ');
   }else{
     sq.textContent='';
-    ss.textContent=modeTxt+' · not counted yet';
+    ss.textContent=[modeTxt,'not counted yet',packTxt(r)].filter(Boolean).join(' · ');
   }
   const sf=w.querySelector('.sf'),inp=sf.querySelector('input'),go=sf.querySelector('button');
   let act='';
@@ -5444,6 +5738,7 @@ function stockRow(r){
   const mk=(txt,fn)=>{const b=document.createElement('button');b.type='button';b.className='btn tiny ghost';
     b.textContent=txt;b.onclick=fn;sb.appendChild(b);};
   mk(r.tracked?'Count':'Set count',()=>open('count','','how many left'));
+  mk('Pack',()=>packForm(w,r));
   if(r.tracked)mk('Bought',()=>open('add',r.pack_size||'','how many bought'));
   if(r.can_pillbox)mk(r.mode==='pillbox'?'Make per dose':'Make pillbox',async()=>{
     try{await post('/api/stock/mode',{med_id:r.med_id,mode:r.mode==='pillbox'?'per_dose':'pillbox'});
@@ -5457,6 +5752,123 @@ function stockRow(r){
     }catch(err){toast(err.message);}
   };
   return w;
+}
+
+/* ---------- MONTHLY ORDER (GUTLOG_V3190_ORDER) ----------
+   The order tops stock up to the target, counted from what is expected to
+   be left on the 1st. Send and copy act on the text already on screen, in
+   the tap itself -- a phone drops clipboard and new-window rights once an
+   await has passed -- and save the order behind it. */
+let ordData=null;
+function ordEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);}
+function packTxt(r){
+  const bits=[];
+  if(r.pack_size>0)bits.push((r.pack_type||'pack')+' of '+r.pack_size);
+  if(r.keep_units>0)bits.push('keep '+fmtQ(r.keep_units));
+  return bits.join(', ');
+}
+async function loadOrderDue(){
+  const box=$('#nowOrder');if(!box)return;
+  try{
+    const j=await jget('/api/order');
+    box.innerHTML='';
+    if(!j.due)return;
+    const d=document.createElement('div');
+    d.className='stockalert amber';
+    d.innerHTML='<b>Order</b><span></span>';
+    d.querySelector('span').textContent=j.label+' order is due: '+j.lines.length+
+      (j.lines.length===1?' medicine':' medicines')+'. Tap to send.';
+    d.onclick=()=>{switchTab('meds');setSeg('meds','stock');};
+    box.appendChild(d);
+  }catch(e){}
+}
+function ordCopyText(t){
+  if(navigator.clipboard&&window.isSecureContext){
+    return navigator.clipboard.writeText(t).then(()=>true,()=>ordCopyOld(t));
+  }
+  return Promise.resolve(ordCopyOld(t));
+}
+function ordCopyOld(t){
+  const a=document.createElement('textarea');a.value=t;a.setAttribute('readonly','');
+  a.style.position='fixed';a.style.opacity='0';document.body.appendChild(a);a.select();
+  let ok=false;try{ok=document.execCommand('copy');}catch(e){}
+  a.remove();return ok;
+}
+async function ordSave(){
+  try{await post('/api/order/save',{});}catch(err){toast(err.message);}
+  loadOrder();loadOrderDue();
+}
+async function loadOrder(){
+  const card=$('#ordCard');if(!card)return;
+  let j;try{j=await jget('/api/order');}catch(e){return;}
+  ordData=j;
+  const s=j.saved,got=s&&s.status==='RECEIVED';
+  $('#ordDays').value=j.days;
+  const sub=card.querySelector('.ord-sub');
+  if(got)sub.textContent=j.label+' order received '+s.received_at+' and added to stock.';
+  else if(s)sub.textContent=j.label+' order sent '+s.created.slice(0,10)+
+    '. Sending again replaces it. Tap Order received when it arrives.';
+  else if(j.lines.length)sub.textContent='For '+j.label+': tops each medicine up to '+j.days+
+    ' days, counted from what will be left on the 1st.';
+  else sub.textContent='Nothing to order for '+j.label+'. Stock covers '+j.days+' days.';
+  const lines=got?s.lines:j.lines;
+  $('#ordLines').innerHTML=lines.map((l,i)=>'<div class="ordl"><b>'+(i+1)+'. '+ordEsc(l.name)+
+    '</b><span class="oq">'+ordEsc(l.qty)+'</span><div class="od">on the 1st about '+
+    fmtQ(Math.max(0,l.expected))+', target '+fmtQ(l.target)+
+    (l.basis==='keep'?' (keep on hand)':(l.basis==='usage'?' (from use)':''))+
+    (l.pack_size>0?'':' - set its pack size')+'</div></div>').join('');
+  const can=!got&&j.lines.length>0;
+  $('#ordSend').hidden=!can;$('#ordCopy').hidden=!can;
+  $('#ordRecv').hidden=!(s&&s.status==='OPEN');
+  $('#ordRecvUndo').hidden=!got;
+  $('#ordSkip').textContent=j.skipped.length?('Not in the order: '+
+    j.skipped.map(x=>x.name+' ('+x.why+')').join(' · ')):'';
+  $('#ordSend').onclick=()=>{
+    window.open('https://wa.me/?text='+encodeURIComponent(ordData.text),'_blank');
+    ordSave();
+  };
+  $('#ordCopy').onclick=()=>{
+    ordCopyText(ordData.text).then(ok=>toast(ok?'Copied. Paste it in WhatsApp.':'Copy failed - use Send on WhatsApp'));
+    ordSave();
+  };
+  $('#ordRecv').onclick=async()=>{
+    if(!confirm('Add everything in this order to stock?'))return;
+    try{const r=await post('/api/order/received',{id:s.id});
+      toast('Added to stock: '+r.n+(r.n===1?' medicine':' medicines'));
+      loadStock();loadStockAlerts();loadOrderDue();}
+    catch(err){toast(err.message);}
+  };
+  $('#ordRecvUndo').onclick=async()=>{
+    if(!confirm('Take this order back out of stock?'))return;
+    try{await post('/api/order/received/undo',{id:s.id});toast('Received undone');
+      loadStock();loadStockAlerts();loadOrderDue();}
+    catch(err){toast(err.message);}
+  };
+  $('#ordDaysSave').onclick=async()=>{
+    try{await post('/api/order/days',{days:$('#ordDays').value});toast('Target saved');loadOrder();loadOrderDue();}
+    catch(err){toast(err.message);}
+  };
+}
+function packForm(w,r){
+  const old=w.querySelector('.pk');if(old){old.remove();return;}
+  const types=(ordData&&ordData.pack_types)||['strip','bottle','pouch','box','tube','sachet','vial','pack'];
+  const f=document.createElement('div');f.className='pk';
+  f.innerHTML='<div class="row3"><div><p class="lbl">Pack of</p><input type="number" min="0" max="1000" inputmode="numeric" class="pk-n"></div>'+
+    '<div><p class="lbl">Type</p><select class="pk-t"><option value="">-</option>'+
+    types.map(t=>'<option value="'+t+'">'+t+'</option>').join('')+'</select></div>'+
+    '<div><p class="lbl">Keep (SOS)</p><input type="number" min="0" step="1" inputmode="numeric" class="pk-k"></div></div>'+
+    '<p class="hint" style="margin:6px 2px 0">Keep = how many to hold for a medicine taken only when needed. Leave 0 for a daily one.</p>'+
+    '<button type="button" class="btn tiny go">Save pack</button>';
+  f.querySelector('.pk-n').value=r.pack_size||'';
+  f.querySelector('.pk-t').value=r.pack_type||'';
+  f.querySelector('.pk-k').value=r.keep_units||'';
+  f.querySelector('button').onclick=async()=>{
+    try{await post('/api/stock/pack',{med_id:r.med_id,pack_size:f.querySelector('.pk-n').value||0,
+      pack_type:f.querySelector('.pk-t').value,keep:f.querySelector('.pk-k').value||0});
+      toast('Pack saved');loadStock();}
+    catch(err){toast(err.message);}
+  };
+  w.appendChild(f);
 }
 
 /* ---------- VITALS LOG (GUTLOG_V360_PHASE_C) ---------- */
@@ -5942,6 +6354,7 @@ function openVariantPicker(rowEl,r){
 
 async function loadNow(){
   loadStockAlerts();
+  loadOrderDue();
   loadMedStatus();
   loadActivity();
   loadPain();

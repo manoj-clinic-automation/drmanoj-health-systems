@@ -3,6 +3,109 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-19 — GutLog v3.19.0: the order is a top-up, not a month's worth
+
+**What he asked for.** Medication inventory and order generation, not a
+spreadsheet. He orders in the **last week of each month for the month after**
+and keeps a ten-day buffer. The spreadsheet he has been keeping cannot do the
+only arithmetic that matters here, because it does not know what he has taken.
+
+**The rule, and why the obvious version is wrong.** Target stock is 40 days
+(a setting, 7–120). The order is a **top-up to that target, never a flat 40
+days bought every month** — order the whole target monthly and the cupboard
+fills with eleven months of one medicine while another runs out. And the target
+is set against the stock **expected on the 1st**, not today's count: a week of
+doses still comes out before the new month starts, so ordering against today's
+figure under-orders by a week, every month, invisibly.
+
+**The one that would never have been noticed.** A filled pillbox has left
+stock but has not been swallowed. Without allowing for what the box still
+holds, the order would jump the day he fills it and shrink again as he empties
+it — an order that changes because of *where the tablets are sitting*. It is
+asserted as an invariant (the expected figure identical before and after a
+7-day fill) rather than as a number, and the negative control deletes the term
+from the current build on purpose and requires the assertion to catch it.
+Two of the three mutation controls in this release exist for the same reason:
+these are the errors that would still have produced a plausible-looking order.
+
+**Nothing is silently dropped.** A medicine that cannot be ordered — dose
+variants, never counted, schedule ending before the 1st — is **named on the
+card with its reason**. An order list whose omissions are invisible reads as
+complete, and that is worse than no list.
+
+**Seeded from the interim master sheet**, after a dry run: 11 medicines given
+pack size, pack type and keep-on-hand, a stock count set only where GutLog had
+none, and **12 rows left unmatched on purpose** — a different strength is a
+different product and a combination product is not its single ingredient, so
+anything not plainly the same product was left for him rather than guessed.
+The seed files name medicines; they never entered the repository and were
+deleted from the server after the run (CLAUDE.md §5d).
+
+Two new tables, no column changes, no `schema_version` bump, no existing stock
+figure touched. Gates: server suites 14/14 phase_n plus a, b, c, d, e, f, g, i,
+j, m and watch_tiles all green; `test_ui_now` 196 PASS / 0 FAIL; `test_ui_order`
+ALL PASS; negative control **14 declared, 14 seen to fail**. Detail in
+`gutlog/DOSSIER_GutLog.md`.
+
+## 2026-09-15 — the sleep record: FitLog was faithful, the export was not
+
+**The report.** Apple Health held 5 h 41 m for the night of 14→15 Sep, roughly
+22:30 to just past 05:00. FitLog showed 1.7 h. Read against `health_raw` on the
+server, the parser had done nothing wrong: Health Auto Export delivered **one
+sleep block covering 03:13:23 to 04:57:30 with `totalSleep 1.6685396374927626`**,
+and `health_metrics` held `1.6685396374927626`. Bit for bit. The four hours were
+never in a payload. Both suspects in the brief were ruled out by the data —
+`totalSleep` was present and positive so the phase-sum branch was never reached,
+and across all 212 stored bodies only ever one sleep point per date had arrived,
+so nothing had overwritten anything.
+
+**Why a code change was still the blocking fix.** Auto Export stamps every sleep
+point at midnight of the day the night is filed under — the 09-14 point covers
+23:08 on 09-13 to 03:19 on 09-14 and is still stamped `2026-09-14 00:00:00`. So
+the moment a wider export window delivered a night in two blocks, both would have
+landed on `hae|sleep_hours|day|<date>|00:00:00` and the second would have
+silently replaced the first. **Widening the export alone would have left the
+number wrong and looked like it had worked.** That is the class of failure this
+project keeps finding: the change that appears to succeed.
+
+**Rule S03 Sleep Block Identity** (deployed 15:43 IST). A sleep sample is keyed
+by its own `sleepStart`. Blocks that overlap are competing descriptions of one
+stretch and the longest span wins, never the sum — adding them would invent
+sleep he did not have. Blocks that do not overlap add. `asleep` and `inBed`
+arrive as 0 on every Watch night here, so a total is believed only when positive
+and time in bed is computed from the stamps. Awake is never sleep. Every stamp is
+converted to IST before storage.
+
+**Rule S04 Overnight Basis** (built, not yet deployed). A figure said to be
+measured over the night is the mean of the samples inside the sleep span, with
+`n`, `min` and `max`; one that is not carries `basis: "day"` and says so on the
+page. A metric never sent is **absent, not zero**. Time in bed sums the
+stretches rather than spanning a break.
+
+**Wrist temperature.** He has had subjective feverishness for over two years
+with, until 14-Sep, no documented temperature, and the Watch has been measuring
+it nightly and discarding it because nothing claimed the metric name. It is now
+mapped under every spelling Auto Export is known to use — but the census shows
+**it has never been exported**, so it must be switched on in the app. Mapping it
+costs nothing and means it lands the moment it is.
+
+**The constraint the whole thing is built under: never score a night.** No
+readiness figure, no recovery percentage, no "poor night", no streak, no target.
+He has post-discontinuation insomnia, and a number graded every morning becomes
+its own cause. Two assertions enforce it rather than trusting anyone to
+remember: one fails the build if a verdict-shaped key appears on `sleep_night()`,
+and one scans everything the Sleep card displays for scoring language. The
+second's negative control puts a sleep score on the card **on purpose** and
+requires the suite to catch it.
+
+A re-parse of the stored bodies (`reparse_sleep_blocks.py`, DB backed up,
+dry-run read first) changed **no value** — and its own span check says why: on
+both stored nights asleep plus awake equals the recorded span, so nothing was
+lost between payload and database. What it did recover is the block metadata.
+Correcting a parser does not correct what was stored wrong, but it also cannot
+recover what was never delivered; the tool reports which of the two applies, per
+date, instead of leaving it to be guessed at.
+
 ## 2026-09-15 — nine pictures of the record were in the public tree, and no text check could ever have seen them
 
 **What was there.** Fifteen PNGs and one zip were tracked in this PUBLIC

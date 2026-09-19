@@ -1,0 +1,54 @@
+{
+  "_": [
+    "GutLog v3.19.0, the monthly medicine order. Every assertion below is about",
+    "behaviour v3.18.0 did not have -- it had no order, no pack form and no",
+    "order routes -- so each fails against the reconstructed v3.18.0.",
+    "",
+    "Three of them are also the ones that would be cheapest to get wrong while",
+    "still passing, so they are controlled by a deliberate break of v3.19.0",
+    "instead, which is the stronger control:",
+    "  03  ordering a flat target instead of a top-up",
+    "  04  forgetting what a filled pillbox still holds",
+    "  13  the order plan served without a login"
+  ],
+  "suite": "test_phase_n.py",
+  "app": "app.py",
+  "patcher": "patch_gutlog_v3190.py",
+  "assertions": [
+    {"name": "01 bad pack, days, order and receipt calls are refused", "control": "version"},
+    {"name": "02 the order counts from the stock expected on the 1st, in whole packs", "control": "version"},
+    {"name": "03 the order is a top-up to the target, never a flat month",
+     "control": "mutation",
+     "mutation": {
+       "id": "flatmonth",
+       "why": "order the whole target every month, ignoring stock on hand, and see the top-up assertion catch it",
+       "find": "        need = target - expected\n",
+       "replace": "        need = target\n"
+     }},
+    {"name": "04 filling the pillbox does not change the order",
+     "control": "mutation",
+     "mutation": {
+       "id": "nopillbox",
+       "why": "forget the days a filled pillbox still holds, and see the invariant catch it",
+       "find": "        expected = r[\"current\"] + use * in_box - use * gap\n",
+       "replace": "        expected = r[\"current\"] - use * gap\n"
+     }},
+    {"name": "05 an SOS medicine is topped up to its keep-on-hand figure", "control": "version"},
+    {"name": "06 a medicine with no schedule and no keep is ordered from its use", "control": "version"},
+    {"name": "07 what cannot be ordered is named with the reason", "control": "version"},
+    {"name": "08 a medicine stopping before the 1st is not ordered", "control": "version"},
+    {"name": "09 sending saves the order once for the month", "control": "version"},
+    {"name": "10 order received adds to stock, once, and undoes cleanly", "control": "version"},
+    {"name": "11 the 40 days is a setting", "control": "version"},
+    {"name": "12 the due window is the last seven days of the month", "control": "version"},
+    {"name": "13 the order routes refuse without a login",
+     "control": "mutation",
+     "mutation": {
+       "id": "noorderlogin",
+       "why": "take @login_required off /api/order and see the assertion catch it",
+       "find": "@app.route(\"/api/order\")\n@login_required\ndef api_order():\n",
+       "replace": "@app.route(\"/api/order\")\ndef api_order():\n"
+     }},
+    {"name": "14 Python 3.9 syntax, Jinja-clean JS, page renders the order card", "control": "version"}
+  ]
+}
