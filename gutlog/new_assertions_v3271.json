@@ -1,0 +1,12 @@
+{
+ "_": ["GutLog v3.27.1 -- one protein target on the page as well. All four fail on v3.27.0, which still filled the day bar and the basket line at 57 while the card above said 100."],
+ "suite": "test_v3271.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3271.py",
+ "assertions": [
+  {"name": "01 the page carries no second protein target", "control": "version"},
+  {"name": "02 the page's target comes from the server", "control": "version"},
+  {"name": "03 the day protein bar is drawn against the plan", "control": "version"},
+  {"name": "04 the basket projection uses the same target", "control": "version"}
+ ]
+}
