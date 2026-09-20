@@ -3,6 +3,48 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — GutLog v3.27.1 and v3.27.2, and three tidy-ups
+
+**v3.27.1 finishes the protein target.** v3.27.0 moved it to the plan's
+figure on the server and left the page carrying the old constant in three
+places — including the day protein bar, which filled at 57 and so read
+*full* while the card above it said "of 100". The page now keeps one value,
+taken from the server the moment the rings load, and the patcher refuses to
+write if either old spelling survives anywhere in the file. Three of the
+four assertions render the basket line and the bar in a browser, which is
+precisely what the v3.27.0 suite did not do. Verified on his own data
+afterwards: the target reads 100 against 94.7 g logged, and no hardcoded 57
+survives the rendered page.
+
+The v3.27.0 entry below is kept as written, warning and all. It is the
+worked example of the rule: the release whose whole subject was that
+constant shipped with two live copies of it, and the assertion that should
+have caught them — "one protein target: the diet plan's" — is the one that
+reassured us, because it read the server helper and never rendered a page.
+
+**v3.27.2 gives GutLog a health endpoint.** It had none, and no version
+constant either, while three briefs in a row told a session to read
+`/healthz` on it — and a 404 there is indistinguishable from a broken
+deploy. Now `ok 3.27.2`, plain text, nine bytes, no login and no database,
+answering even before the app has a password set. Because it is the one
+route with nothing in front of it, an assertion checks that the body
+carries no record data and no host detail; a version control cannot show
+that failing (a route that does not exist cannot leak), so it is caught by
+a mutation that makes the body report a figure. Shipped as its own
+two-anchor patcher rather than folded into v3.27.1, whose anchors are all
+inside the page JavaScript.
+
+Three tidy-ups on the box, all **moved, not deleted**. `test_migration_v330`
+is retired: it asserts a pristine post-migration state against a schema two
+dozen builds past it, has been failing 9/12 by design for a long time, and
+printed "Do not restart the service" on every run — a warning that is
+always on teaches you to ignore warnings. Five suites that were never
+GutLog's left `/root/gutlog` too; run from there they fail on missing
+modules and tables and read exactly like a regression, which cost a session
+an hour earlier the same day. Each was confirmed to have an identical or
+newer copy in its real home and to still pass there. Two of them *differed*
+from the home copy, which is why none of this was an `rm`.
+
 ## 2026-09-20 — GutLog v3.27.0, one protein target and a time picker that fits
 
 Three things he reported, deployed 21:24 IST.

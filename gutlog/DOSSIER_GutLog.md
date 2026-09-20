@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.27.0)
+# GutLog — DOSSIER (v3.27.2)
 
 Single source of truth. Update after every change.
 
@@ -385,6 +385,77 @@ where it is already logged (409). Extras move to any past day.
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
 
+## A health endpoint that exists — v3.27.2 (`GUTLOG_V3272_HEALTHZ`, 2026-09-20)
+
+`GET /healthz` → `ok 3.27.2`, `text/plain`, 9 bytes. **No login, no
+database, no session**, and it answers before `/setup` has ever been run —
+that is exactly when a health check earns its keep. `APP_VERSION` is the
+single source of the string, carrying the marker list in a trailing comment
+the way RxGuard's does.
+
+GutLog had **no health route at all** and no version constant, while three
+briefs in a row told a session to "read `/healthz`". A 404 there is
+indistinguishable from a broken deploy. Shipped as its own two-anchor
+patcher rather than folded into v3.27.1, whose six anchors are all inside
+the page JavaScript and whose manifest was already evidenced.
+
+Because it is the one route with nothing in front of it, assertion 04
+checks that the body carries no record data and no host detail. A version
+control could not prove that — a route that does not exist cannot leak — so
+it is shown failing by a mutation that makes the body report a figure
+beside the version. Suite `test_v3272_healthz.py` 4/4, negative control 4/4
+seen to fail. Rollback `app.py.bak-v3272-20260920_221028`.
+
+## One protein target on the page as well — v3.27.1 (`GUTLOG_V3271_TARGETJS`)
+
+v3.27.0 moved the protein target to the diet plan's figure **on the server
+only**; the page still carried the old constant in three places. Caught
+after v3.27.0 was already live, because the v3.27.0 suite read the server
+helper and never rendered the basket or the bar.
+
+The page now keeps **one** target, `PROT_TGT`, set from `/api/summary`'s
+`target` the moment the rings load, with 57 only as the value before the
+first answer:
+
+* the basket line, "day protein would reach n/57 g" → the real target;
+* the day protein bar, `p/57*100`, which filled at 57 and so read **full**
+  while the card above it said "of 100" → the real target;
+* `(s.target||57)` → `(s.target||PROT_TGT)`, so even the fallback is the
+  same single value.
+
+The patcher refuses to write if `/57 g` or `p/57*100` survives anywhere in
+the file, which is the check that would have caught v3.27.0's gap. Three of
+the four assertions render the basket line and the day bar in Chromium: a
+meal of 50 g against a 100 g plan must fill the bar to **50%**, not to the
+brim. Suite 4/4, negative control 4/4 seen to fail, all by version.
+
+Deployed 22:04 IST, `app.py` sha256 `70a1cadf…`; verified against his real
+data afterwards — `/api/summary` returns `target=100` with 94.7 g logged,
+and **no hardcoded 57 survives the rendered page**. Rollback
+`app.py.bak-v3271-20260920_220233`.
+
+### Retired suites (2026-09-20 22:04 IST)
+`test_migration_v330.py` is **no longer in `/root/gutlog`**. It asserts a
+pristine post-v3.3.0 state — `schema_version` 3.3.0, an untouched `prnmeds`
+sort order, an empty schedule — against a live database that is now at
+3.3.4 with two dozen builds of real data on it. It has been failing 9/12 by
+design for a long time, and it printed **"FAILURES PRESENT. Do not restart
+the service"** on every run, which is worse than useless: a warning that is
+always on teaches you to ignore warnings. Moved, not deleted, to
+`/root/archive/gutlog-dead-20260920/`. The source stays in the repo.
+
+Five suites that were never GutLog's also left `/root/gutlog` for
+`/root/archive/gutlog-dead-20260920/stray-suites/`: `test_kb.py`,
+`test_astaken.py`, `test_conditions.py` (RxGuard's) and
+`test_activity_feed.py`, `test_gutlog_feed.py` (FitLog's). Run from
+`/root/gutlog` they fail on missing modules and tables and read exactly
+like a regression — they cost one session an hour on 20 Sep. Each was
+confirmed to have an identical or **newer** copy in its real home, and each
+still passes there: 32/32, 15/15, 10/10, 14/14, 10/10. Moved rather than
+deleted because two of them (`test_kb.py`, `test_activity_feed.py`)
+*differed* from the home copy, and a differing variant is the one thing an
+`rm` cannot be undone for.
+
 ## One protein target, re-timed extras, no phone time dialog — v3.27.0
 
 Three things the owner reported on 20 Sep, marker `GUTLOG_V3270_TIMEPICK`,
@@ -397,8 +468,9 @@ plan and had never been replaced. `_protein_target()` now reads the plan's
 `targets.protein`, with 57 kept only as the fallback when no plan exists.
 Verified live: `_protein_target()` returns **100**.
 
-> **Not finished — two hardcoded 57s remain in the page JavaScript.** The
-> patch did not touch them and `test_v3270.py` does not cover them:
+> **Was not finished — two hardcoded 57s remained in the page JavaScript.
+> Closed by v3.27.1, above.** The v3.27.0 patch did not touch them and
+> `test_v3270.py` does not cover them:
 > * `$('#ml_fmw')` — the meal basket's *"day protein would reach
 >   `{n}`/57 g"*, a bare literal with no fallback.
 > * `$('#dayPbar')` — the day protein bar's width, `p/57*100`, so the bar
@@ -411,8 +483,10 @@ Verified live: `_protein_target()` returns **100**.
 > exactly where he reported the problem. This is the CLAUDE.md rule 2 lesson
 > again: assertion 01 is called "one protein target: the diet plan's" and
 > passed, because the suite reads the server helper and never renders the
-> basket or the bar. **Do not write "every target now uses the plan" until
-> these two are fixed with an assertion that fails first.**
+> basket or the bar. **Keep this entry.** It is the worked example of why a
+> green suite is only evidence for the code it executes — the release whose
+> entire subject was that constant shipped with two live copies of it, and
+> the assertion that should have caught them is the one that reassured us.
 
 **2. "No way to fix the time of an SOS dose logged late."** Extra-dose rows
 had only Undo. Tapping a row now opens a time strip — 15 min / 30 min / 1 h

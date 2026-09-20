@@ -24,6 +24,8 @@ UPLOAD_DIR = os.environ.get("GUTLOG_UPLOADS", os.path.join(BASE, "uploads"))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
 MAX_FILE_MB = 25   # v3.11.0: report pages are saved at ~220dpi now, not ~110
+# GUTLOG_V3272_HEALTHZ -- one place that states the running version.
+APP_VERSION = "3.27.2"   # GUTLOG_V3272_HEALTHZ GUTLOG_V3271_TARGETJS GUTLOG_V3270_TIMEPICK GUTLOG_V3260_TRIALS
 
 def _secret():
     env = os.environ.get("GUTLOG_SECRET")
@@ -299,7 +301,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS GUTLOG_V3230_CONTEXT GUTLOG_V3240_RECIPES GUTLOG_V3250_PLAN GUTLOG_V3260_TRIALS GUTLOG_V3270_TIMEPICK
+SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS GUTLOG_V3230_CONTEXT GUTLOG_V3240_RECIPES GUTLOG_V3250_PLAN GUTLOG_V3260_TRIALS GUTLOG_V3270_TIMEPICK GUTLOG_V3271_TARGETJS
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -526,6 +528,14 @@ def logout():
     session.clear()
     session[health_sso.HOLD] = True  # HEALTH_SSO_V1 -- Lock stays locked
     return redirect(url_for("login"))
+
+# GUTLOG_V3272_HEALTHZ --------------------------------------------------
+# Plain text, no login, no database, no session. It says the process is
+# up and which build it is, and nothing else -- deliberately nothing the
+# record could leak through, because it is the one route with no auth.
+@app.route("/healthz")
+def healthz():
+    return Response("ok %s" % APP_VERSION, mimetype="text/plain")
 
 # HEALTH_SSO_V1 ---------------------------------------------------------
 @app.route("/sso/vouch")
@@ -6260,6 +6270,10 @@ const FMAP={L:0,'L-M':0.5,M:1,'M-H':1.5,H:2};
 const FMCOL={L:'var(--fmL)','L-M':'var(--fmLM)',M:'var(--fmM)','M-H':'var(--fmMH)',H:'var(--fmH)'};
 let tab='now'; const seg={log:'day',meals:'meal',meds:'prn',files:'summary'};
 let LIB=[], PRN=[], basket=[], libFilter='all', dayProtein=0;
+/* GUTLOG_V3271_TARGETJS -- one protein target on the page too. The
+   server decides it (the diet plan's, when there is one); 57 is only
+   the fallback until the first answer arrives. */
+let PROT_TGT=57;
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1700);}
 // GUTLOG_V3210_ONEDOSE -- a chip linked to a dose already logged says so,
 // and one tap overrules it when it really was a second tablet.
@@ -6352,8 +6366,9 @@ function ring(pct,ic,label,done){
 async function loadRings(){
   const s=await jget('/api/summary/'+todayISO);
   dayProtein=s.protein||0;
+  if(s.target)PROT_TGT=s.target;
   $('#hdrStreak').textContent=s.streak>0?('&#128293; '+s.streak+'d').replace('&#128293;','🔥'):'';
-  const pPct=Math.min(1,(s.protein||0)/(s.target||57));
+  const pPct=Math.min(1,(s.protein||0)/(s.target||PROT_TGT));
   const strip=[
     ring(s.day_done?1:0,'📝','Day',s.day_done),
     ring(Math.min(1,s.meals/3),'🍽️','Meals',s.meals>0),
@@ -6421,7 +6436,7 @@ function renderBasket(){
   $('#ml_meter').style.display='block';
   $('#ml_pin').style.left=(avg/2*100)+'%';
   const lab=avg<0.4?'low':avg<0.9?'low-moderate':avg<1.3?'moderate':'high';
-  $('#ml_fmw').innerHTML=`FODMAP load: <b>${lab}</b> &middot; day protein would reach <b>${proj.toFixed(0)}/57 g</b>`;
+  $('#ml_fmw').innerHTML=`FODMAP load: <b>${lab}</b> &middot; day protein would reach <b>${proj.toFixed(0)}/${PROT_TGT} g</b>`;
 }
 $('#ml_search').oninput=e=>renderResults(e.target.value);
 /* new food inline */
@@ -7462,7 +7477,7 @@ async function loadMealTotals(){
   let p=0,k=0,f=0,fs=0,nq=0;rows.forEach(m=>{p+=m.protein;k+=m.kcal;f+=m.fibre;fs+=m.fscore;
     m.items.forEach(it=>nq+=it.q);});
   $('#dayTotals').innerHTML=`Today: <b>${p.toFixed(1)} g protein</b> &middot; ${Math.round(k)} kcal &middot; ${f.toFixed(1)} g fibre &middot; ${rows.length} meal(s)`;
-  $('#dayPbar').style.width=Math.min(100,p/57*100)+'%';
+  $('#dayPbar').style.width=Math.min(100,p/PROT_TGT*100)+'%';
   const avg=nq?fs/nq:0;const lab=avg<0.4?'low':avg<0.9?'low-moderate':avg<1.3?'moderate':'high';
   $('#dayFmap').innerHTML=rows.length?`FODMAP load today: <b>${lab}</b>`:'';
 }

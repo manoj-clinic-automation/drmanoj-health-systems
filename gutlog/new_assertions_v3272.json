@@ -1,0 +1,15 @@
+{
+ "_": ["GutLog v3.27.2 -- /healthz exists. 01-03 fail on v3.27.1 because the route is not there at all (404). 04 guards a property the previous build trivially had -- a route that does not exist cannot leak -- so a version control would prove nothing about it; it is shown failing by a mutation that makes the unauthenticated body carry a figure."],
+ "suite": "test_v3272_healthz.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3272_healthz.py",
+ "assertions": [
+  {"name": "01 /healthz answers in plain text with no session", "control": "version"},
+  {"name": "02 it names the running build, from one constant", "control": "version"},
+  {"name": "03 it needs no login, on an app that gates everything else", "control": "version"},
+  {"name": "04 it carries no record data and no host detail", "control": "mutation",
+   "mutation": {"id": "leaky", "why": "the one unauthenticated route starts reporting a figure alongside the version",
+    "find": "    return Response(\"ok %s\" % APP_VERSION, mimetype=\"text/plain\")",
+    "replace": "    return Response(\"ok %s protein target %s\" % (APP_VERSION, PROTEIN_TARGET), mimetype=\"text/plain\")"}}
+ ]
+}
