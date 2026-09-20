@@ -1,4 +1,4 @@
-# FitLog — DOSSIER (v1.6.0)
+# FitLog — DOSSIER (v1.7.0)
 
 Single source of truth. Update after every change.
 
@@ -616,7 +616,9 @@ route runs SELECTs and renders. It touches no rule, no knowledge file and
 no write path.
 
 - **Activity rings** — Move / Exercise / Stand as inline SVG arcs against
-  the goals the Watch itself reported, with the percentage.
+  the goals the Watch itself reported, with the percentage. Since v1.7.0
+  the goal is the **last one the Watch sent**, not one sent that day — see
+  below.
 - **Recent days** — 14 days × steps, active energy, exercise minutes,
   stand hours, resting HR, HRV, sleep. A blank cell is "the Watch sent
   nothing", never a zero.
@@ -639,6 +641,48 @@ the FitLog analogue of GutLog's `test_ui_now.py` lesson.
 Every string the page builds is plain concatenation, never an f-string —
 Python 3.9 has no PEP 701, and CSS/SVG braces inside an f-string are a
 live hazard in this codebase.
+
+## Ring goals — v1.7.0 (`FITLOG_V170_RINGGOALS`, 2026-09-20)
+
+The rings had been drawing as bare grey outlines reading "no goal on file".
+Nothing was broken in the ring code: **the goals had stopped arriving.**
+They only ever came in the `activity_rings` array of the iOS Health Webhook
+payload, and Health Auto Export — the feed since 11 Sep — has no ring or
+activity-summary type at all. The last body carrying goals was
+`health_raw` id 15, **2026-09-11 17:31 IST**; only three bodies ever
+carried them.
+
+**A goal is a Watch setting, not a daily measurement**, so it holds until
+the Watch sends a new one. `w_last_goals(day)` takes the newest positive
+goal on or before the day, per key, and both the Today strip and the
+/watch rings card use it. A goal carried forward is **always named with
+the date it was sent** — "goals as last sent by the Watch on 11 Sep" —
+never passed off as today's. When the Watch never sent a goal at all,
+nothing is invented and the ring stays an outline; that is assertion 06,
+shown failing by a mutation that invents a default.
+
+The /watch **Move ring now falls back to `active_energy_kcal`**. It read
+only `move_energy_kcal`, which no current feed sends — **zero rows in the
+live database, ever**. The Today strip already had this fallback; /watch
+did not, which is why the same day showed a filled Move ring on one page
+and an empty one on the other. Move *is* active energy.
+
+Goals stay out of `RULE_BEARING`: they are context, and no rule reads one.
+Assertion 07 guards it with a sidecar mutation that makes `move_goal_kcal`
+rule-bearing inside `health_ingest.py` — the harness copies the app folder
+and breaks the copy, never the real module.
+
+Live on 2026-09-20 15:12 IST, against the real database: Move **226 / 300
+kcal (75%)** — 226 is active energy, the fallback doing its job — Stand
+**10 / 12**, both pages carrying the 11 Sep goal line, and "no goal on
+file" gone from both. Exercise shows no value for today because the Watch
+has sent no exercise minutes since 19 Sep; absent is not zero.
+
+Evidence: `test_ring_goals.py` 7/7, and NEGATIVE_CONTROL 7/7 seen to fail
+(01–05 by version against the reconstructed previous build, 06 by the
+invent mutation, 07 by the sidecar mutation). Rollback:
+`app.py.bak-v170-20260920_150854` on the server, or the patcher's
+`--reverse`.
 
 ## "Today so far" strip — the vitals page (v1.3.1)
 
@@ -839,6 +883,7 @@ healthconnect case in it uses the legacy shape, so `is_hc` is false. It scored
 on HC changes.
 
 ## Changelog
+- 2026-09-20 `FITLOG_V170_RINGGOALS` — **DEPLOYED 15:12 IST.** `app.py` sha256 `293e4c61…`, byte-identical to the repo build; 7/7 anchors, compile check OK; rollback `app.py.bak-v170-20260920_150854`; DB backup `fitlog.db.pre-v170-20260920_150854` (integrity ok, 15 tables) although this patch writes nothing. **The rings were not broken — the goals had stopped arriving.** They only ever came in the `activity_rings` array of the iOS Health Webhook payload, and Health Auto Export has no ring or activity-summary type; the last body carrying them was `health_raw` id 15, **2026-09-11 17:31 IST**, and only three bodies ever did. So the fix is not to re-fetch a goal that no feed sends, it is to stop treating a **setting** as a daily measurement: `w_last_goals(day)` takes the newest positive goal on or before the day, and the page **always names the date it was sent** — "goals as last sent by the Watch on 11 Sep" — rather than presenting an 11 Sep goal as today's. Where the Watch never sent a goal at all, nothing is invented and the ring stays an outline. Second fault found in the same place: the /watch Move ring read only `move_energy_kcal`, which has **zero rows in the live database and never had any** — the Today strip had already fallen back to `active_energy_kcal` and /watch had not, so the same day drew a filled Move ring on one page and an empty one on the other. Negative control **7/7 SEEN** — 01–05 against the reconstructed previous build, 06 by an invent-a-default mutation, 07 by a sidecar mutation making `move_goal_kcal` rule-bearing inside `health_ingest.py`, because a goal must stay context-only. Full server sweep green before the restart: 7/7, 52/52, 39/39, 5/5, 8/8, 14/14, 10/10 sleep-night, 11/11 sleep-overnight, 14/14 activity-feed, 10/10 gutlog-feed, 23/23, 36/36, 18/18, 19/19, 29/29, 12/12, kb_lint, 53/53. **Live read-back against the real record:** Move **226 / 300 kcal (75%)** — the 226 is active energy, so the fallback is doing the work — Stand **10 / 12**, the 11 Sep goal line on both `/` and `/watch`, and "no goal on file" gone from both. Exercise shows nothing for today, correctly: no exercise minutes have arrived since 19 Sep, and absent is not zero. *Process note: four suites first reported failures that were my own wrong arguments — `test_sleep_night.py` and `test_sleep_overnight.py` take `health_ingest.py`, not `app.py`, and the two feed suites take `gutlog/app.py`. Passing `app.py` to all of them loaded the wrong module and produced `AttributeError: … has no attribute 'sleep_night'`, which reads exactly like a real regression. Check the suite's `sys.argv[1]` before believing a red run.*
 - 2026-09-15 `FITLOG_SLEEP_MEDIAN_N7` — **DEPLOYED 18:00 IST**, ten minutes after the phase it corrects. `app.py` md5 `5f8f3ad9…`, byte-identical to the repo build; 2/2 anchors; rollback `app.py.bak-medn7-20260915_180007`; DB backup `fitlog.db.pre-medn7-20260915_180006` (integrity ok) although this patch writes nothing. **No median is shown until there are seven nights with data.** The card had been showing his own median over however many nights existed, with the count stated beside it — honest, and still wrong. A median over two or three nights is not a baseline, it is two or three numbers wearing the word, and printing `n` does not stop it being read as one; an honest label on a misleading number is still a misleading number. Worse here than in general: the record's first nights include 2026-09-15, which arrived truncated, so the figure would have rested on a night known to be wrong. Below the threshold the card now says there are not enough nights yet, names the count, and states that nothing is being compared until then. Withheld, not qualified. Negative control **2/2 SEEN** — assertion 11 fails against the reconstructed `FITLOG_SLEEP_P2_PAGE`, and `M_neverenough` raises the threshold to 99 so that suppressing a misleading figure cannot quietly become suppressing the one comparison this page is allowed to make. Whole 26-run gate green again before the restart. *Note for whoever reverses next: this patch edits the same function as `patch_fitlog_sleep_p2_page.py`, so `new_assertions_sleep_p2_page.json` can no longer be re-run in place — reverse in LIFO order.*
 - 2026-09-15 `FITLOG_SLEEP_P2` + `FITLOG_SLEEP_P2_PAGE` — **DEPLOYED 17:50 IST.** `health_ingest.py` md5 `a55b48e9…` (69,446 bytes) and `app.py` md5 `9c41a41b…` (88,834 bytes), both byte-identical to the repo builds; 10/10 and 9/9 anchors, compile checks OK. DB backed up first: `/root/backups/fitlog/fitlog.db.pre-sleepp2-20260915_174829` (integrity ok, 14 tables, 218 raw bodies, 2 sleep blocks). Rollbacks `health_ingest.py.bak-sleepp2-20260915_174908` and `app.py.bak-sleepp2page-20260915_174908` — either can be reverted alone. Both negative controls run on the server before the restart: **11/11 and 13/13 SEEN**, including `M_score`. Then 26 gate runs, all green — the three sleep suites each at now / 00:02 / 23:58, plus 23/23, 29/29, 56/56, 36/36, 36/36, 18/18, 19/19, 12/12, 12/12, 39/39, 52/52, kb_lint, 53/53, 14/14, 10/10, 8/8, 5/5. Clean boot, `/health` 200, `/watch` still 302 to login unauthenticated. **Live read-back against the real record:** 2026-09-14 now reports respiratory rate 13.88, SpO2 97.5, resting HR 84 and HRV 35.84 **all with `basis: "night"`** — four figures that existed only as daily averages before today; 2026-09-15 reports HRV alone with `basis: "day"`, because that night was recorded as 03:13–04:57 and no sample fell inside so narrow a window. The two nights' HRV figures differ by 21 ms and are *not* comparable — one is a night figure and one is a day figure, and the page now says which is which rather than putting them side by side unlabelled. Temperature rows: **0**, as expected until the export is switched on. Carry the whole night, and put it on the page without scoring it. Two patchers: `patch_fitlog_sleep_p2.py` (10 anchors, `health_ingest.py`) and `patch_fitlog_sleep_p2_page.py` (9 anchors, `app.py`), both reversible and `newline=""`. **Wrist temperature is the point of the phase** — every spelling Auto Export is known to use is now mapped, Fahrenheit converted, an unconvertible unit dropped rather than filed under a name ending `_c`, and `body_temperature` kept in its own canonical name so a thermometer reading is never averaged with a skin sensor. It is **not being exported yet**: check `skipped_metrics` after switching it on. New rule **S04 Overnight Basis** — a figure said to be measured over the night really is the mean of the samples inside the sleep span, with `n`, `min` and `max`; one that is not carries `basis: "day"` and says so on the page; a metric never sent is absent rather than zero. Time in bed now **sums the stretches** instead of spanning a break, which had been reading 6 h for a 5 h 20 m night. On `/watch`: a Sleep card with IST clock times, the stage split drawn to scale, breaks and measured awake time kept apart, the overnight figures with their basis, fourteen nights, and **his own median with n** — the only comparison anywhere on it. `resting_hr` and `hrv_ms` relabelled **Rest HR overnight** / **HRV overnight**, and the Today-so-far strip says where they come from; he had been reading them as cardiac figures all week. `/api/feed/watch` carries the night, `null` when there is none. New `test_sleep_overnight.py` **11/11** and `test_sleep_page.py` **13/13**, **24 declared and 24 seen to fail** across the two manifests — including `M_score`, which puts a sleep score on the card on purpose and requires the suite to catch it. Page suite green at 00:02, 12:00 and 23:58. Full sweep green: 53/53, kb_lint, 10/10 sleep-night, 23/23, 29/29, 36/36, 18/18, 19/19, 12/12, 39/39, 52/52, 5/5, 10/10, 8/8, 14/14, 56/56, 36/36, 12/12. Folder parity restored. *Found and fixed by rendering the page rather than trusting the assertions: time in bed was counting a 40-minute break, and the overnight figures were in a three-column table whose basis text ran off the right edge at 375px — now a wrapping list.*
 - 2026-09-15 `FITLOG_SLEEP_P1` — **DEPLOYED 15:43 IST.** `health_ingest.py` md5 `3b0fd810…`, byte-identical to the repo build; 8/8 anchors, compile check OK; rollback `health_ingest.py.bak-sleepp1-20260915_154304`, DB `/root/backups/fitlog/fitlog.db.pre-sleepp1-20260915_154222` (integrity ok, 13 tables, 213 raw bodies). Whole gate green on the server before the restart — negative control 10/10 SEEN, then 20 suites: sleep-night 10/10 at now / 00:02 / 23:58, 23/23, 29/29, 56/56, 36/36, 36/36, 18/18, 19/19, 12/12, 12/12, 39/39, 52/52, kb_lint, 53/53, 14/14, 5/5, 10/10, 8/8. Clean boot, no errors in the journal. **Re-parse committed 15:52** via the new `reparse_sleep_blocks.py` (DB backed up first, `--dry-run` read before committing): 5 bodies re-parsed, 5 sleep blocks, 2 dates touched, **0 values changed** — 09-14 stays 3.75 and 09-15 stays 1.67, and the tool's own span check says why: on both nights asleep + awake equals the recorded span to two decimals, so nothing was lost between the payload and the database. What the re-parse did buy is the block rows — real IST spans, stage splits and awake time for both nights — which is what Phase 2 reads.

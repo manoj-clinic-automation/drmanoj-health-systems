@@ -1,0 +1,21 @@
+{
+ "_": ["FitLog v1.7.0 -- rings use the last goals the Watch sent. 01-05 fail on the previous build (grey rings, 'no goal on file'). 06 and 07 guard behaviour the previous build already had: 06 is shown failing by inventing a goal when none was ever sent; 07 by making a goal rule-bearing inside the health_ingest.py sidecar."],
+ "suite": "test_ring_goals.py",
+ "app": "app.py",
+ "patcher": "patch_fitlog_v170_ringgoals.py",
+ "assertions": [
+  {"name": "01 today's strip fills against the last goals the Watch sent", "control": "version"},
+  {"name": "02 a carried-forward goal is always named with its date", "control": "version"},
+  {"name": "03 the /watch rings fill; Move falls back to active energy", "control": "version"},
+  {"name": "04 the newest goal on or before the day is used", "control": "version"},
+  {"name": "05 a goal sent today wins over an older one", "control": "version"},
+  {"name": "06 with no goal ever sent, nothing is invented", "control": "mutation",
+   "mutation": {"id": "invent", "why": "a default goal is invented when the Watch never sent one",
+    "find": "        if r:\n            out[k] = (r[\"value\"], r[\"date\"])\n",
+    "replace": "        out[k] = (r[\"value\"], r[\"date\"]) if r else (300, day)\n"}},
+  {"name": "07 no rule reads a goal", "control": "mutation",
+   "mutation": {"id": "rulegoal", "module": "health_ingest.py", "why": "a ring goal becomes rule-bearing",
+    "find": "RULE_BEARING = (\"steps\", \"exercise_minutes\", \"stand_hours\", \"flights\")",
+    "replace": "RULE_BEARING = (\"steps\", \"exercise_minutes\", \"stand_hours\", \"flights\", \"move_goal_kcal\")"}}
+ ]
+}

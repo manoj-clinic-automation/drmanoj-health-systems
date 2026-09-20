@@ -6,6 +6,7 @@ FITLOG_V140_PAIN -- FitLog v1.4.0 analgesic mirror + operating-day load.
 FITLOG_V150_WATCHFEED -- FitLog v1.5.0 read-only watch feed for GutLog.
 FITLOG_V160_DOWNDAYS -- FitLog v1.6.0 trend excludes GutLog's down days.
 FITLOG_SLEEP_P2_PAGE -- the sleep record on /watch. Measured, never scored.
+FITLOG_V170_RINGGOALS -- FitLog v1.7.0 rings use the last goals the Watch sent.
 FitLog v1.0 — Personal physical capacity & recovery engine.
 Dr. Manoj Agarwal | fit.dr-manoj.in | port 8040
 Single-file Flask + SQLite. Deterministic rule engine (no LLM in decision path).
@@ -1298,6 +1299,39 @@ W_RINGS = (
 W_DASH = "\u2014"
 
 
+# FITLOG_V170_RINGGOALS -- a ring's goal is a setting on the Watch, not a
+# daily measurement. Health Auto Export sends none; only the earlier iOS feed
+# did. So the last goal the Watch sent still describes today until a newer
+# one arrives -- and it is always shown with the date it was sent, never
+# passed off as today's. Goals stay context-only: no rule reads one.
+W_GOAL_KEYS = ("move_goal_kcal", "exercise_goal_min", "stand_goal_hours")
+
+
+def w_last_goals(day):
+    """{goal_key: (value, date)} -- the newest positive goal on or before day."""
+    out = {}
+    for k in W_GOAL_KEYS:
+        r = db().execute(
+            "SELECT date, value FROM health_metrics WHERE source = ? AND "
+            "metric = ? AND date <= ? AND value > 0 ORDER BY date DESC LIMIT 1",
+            (W_SRC, k, day)).fetchone()
+        if r:
+            out[k] = (r["value"], r["date"])
+    return out
+
+
+def w_goal_note(used):
+    """Words for goals carried forward from an earlier day."""
+    days = sorted(set(d for _v, d in used.values()))
+    if not days:
+        return ""
+    try:
+        txt = datetime.strptime(days[0], "%Y-%m-%d").strftime("%d %b").lstrip("0")
+    except ValueError:
+        txt = days[0]
+    return "goals as last sent by the Watch on " + txt
+
+
 def w_esc(v):
     s = str(v)
     s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -1357,9 +1391,16 @@ def w_rings_card(rows):
     if day is None:
         return ""
     cells = []
+    last_goals = w_last_goals(day)
+    used = {}
     for label, got_key, goal_key, unit, colour in W_RINGS:
         got = rows[day].get(got_key)
+        if got is None and got_key == "move_energy_kcal":
+            got = rows[day].get("active_energy_kcal")
         goal = rows[day].get(goal_key)
+        if not goal and goal_key in last_goals:
+            goal = last_goals[goal_key][0]
+            used[goal_key] = last_goals[goal_key]
         pct = 0.0
         if got is not None and goal:
             pct = float(got) / float(goal)
@@ -1372,7 +1413,9 @@ def w_rings_card(rows):
                      pct_txt + "</span></div></div>")
     return ("<h2>Activity rings</h2>" +
             '<div class="card"><div class="small">' + w_esc(day) +
-            ' &middot; source: Apple Watch</div><div class="wrings">' +
+            ' &middot; source: Apple Watch' +
+            ((' &middot; ' + w_esc(w_goal_note(used))) if used else '') +
+            '</div><div class="wrings">' +
             "".join(cells) + "</div>" +
             '<div class="small">Goals are read from the Watch itself and are '
             "context-only: a target is not a measurement, and no rule reads "
@@ -1610,6 +1653,8 @@ def watch_today_strip(t):
              '</div><div class="wt-l"><span class="' + steps_mark + '">' +
              ("R" if steps_mark == "wr" else "C") + "</span> Steps</div></div>"]
 
+    last_goals = w_last_goals(t)
+    used_goals = {}
     for label, keys, goal_key, unit, colour in W_STRIP:
         got = None
         for k in keys:
@@ -1617,6 +1662,9 @@ def watch_today_strip(t):
                 got = vals.get(k)
                 break
         goal = vals.get(goal_key)
+        if not goal and goal_key in last_goals:
+            goal = last_goals[goal_key][0]
+            used_goals[goal_key] = last_goals[goal_key]
         pct = 0.0
         if got is not None and goal:
             pct = float(got) / float(goal)
@@ -1641,6 +1689,9 @@ def watch_today_strip(t):
                     " \u00b7 ".join(ctx) + " \u2014 derived overnight by "
                     "the Watch; context only, no rule reads these</div>")
 
+    if used_goals:
+        ctx_html += ('<div class="small wctx">Rings drawn against the ' +
+                     w_esc(w_goal_note(used_goals)) + ".</div>")
     return ('<div class="card wstrip" id="wstrip"><div class="wstrip-h">'
             '<b>\u231a Today so far</b>' + fresh + link + "</div>" +
             '<div class="wts">' + "".join(tiles) + "</div>" + ctx_html +

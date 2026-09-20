@@ -3,6 +3,35 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — FitLog v1.7.0, the rings get their goals back
+
+The activity rings had been drawing as grey outlines reading "no goal on
+file". Nothing was wrong with the ring code: **the goals had stopped
+arriving.** They only ever came in one array of the old iOS Health Webhook
+payload, and Health Auto Export — the feed since 11 Sep — has no ring or
+activity-summary type at all. The last body carrying a goal landed at
+**11 Sep 17:31 IST**, and only three ever did.
+
+So the fix is not to chase a goal no feed sends. **A goal is a Watch
+setting, not a daily measurement**, and it holds until the Watch sends a
+new one. The newest goal on or before the day now fills the ring, and the
+page **always names the date it was sent** — "goals as last sent by the
+Watch on 11 Sep" — rather than passing an old goal off as today's. Where
+no goal was ever sent, nothing is invented and the ring stays an outline;
+that property is guarded by a mutation that invents a default on purpose.
+
+A second fault surfaced in the same place: the /watch Move ring read only
+the Watch's separate Move figure, which has **zero rows in the live
+database and never had any**. The Today strip had already fallen back to
+active energy and /watch had not — so the same day showed a filled Move
+ring on one page and an empty one on the other. Move *is* active energy.
+
+Goals stay context-only; no rule reads one, guarded by a sidecar mutation
+that makes a goal rule-bearing and requires the suite to catch it.
+Negative control 7/7 seen to fail, full server sweep green, and the live
+read-back shows Move 226/300 (75%) and Stand 10/12 with the 11 Sep goal
+line on both pages.
+
 ## 2026-09-20 (later) — the three loose ends closed
 
 **The access log stopped recording the token.** The key stays in the URL —
