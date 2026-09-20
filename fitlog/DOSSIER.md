@@ -671,25 +671,44 @@ empty ring.
 
 Read-only. `/watch` is unchanged; the strip links to it.
 
-## Token handling — open issue (2026-09-11)
+## Token handling — the access log stopped recording the token (2026-09-20)
 
-**The OLS access log records the full request line (`%r`), so the `?k=`
-healthconnect token is written to disk in clear text on every HC post.**
-Rotation does not fix this; it only invalidates what is already logged.
-The next successful HC post re-leaks whatever the current token is.
+The `?k=` healthconnect token stays in the URL: HC Webhook cannot send
+headers (CLAUDE.md §5a). What changed is that the web server no longer
+writes the URL down.
 
-The real fix is changing `logFormat` in
-`/usr/local/lsws/conf/vhosts/fit.dr-manoj.in/vhost.conf` from `%r` to
-`"%m %U"`, which drops the query string. Deferred by the owner
-(2026-09-11): it needs a graceful OLS restart affecting every vhost on the
-box, and CyberPanel may rewrite the file. **Schedule it.** Until then,
-treat `FITLOG_HC_TOKEN` as compromised on every rotation cycle.
+`logFormat` in `/usr/local/lsws/conf/vhosts/fit.dr-manoj.in/vhost.conf` now
+reads `"%h %l %u %t "%m %U %H" %>s %b "%{Referer}i" "%{User-Agent}i""` —
+`%U` is the path without the query string. `%m` and `%H` are kept
+deliberately: `%U` alone would have dropped the method, and "were there
+POSTs to `/api/ingest`, and what did they return?" is the first question
+every ingest diagnosis asks. Applied 2026-09-20 13:06 IST with
+`lswsctrl restart` (graceful, `SIGUSR1`, zero downtime); all eight vhosts
+on the box answered afterwards, and **only fit's vhost was touched** — the
+other eight still log `%r`, which is correct for them. Backup:
+`vhost.conf.bak-noquery-20260920_130656`. Proof, a deliberately fake key:
+
+```
+"POST /api/ingest HTTP/1.1" 401 36 "-" "curl/7.76.1"
+```
+
+CyberPanel may rewrite `vhost.conf` if the vhost is edited through its UI or
+on some SSL operations — **re-check this line after any CyberPanel change to
+fit.dr-manoj.in.**
+
+**Still open: the 392 lines already written.** Between 11 Sep and 20 Sep the
+log accumulated 392 request lines carrying the live token in clear. The
+format change stops new ones; it does not touch those. Rewriting them in
+place is blocked pending the owner's go-ahead — see the runbook note below.
+Until they are stripped, `FITLOG_HC_TOKEN` should be treated as exposed to
+anyone who can read `/home/fit.dr-manoj.in/logs/`.
 
 There is **no logrotate rule** for that file — OLS self-rolls at
-`rollingSize 10M` / `keepDays 10`, and at ~100 KB it will not roll for
-months. Clearing it means truncating in place (`: > file`); litespeed
-holds the fd in append mode, so it keeps writing from offset 0. Do not
-delete it — that orphans the fd.
+`rollingSize 10M` / `keepDays 10`, and at ~180 KB it will not roll for
+months, so there are currently **no rotated copies** to clean. Rewriting it
+means writing through the *same inode* (`sed … > tmp; cat tmp > log`), not
+`sed -i`: litespeed holds the fd, so replacing the inode would send every
+new line to a deleted file. Do not delete it — that orphans the fd.
 
 The gunicorn log is unaffected: `RedactingLogger` writes `k=<redacted>`.
 
@@ -699,7 +718,7 @@ Two logs answer "did the request arrive, and what did we say back?".
 
 | Log | Written by | Path | Notes |
 |---|---|---|---|
-| OLS vhost access log | OpenLiteSpeed | `/home/fit.dr-manoj.in/logs/fit.dr-manoj.in.access_log` | Config: `/usr/local/lsws/conf/vhosts/fit.dr-manoj.in/vhost.conf`. Rolls at 10 M, `keepDays 10`. **Records the full query string — the `?k=` HC token lands here in plain text.** |
+| OLS vhost access log | OpenLiteSpeed | `/home/fit.dr-manoj.in/logs/fit.dr-manoj.in.access_log` | Config: `/usr/local/lsws/conf/vhosts/fit.dr-manoj.in/vhost.conf`. Rolls at 10 M, `keepDays 10`. Since 2026-09-20 logs `%m %U %H` — **path only, no query string**, so the `?k=` token is no longer recorded. Lines written before that still carry it. |
 | gunicorn access log | FitLog | `/var/log/fitlog/access.log` | `gunicorn_conf.py`, `RedactingLogger`. 30-day logrotate (`/etc/logrotate.d/fitlog`). |
 
 Gunicorn ran with no access log until 2026-09-11, which is why a client-side

@@ -3,6 +3,43 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 (later) — the three loose ends closed
+
+**The access log stopped recording the token.** The key stays in the URL —
+that feed cannot send headers, and CLAUDE.md §5a accepts it under narrow
+scoping. What was wrong is that the web server wrote the URL down: 392 lines
+since 11 Sep. `fit.dr-manoj.in`'s `logFormat` now logs `"%m %U %H"` instead
+of `"%r"`, so the path is recorded without the query string. `%U` alone was
+the instruction; method and protocol were kept with it, because every ingest
+diagnosis starts by asking which requests were POSTs and what they returned,
+and `%U` on its own would have cost that for nothing. Graceful restart,
+`SIGUSR1`, zero downtime; **only that one vhost changed** and all eight on
+the box answered afterwards. **The 392 existing lines are not yet stripped** —
+that step is waiting on the owner.
+
+**`backup.sh`: the obvious one-character fix was wrong.** Widening
+`--exclude='*.db'` to `'*.db*'` does drop the twenty timestamped copies of the
+diary, and it also drops the key file — and tar has no way to put an excluded
+file back. Naming it explicitly on the command line does **not** work; that
+was measured on the box rather than assumed. What shipped is
+`--exclude='*.db' --exclude='*.db-*' --exclude='*.db.[!s]*'`: the `[!s]` class
+drops every `.db.<tag>` snapshot while keeping `.db.secret*`. Run by hand:
+239 → 220 members, both key files present, no database copies.
+
+The honest footnote: the tarball went 91.4 MB → 90.5 MB. Only 857 KB came
+off, because twenty sqlite copies of a 400 KB database gzip to almost
+nothing. `uploads/` is 90.2 MB of what is left — the scanned PDFs, which are
+the point of the backup. The snapshots were never a size problem; they were
+copies of the diary in a place that was not supposed to hold them.
+
+**The stale app copy is archived.** `/root/gutlog_backup_v2/` — the thing the
+last entry flagged as "the most likely thing to mislead a future session" — is
+now in `/root/archive/gutlog-dead-20260920/`, moved and not deleted, 1,839
+entries and 17,617,609 bytes identical before and after. Proved dead four
+ways; the single textual reference to it anywhere under `/root` turned out to
+be a clinic-repo retirement helper listing it as **never-touch**, which is a
+mention, not a caller.
+
 ## 2026-09-20 — server clean-ups, and the Watch was never silent
 
 **The Watch question, answered by looking rather than assuming.** The premise
