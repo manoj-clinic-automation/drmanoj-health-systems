@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.19.0)
+# GutLog — DOSSIER (v3.20.0)
 
 Single source of truth. Update after every change.
 
@@ -338,6 +338,73 @@ where it is already logged (409). Extras move to any past day.
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
 
+## Two stock pipelines — v3.20.0
+
+One list was the wrong shape for two different problems. A medicine taken every
+morning and a medicine taken three times a year both ran out, but they do not
+run out the same way, and they cannot be bought on the same rhythm.
+
+| | **daily** | **SOS** |
+|---|---|---|
+| what it is | a fixed schedule, or a pack a variant schedule is **linked** to | kept for occasional use, no daily rate |
+| pipeline | the **monthly order** (below), unchanged arithmetic | the **Running low** card, any day |
+| raised when | the last week of the month | stock falls below a **third of keep** (never below 1) |
+| topped up to | 40 days (the setting) | the keep figure, in whole packs |
+| saved as | `stock_orders` row for that month | `stock_orders` row with `month='SOS'` |
+
+An SOS medicine **no longer rides the monthly order**. Buying four months of a
+rescue tablet every month is how the cupboard fills; waiting for month end when
+it is already gone is how the rescue is not there. The threshold is a third of
+keep rather than "below keep", so the list does not raise something the day one
+tablet is taken out of a full box.
+
+Items already on an **open** SOS order show as *ordered* and are not raised
+again. The SOS card has its own Send / Copy / Received, and a **Low** banner
+sits on Now while anything is low.
+
+### The strength links
+
+A medicine logged with a choice of strengths could not be counted at all from
+v3.6.0 — there is no single units-a-day figure for a schedule that offers
+several. That was fine until he said the opposite: one medicine, *whatever
+strength, needs to be tracked, because it is required early in the morning and
+running out will spoil the day.*
+
+`stock_links(med_id, variant, stock_med_id, units)` links **each strength label
+on the variant schedule to the pack it actually comes out of**, with a unit
+count:
+
+| label | pack | units |
+|---|---|---|
+| 72 | the 72 pack | 1 |
+| 145 | the 145 pack | 1 |
+| 290 | the 145 pack | **2** — there is no 290 pack; it is two capsules |
+
+A dose logged as `145 + 72` takes **one from each** pack. The packs are then
+ordinary per-dose stock: counted, alerted at the existing 7-day and 3-day
+thresholds, and carried on the monthly order at `max(14-day use × 40, keep)` —
+the keep figure is a **floor**, so a pack he uses rarely is still never allowed
+to reach zero. Linked packs are daily by definition and never reach the SOS
+list.
+
+The variant medicine itself stays untracked and **says where it is counted**
+("strengths vary — counted on …"). Clearing the links takes the packs back off
+the monthly order, which is asserted rather than assumed. A **Link strengths**
+form sits on the variant's stock row.
+
+This closes the gap v3.19.0 could only name.
+
+### Routes added
+
+| Route | Method | Does |
+|---|---|---|
+| `/api/order/sos/save` | POST | saves the running-low list as an SOS order |
+| `/api/stock/link` | POST | sets or clears the strength links for one medicine |
+
+Both `@login_required`; the SOS save route's guard is mutation-controlled.
+`/api/order` carries the SOS plan under `sos`, so one read answers both
+pipelines. One new table, no column changes, **no `schema_version` bump**.
+
 ## The monthly medicine order — v3.19.0
 
 He reorders in the **last week of each month, for the month after**, and keeps a
@@ -451,7 +518,8 @@ a version-only control would miss.
 | `settings` | key/value — schema_version, credential hashes, auth_epoch |
 | `edits` | Retime audit (v3.5.0). tbl, rid, old_day, old_time, new_day, new_time, at. Created by `SCHEMA` on first request — no migration step |
 | `stock_order_cfg` | Pack details per medicine (v3.19.0). med_id, pack_type, keep_units. Created by `SCHEMA` — no migration step, no `schema_version` bump |
-| `stock_orders` | One saved order per month (v3.19.0). id, month, status, created, received_at, lines (JSON), text. Created by `SCHEMA` — no migration step, no `schema_version` bump |
+| `stock_orders` | One saved order per month (v3.19.0). id, month, status, created, received_at, lines (JSON), text. `month='SOS'` is the running-low order (v3.20.0). Created by `SCHEMA` — no migration step, no `schema_version` bump |
+| `stock_links` | Strength → pack (v3.20.0). med_id (the variant medicine), variant (the strength label), stock_med_id (the pack it comes out of), units. Created by `SCHEMA` — no migration step, no `schema_version` bump |
 
 ### med_schedule — effective dating
 
@@ -689,7 +757,27 @@ via OLS reverse proxy.
 > pulled that file out from under the browser suite mid-run on 2026-09-15 —
 > which aborts loudly, as designed, but wastes a fifteen-minute run.
 
-- `test_phase_n.py` — **14/14 PASS** (2026-09-19, v3.19.0), on Windows and on
+- `test_phase_o.py` — **10/10 PASS** (2026-09-20, v3.20.0), on Windows and on
+  the server under Python 3.9; **10 declared new assertions, 10 seen to fail**,
+  three by deliberate mutation of the current build. Asserts that seven
+  malformed link and SOS calls are refused; that a dose by strength comes out
+  of the linked packs — `145` → one, `290` → **two of the 145 pack**, and
+  `145 + 72` → **one from each**, with undo restoring both; that the variant
+  row names where it is counted while the pack is ordinary per-dose stock;
+  that a linked pack rides the monthly order at `use × 40` with keep as the
+  floor; that linked and scheduled medicines **never** reach the SOS list;
+  that an SOS medicine is raised only below a third of keep (5/15 fine, 4/15
+  low; 1/1 fine, 0/1 low); that an SOS order is raised once, shows as ordered,
+  and a fresh one starts after receipt; that **clearing the links takes the
+  packs back off the monthly order**; and that both new routes need the login.
+  The three mutations are the errors that would still have produced a
+  plausible list: charging only the first strength of a combined dose,
+  raising an SOS medicine as soon as it is under keep rather than under a
+  third of it, and dropping `@login_required` from the SOS save route.
+- `test_phase_n.py` — **14/14 PASS** (2026-09-19, v3.19.0; cases 05, 06 and 10
+  rewritten for v3.20.0 because SOS medicines left the monthly order — the
+  semantics genuinely changed, so the cases were rewritten rather than
+  loosened, and `new_assertions_v3190.json` renames case 06 to match).
   the server under Python 3.9; **14 declared new assertions, 14 seen to fail**,
   three of them by deliberate mutation of the current build rather than by
   version, because those three are the ones that would be cheapest to get
@@ -941,13 +1029,14 @@ rediscovered the expensive way.
    time, lights-out, wake time, woke-early) are in the same position. Both wait
    for the feed to resume; do not "fix" them from a screenshot.
 
-9. **A medicine whose schedule uses dose variants is not stock-tracked**, and
-   therefore cannot be ordered automatically. This is not new in v3.19.0 — it
-   has held since v3.6.0, because a variant schedule has no single units-a-day
-   figure to count against. The order card **names** such a medicine with
-   "strengths vary — count and order it yourself" rather than dropping it, so
-   the omission is visible; but it is still a line he has to add by hand. One
-   medicine is in this position today.
+9. ~~**A medicine whose schedule uses dose variants is not stock-tracked**~~ —
+   **CLOSED in v3.20.0 by the strength links.** Each strength label is linked
+   to the pack it comes out of, the packs are counted as ordinary per-dose
+   stock and ride the monthly order, and the variant row says where it is
+   counted. The one medicine that was in this position is linked and tracked
+   as of 2026-09-20. What is *not* closed: a variant medicine with **no links
+   set** is still uncounted, and still says so rather than disappearing — so
+   the gap becomes a setup step rather than a dead end.
 
 10. **A received order closes that month.** Once *Order received* is tapped,
     that month's order is finished; a later top-up in the same month needs
@@ -975,14 +1064,54 @@ rediscovered the expensive way.
   part by gap 5 — unmapped molecules are invisible to it)
 - **Sleep tile and activity rings on the Watch card** — blocked on the Apple
   Watch feed resuming (gap 8)
-- Stock, refill alerts and the monthly order — **done** (v3.6.0 and v3.19.0).
-  What remains is data, not code: twelve medicines on the interim sheet have no
-  GutLog entry at the same strength, and one uses dose variants (gap 9)
+- Stock, refill alerts, the monthly order and the SOS pipeline — **done**
+  (v3.6.0, v3.19.0, v3.20.0). The twelve sheet medicines GutLog lacked were
+  added and counted on 2026-09-20, and the variant medicine is linked. What
+  remains is data he alone can supply: the GutLog medicines that are **not on
+  the sheet** are still uncounted and read "not counted yet" until he counts
+  them
 - FitLog read-endpoint cutover — FitLog consuming GutLog data rather than
   duplicating it
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-20 v3.20.0 — two stock pipelines, the strength links, full stock.
+  DEPLOYED 07:29 IST.** `app.py` sha256 `7d801765…`, 398,442 bytes on the
+  server, **byte-identical to the repo build**; the pre-patch file was
+  hash-checked against v3.19.0 (`9205fb73…`) on both machines first, and the
+  reverse patch reproduces v3.19.0 byte-for-byte. Rollback:
+  `cp /root/gutlog/app.py.bak-v3200-20260920_072826 /root/gutlog/app.py` — the
+  new table simply goes unread by v3.19.0, nothing has to be dropped. Database
+  backed up before the patch (`health3.db.pre-v3200-20260920_072811`,
+  `integrity_check` ok, 28 tables), again by the merge, and again by the seeder.
+  `patch_gutlog_v3200.py`, **17 anchors**, reversible, refuses Jinja-breaking
+  tokens. **No schema-version bump** — `stock_links` is `CREATE TABLE IF NOT
+  EXISTS` in `SCHEMA`; confirmed live by reading the database with Python
+  `sqlite3` after the restart: present with the expected columns, 29 tables,
+  `schema_version` still 3.3.4.
+  Server gates before the restart: **phase_o 10/10**, **phase_n 14/14**,
+  a 18/18, b 16/16, c 20/20, d 18/18, e 13/13, f 8/8, g 14/14, i 18/18,
+  j 28/28, m 19/19, watch_tiles 7/7. Offline: `test_ui_now` **196 PASS /
+  0 FAIL**, `test_ui_order` ALL PASS (22 checks — it now walks the SOS card,
+  the Low banner and the Link strengths form as well), negative control
+  **10 declared, 10 seen to fail**.
+  **The seed was rehearsed on a throwaway copy of the live database first**,
+  because the dry run *cannot* show the links resolving: the packs they link to
+  do not exist until the adds land, so the dry run prints "pack not in GutLog —
+  skipped" for all three and would have looked like a failure either way. The
+  rehearsal showed all three links resolving and a second run adding nothing.
+  Then live: **12 medicines added** (every sheet row GutLog lacked, each
+  checked against the live catalogue first for the same product at the same
+  strength), 12 counted from the sheet, 23 medicines now counted out of 36.
+  The one duplicate entry — two rows for the same product at the same
+  strength, differing only in case — was merged first with
+  `merge_duplicate_med.py`: no schedule clash, 0 doses and 0 stock events to
+  move, the empty one retired `active=0` rather than deleted. The two seed files were deleted from the
+  server afterwards (CLAUDE.md §5d).
+  **Live after the seed:** the October order carries five lines, four
+  `basis=schedule` and one `basis=linked`; the running-low list is **empty**
+  and nothing is named as un-orderable, where v3.19.0 had three; the variant
+  row reads "strengths vary — counted on …" and names both packs.
 - **2026-09-19 v3.19.0 — the monthly medicine order. DEPLOYED 21:12 IST.**
   `app.py` sha256 `9205fb73…`, 384,632 bytes on the server, **byte-identical to
   the repo build**; the pre-patch file was hash-checked against the

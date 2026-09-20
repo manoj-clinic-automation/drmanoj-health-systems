@@ -3,6 +3,62 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — GutLog v3.20.0: one list was the wrong shape for two problems
+
+**What he said.** *"Populate the stock we have of all the medicines. Then two
+pipelines: one for the regular consumed ones"* — and one medicine, *"whatever
+strength, needs to be tracked, because it is required early in the morning and
+running out will spoil the day. The other ones, used rarely, get separately
+listed whenever the inventory is getting low."* (The medicine is named on the
+server and in the gitignored brief, never here — CLAUDE.md §5d.)
+
+**Two pipelines, because the failure modes are opposite.** A daily medicine and
+a rescue medicine both run out, but not on the same clock. Daily ones ride the
+monthly order (v3.19.0's top-up to 40 days, arithmetic untouched). SOS ones
+leave it entirely and get their own **Running low** card, raised any day of the
+month once stock falls below **a third** of the keep figure. Keeping them on
+the monthly order buys four months of a rescue tablet every month; waiting for
+month end means the rescue is already gone when it is wanted. The threshold is
+a third rather than "below keep" so the list does not shout the day one tablet
+comes out of a full box.
+
+**The strength links — the gap v3.19.0 could only name.** From v3.6.0 a
+medicine logged with a choice of strengths could not be counted at all: a
+variant schedule has no single units-a-day figure. That was tolerable until he
+named this exact medicine as the one that must not run out. Each strength label
+is now linked to the pack it actually comes out of, with a unit count — and the
+count is the part that matters: **290 is two capsules of the 145 pack, not a
+290 pack**, because no 290 pack exists. A dose logged as `145 + 72` takes one
+from each. The packs become ordinary per-dose stock with the existing 7-day and
+3-day refill alerts, and ride the monthly order at `max(14-day use × 40, keep)`
+— keep as a **floor**, so a rarely-used pack still never reaches zero. The
+variant row itself stays untracked and says *where it is counted*.
+
+**The labels were checked against the live schedule before anything was
+written**, not assumed from the brief: `72|145|290`, exactly as the links file
+expected. Had they differed, the links would have been silently wrong and the
+medicine silently uncounted — the failure this project keeps finding, where the
+change appears to succeed.
+
+**The seed was rehearsed on a throwaway copy of the live database**, because
+the dry run could not show the links resolving: the packs they link to do not
+exist until the adds land, so the dry run prints "pack not in GutLog — skipped"
+for all three whether the code works or not. A dry run that cannot distinguish
+success from failure is not evidence. On the copy all three resolved and a
+second run added nothing; only then was it run live.
+
+**12 medicines added, 23 of 36 now counted**, each add checked against the live
+catalogue first for the same product at the same strength. A duplicate entry
+that differed only in case was merged first (nothing to move; the empty one
+retired, never deleted). The medicines GutLog has that are *not* on his sheet
+are deliberately left uncounted and say so.
+
+One new table, no column changes, no `schema_version` bump. Gates: phase_o
+**10/10** with **10 declared / 10 seen to fail** (three by mutation), phase_n
+14/14, every other server suite green, `test_ui_now` 196 PASS / 0 FAIL,
+`test_ui_order` ALL PASS. Patcher 17 anchors, `--reverse` byte-identical to
+v3.19.0. Detail in `gutlog/DOSSIER_GutLog.md`.
+
 ## 2026-09-19 — GutLog v3.19.0: the order is a top-up, not a month's worth
 
 **What he asked for.** Medication inventory and order generation, not a
