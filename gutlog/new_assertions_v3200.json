@@ -1,0 +1,51 @@
+{
+  "_": [
+    "GutLog v3.20.0, two stock pipelines and the strength links. Every",
+    "assertion is about behaviour v3.19.0 did not have -- no links, no SOS",
+    "list, SOS medicines rode the monthly order -- so each fails against the",
+    "reconstructed v3.19.0.",
+    "",
+    "Two are also controlled by a deliberate break of v3.20.0, because they",
+    "are the cheapest to get wrong while the rest stay green:",
+    "  02  a combined dose ('145 + 72') charged to only one pack",
+    "  06  the SOS threshold at keep itself instead of a third of it, which",
+    "      would raise a medicine after a single dose",
+    "and 09 by removing the login from the SOS save route."
+  ],
+  "suite": "test_phase_o.py",
+  "app": "app.py",
+  "patcher": "patch_gutlog_v3200.py",
+  "assertions": [
+    {"name": "01 bad strength links and an empty SOS order are refused", "control": "version"},
+    {"name": "02 a dose logged by strength comes out of the linked packs",
+     "control": "mutation",
+     "mutation": {
+       "id": "firstpartonly",
+       "why": "charge only the first strength of a combined dose and see the assertion catch it",
+       "find": "            for part in (d[\"dose_text\"] or \"\").split(\"+\"):\n",
+       "replace": "            for part in (d[\"dose_text\"] or \"\").split(\"+\")[:1]:\n"
+     }},
+    {"name": "03 the variant row says where it is counted, the pack is tracked", "control": "version"},
+    {"name": "04 linked packs ride the monthly order", "control": "version"},
+    {"name": "05 daily medicines never reach the SOS list", "control": "version"},
+    {"name": "06 an SOS medicine is raised once below a third of its keep",
+     "control": "mutation",
+     "mutation": {
+       "id": "lowatkeep",
+       "why": "raise an SOS medicine as soon as it is under its keep figure and see the threshold assertion catch it",
+       "find": "    return max(1, int(math.ceil(keep / 3.0)))\n",
+       "replace": "    return max(1, int(math.ceil(keep)))\n"
+     }},
+    {"name": "07 the SOS order: ordered once, received, then a fresh one", "control": "version"},
+    {"name": "08 clearing the links takes the packs off the monthly order", "control": "version"},
+    {"name": "09 the new routes refuse without a login",
+     "control": "mutation",
+     "mutation": {
+       "id": "nososlogin",
+       "why": "take @login_required off the SOS save route and see the assertion catch it",
+       "find": "@app.route(\"/api/order/sos/save\", methods=[\"POST\"])\n@login_required\n",
+       "replace": "@app.route(\"/api/order/sos/save\", methods=[\"POST\"])\n"
+     }},
+    {"name": "10 Python 3.9 syntax, Jinja-clean JS, page renders the SOS card", "control": "version"}
+  ]
+}

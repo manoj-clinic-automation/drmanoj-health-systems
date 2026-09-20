@@ -396,9 +396,171 @@ a `workouts` array — so no workout has ever come through the slicing path
 and **zero existing rows are mis-dated**. If that ever changes, a backfill
 belongs in `recompute_apple_daily.py`, not in the ingest patcher.
 
+### The sleep record — `FITLOG_SLEEP_P1` (2026-09-15)
+
+**Never score a night.** No readiness figure, no recovery percentage, no
+"poor night", no streak, no target. He has post-discontinuation insomnia, and
+a device that grades sleep every morning makes insomnia worse — the anxiety
+about the number becomes its own cause. `sleep_night()` returns measurements
+and a rule name and nothing else; `test_sleep_night.py` assertion 03 fails the
+build if a key containing *score / grade / readiness / recovery / rating /
+quality / target / streak* ever appears on it. Where a comparison is
+unavoidable it is against his own recent median, never a population norm. He
+has been an early riser all his life: a 05:00 wake is his baseline.
+
+**What was actually wrong, and what was not.** Apple Health held 5 h 41 m for
+the night of 14→15 Sep, roughly 22:30 to just past 05:00. FitLog showed 1.7.
+Read against `health_raw` on the server, the parser was faithful:
+
+```
+raw 208 / 211   sleep_analysis, ONE point
+  date 2026-09-15 00:00:00 +0530
+  sleepStart 2026-09-15 03:13:23 +0530   sleepEnd 2026-09-15 04:57:30 +0530
+  totalSleep 1.6685396374927626   core 1.2430662  rem 0.4254734  deep 0
+  awake 0.0667416   asleep 0   inBed 0
+health_metrics 2026-09-15 sleep_hours = 1.6685396374927626
+```
+
+Bit for bit. **Health Auto Export delivered a 1 h 44 m fragment of the night**
+— the last block only — and the four missing hours were never in a payload.
+Neither suspect held: `totalSleep` was present and positive so the phase-sum
+branch was never reached, and only one point per date had ever been delivered
+so nothing overwrote anything. The export window is a phone-side setting.
+
+**Why the code change was still blocking.** Widening the export ALONE would
+not have fixed the number. Auto Export stamps every sleep point at midnight of
+the day the night is filed under — the 09-14 point covers 23:08 on 09-13 to
+03:19 on 09-14 and is still stamped `2026-09-14 00:00:00 +0530`. The moment a
+wider window delivers a night in two blocks, both arrive stamped identically,
+both land on `hae|sleep_hours|day|<date>|00:00:00`, and the second silently
+replaces the first. The night would have gone on reading as its last block and
+the export change would have looked like it had worked.
+
+#### Rule S03 — Sleep Block Identity
+- a sleep sample is keyed by its own `sleepStart`, never by the midnight stamp
+  every block of the night shares
+- blocks that **overlap** are competing descriptions of one stretch of the
+  night — Auto Export re-segmenting a night it has already sent — and the
+  **longest-span description wins, never the sum**. Adding them would invent
+  sleep he did not have, which is the one error this record must never make.
+- blocks that do **not** overlap are different stretches and **add**
+- `asleep` is Apple's retired pre-stage category and arrives as **0** on every
+  Watch night on this server, beside a real `totalSleep`. A total is believed
+  only when greater than zero. `inBed` likewise arrives as 0, so time in bed
+  is computed from `inBedStart`/`inBedEnd`, never read.
+- **awake time is never counted as sleep**
+- a night is filed under the **wake date** Auto Export gives it, whatever hour
+  it started. `_ist_stamp()` converts `Z` and any other offset to IST before
+  storage, so no UTC stamp can reach a page.
+
+`sleep_night(conn, date, source)` rebuilds the night from its blocks.
+`awakenings` counts the **breaks between recorded sleep blocks** — a floor,
+not a count of times he woke, because Auto Export's aggregate carries no
+awakening count. `awake_h` is the measured time awake and is exact. The two
+are reported separately and the floor is labelled as one wherever it is shown.
+
+**Open, and phone-side:** the export window must be widened before a whole
+night reaches the server at all. **Wrist temperature is not being exported** —
+the metric census over all 212 stored bodies shows no
+`apple_sleeping_wrist_temperature` point has ever arrived. `respiratory_rate`
+(17 points) and `blood_oxygen_saturation` (31 points) do arrive and are mapped.
+
+### Carrying the whole night — `FITLOG_SLEEP_P2` (2026-09-15)
+
+Phase 1 made the night's span and stages survive the trip into the database.
+This carries what the Watch measured *during* it.
+
+**Wrist temperature is the point of the phase.** He has had subjective
+feverishness for over two years with, until 2026-09-14, not one documented
+temperature, and the Watch has been measuring wrist temperature every night
+and discarding it because no name in `METRIC_MAP` claimed it. As of the
+2026-09-15 census of all 212 stored bodies, **Auto Export is not sending it at
+all** — it has to be switched on in the app. Several spellings are now claimed
+(`apple_sleeping_wrist_temperature`, `sleeping_wrist_temperature`,
+`wrist_temperature`) so the value lands whichever one arrives; anything else
+still surfaces by name under `skipped_metrics` rather than vanishing. **After
+enabling it, read `skipped_metrics` on the ingest response** — a temperature
+name appearing there means the mapping needs one more spelling.
+
+`body_temperature` and `basal_body_temperature` are mapped too, kept in
+separate canonical names, and never averaged together with the wrist sensor: a
+thermometer reading and a skin sensor are different measurements.
+
+Fahrenheit is converted. **A temperature in a unit the converter does not know
+is dropped, not stored** — a canonical name ending `_c` quietly holding 98.6 is
+a lie in a health record, and a unit column nobody reads is not a defence.
+
+#### Rule S04 — Overnight Basis
+`overnight_metrics()` reads the samples whose own timestamps fall inside the
+sleep span, reconstructing each sample's stamp from its `date` column and the
+time in its `hae` record key (`_hae_record_time`, valid for `feed='hae'` rows
+only — the HC and retired ios keys are a different shape).
+
+- `basis: "night"` — the mean of the samples inside the span, carrying `n`,
+  `min` and `max` so the reader can see how much it rests on
+- `basis: "day"` — no sample carried a time inside the span, so the day's
+  figure is shown **and said to be a day figure**. Apple stamps wrist
+  temperature at midnight, which is exactly this case; calling it an overnight
+  figure would be a small lie told every morning.
+- a metric with neither is **absent, not zero**. A zero blood oxygen on a
+  sleep page reads as an event.
+
+**Time in bed sums the stretches, never the span.** A night that runs 23:00 to
+01:30, breaks, and resumes 02:10 to 05:00 *spans* six hours and holds five
+hours twenty of recorded bed time. Spanning the gap would count forty minutes
+he may have spent out of bed as time in bed — on a record built for someone
+with insomnia, overstating time in bed is precisely the wrong way to be wrong.
+
+### The Sleep card — `FITLOG_SLEEP_P2_PAGE`
+
+On `/watch`, under the rings: the night's clock times in IST, asleep against
+time in bed, the stage split drawn to scale, breaks and measured awake time
+kept apart, the overnight figures each labelled with their basis, the last
+fourteen nights, and — once there are enough of them — **his own rolling median
+with the number of nights it rests on**.
+
+**No median below seven nights** (`FITLOG_SLEEP_MEDIAN_N7`). Showing one over
+two or three nights with `n` stated beside it is honest and still wrong: a
+median over three nights is not a baseline, it is three numbers wearing the
+word, and printing the count does not stop it being read as one. An honest
+label on a misleading number is still a misleading number — and the early
+nights on this record include 2026-09-15, which reached the server truncated,
+so the figure would have rested on a night known to be wrong. Below the
+threshold the card says there are not enough nights yet, names how many there
+are, and states that nothing is being compared until then. Seven because it is
+a week: enough that one night does not move it. The negative control
+`M_neverenough` raises the threshold to 99 and requires the suite to catch it —
+suppressing a misleading figure must not quietly become suppressing the one
+comparison the page is allowed to make.
+
+`resting_hr` and `hrv_ms` are relabelled **"Rest HR overnight"** and **"HRV
+overnight"** wherever they appear, and the Today-so-far strip says they are
+derived overnight by the Watch. He had been reading them as cardiac figures
+all week; they are sleep figures as much as cardiac ones and nothing said so.
+
+**The card never scores a night**, and says so in words on the card itself,
+because a constraint that lives only in a patch header is one refactor away
+from being gone. `test_sleep_page.py` assertion 10 scans everything the card
+*displays* (the closing note excepted, since that note has to use the words)
+for `sleep score`, `readiness`, `recovery score`, `streak`, `grade`, `rating`,
+`poor night`, `/100` and the rest, and fails the build on a hit. Its negative
+control, `M_score`, puts a sleep score on the card on purpose and requires the
+assertion to catch it.
+
+`/api/feed/watch` carries the whole night per day, so GutLog can put a night
+beside a day without re-deriving it; a date with nothing recorded carries
+`sleep: null`, never an empty shell that reads as a night of no sleep.
+
 ### Schemas
 - `health_metrics` — id, date, metric, value, unit, source, ingested_at ·
   `UNIQUE(date, metric, source)` → repeat POSTs upsert, never duplicate
+- `health_sleep_blocks` — block_key (`feed|source|date|start_ts|end_ts`), date,
+  source, feed, start_ts, end_ts, in_bed_start, in_bed_end, asleep_h, rem_h,
+  core_h, deep_h, awake_h, device, ingested_at. Created in place by
+  `_ensure_sleep_block_table()`, like `health_hc_records` — additive,
+  idempotent, no second deploy step. The key is the block's **span**, never
+  its value, so a redelivery updates in place and a night cannot be added to
+  itself.
 - `health_workouts` — id, date, start_ts, end_ts, wtype, duration_s,
   energy_kcal, distance_km, avg_hr, max_hr, source, ingested_at ·
   `UNIQUE(start_ts, wtype, source)`
@@ -579,12 +741,21 @@ Run all three on the server. They gate the restart.
 | `test_gutlog_feed.py` | 10/10 | v1.1.0: real GutLog on loopback — W03 from GutLog alone, sleep and unmatched negatives, union dedupe, FitLog-only unchanged, window, Meds page, escaping, scratch-DB isolation, GutLog down |
 | `test_analgesic_mirror.py` | 8/8 | v1.4.0: **real GutLog and real FitLog, two loopback ports** — the endpoint bearer-gated (no token and wrong token both 401), one pain-tile tap producing exactly one `doses` row there and exactly one `analgesic_log` row here, the score arriving as `pain_at_time` with the site in the note, two chips giving 2 + 2 rows on one score, a retry returning the first id instead of doubling, an unknown molecule refused rather than filed under a chance substring, GutLog still recording the dose and saying so when the mirror misses, and the operating day rendered as standing load and never as exercise minutes. **1/8 against v1.3.3** (the one that passes is the degradation case, which holds either way). **Clock-independent** — every time written to today is derived from the clock and clamped to midnight, and the fixed timestamps for the idempotency and refusal cases sit on a past day so they cannot collide with a derived one; verified under `tools/RUN_AT_TIME.py` at 00:00, 00:02, 01:10, 05:05, 12:00, 18:30 and 23:58 |
 
+| `test_sleep_night.py` | 10/10 | `FITLOG_SLEEP_P1`: the night is stored whole — a 5 h 41 m night delivered in two blocks stores 5.68 and not the last block; the same night arriving one block per payload combines; a re-segmented night is not added to itself; `asleep=0` beside real stages is not a zero night; awake time is never counted as sleep; a night starting before midnight is filed under its wake date; a `Z` stamp is stored in IST; **and the night is never scored** (a `score`/`grade`/`readiness`/`recovery`/`rating`/`quality`/`target`/`streak` key on `sleep_night()` fails the build). **10 declared, 10 seen to fail** — 7 against the reconstructed previous build, 3 against mutations (`M_overlap`, `M_wakedate`, `M_awake`). Every fixture synthetic; every date a payload literal, so it is clock-independent by construction — verified under `tools/RUN_AT_TIME.py` at 00:02, 12:00 and 23:58 |
+
+| `test_sleep_overnight.py` | 11/11 | `FITLOG_SLEEP_P2`: wrist temperature mapped and stored rather than skipped, Fahrenheit converted, an unknown unit **dropped** rather than filed under a Celsius name, a thermometer reading kept apart from the wrist sensor, temperature context-only, an overnight figure averaged over the samples inside the sleep span (a 13:00 sample left out), a figure measured outside the night labelled a day figure, resting HR and HRV carried on the night, nothing carrying a verdict, a never-sent metric **absent rather than zero**, and time in bed summing the stretches instead of spanning a break. **11 declared, 11 seen to fail** — 8 against the reconstructed `FITLOG_SLEEP_P1` build, 3 against mutations (`M_unitguess`, `M_basis`, `M_zerofill`) |
+| `test_sleep_page.py` | 14/14 | `FITLOG_SLEEP_P2_PAGE`: renders `/watch` and asserts on the HTML — the card names the night, shows it as `4 h 54 m` not `4.9`, IST clock times with no UTC on the page, the stage bar drawn to scale (widths summing to 100%), breaks and awake kept separate with the floor stated in words, an overnight mean with its reading count, a day-basis figure saying so, Rest HR / HRV relabelled overnight, the strip saying where they come from, **the page never scoring a night**, **no median at all over three nights** and the card saying why, the median appearing at seven as `4 h 30 m over 7 nights`, nothing under 14px in the new rules, and the feed carrying the whole night with absence as `null`. **15 declared, 15 seen to fail** across two manifests — 11 against reconstructed builds, 4 against mutations (`M_score`, `M_mean`, `M_smalltype`, `M_neverenough`). Clock-checked at 00:02 and 23:58. Case 14 runs last because it adds nights to the fixture |
+
 `test_health_ingest.py` does **not** exercise the HC path — every
 healthconnect case in it uses the legacy shape, so `is_hc` is false. It scored
 23/23 against HC code carrying two data bugs. Never treat it alone as a gate
 on HC changes.
 
 ## Changelog
+- 2026-09-15 `FITLOG_SLEEP_MEDIAN_N7` — **DEPLOYED 18:00 IST**, ten minutes after the phase it corrects. `app.py` md5 `5f8f3ad9…`, byte-identical to the repo build; 2/2 anchors; rollback `app.py.bak-medn7-20260915_180007`; DB backup `fitlog.db.pre-medn7-20260915_180006` (integrity ok) although this patch writes nothing. **No median is shown until there are seven nights with data.** The card had been showing his own median over however many nights existed, with the count stated beside it — honest, and still wrong. A median over two or three nights is not a baseline, it is two or three numbers wearing the word, and printing `n` does not stop it being read as one; an honest label on a misleading number is still a misleading number. Worse here than in general: the record's first nights include 2026-09-15, which arrived truncated, so the figure would have rested on a night known to be wrong. Below the threshold the card now says there are not enough nights yet, names the count, and states that nothing is being compared until then. Withheld, not qualified. Negative control **2/2 SEEN** — assertion 11 fails against the reconstructed `FITLOG_SLEEP_P2_PAGE`, and `M_neverenough` raises the threshold to 99 so that suppressing a misleading figure cannot quietly become suppressing the one comparison this page is allowed to make. Whole 26-run gate green again before the restart. *Note for whoever reverses next: this patch edits the same function as `patch_fitlog_sleep_p2_page.py`, so `new_assertions_sleep_p2_page.json` can no longer be re-run in place — reverse in LIFO order.*
+- 2026-09-15 `FITLOG_SLEEP_P2` + `FITLOG_SLEEP_P2_PAGE` — **DEPLOYED 17:50 IST.** `health_ingest.py` md5 `a55b48e9…` (69,446 bytes) and `app.py` md5 `9c41a41b…` (88,834 bytes), both byte-identical to the repo builds; 10/10 and 9/9 anchors, compile checks OK. DB backed up first: `/root/backups/fitlog/fitlog.db.pre-sleepp2-20260915_174829` (integrity ok, 14 tables, 218 raw bodies, 2 sleep blocks). Rollbacks `health_ingest.py.bak-sleepp2-20260915_174908` and `app.py.bak-sleepp2page-20260915_174908` — either can be reverted alone. Both negative controls run on the server before the restart: **11/11 and 13/13 SEEN**, including `M_score`. Then 26 gate runs, all green — the three sleep suites each at now / 00:02 / 23:58, plus 23/23, 29/29, 56/56, 36/36, 36/36, 18/18, 19/19, 12/12, 12/12, 39/39, 52/52, kb_lint, 53/53, 14/14, 10/10, 8/8, 5/5. Clean boot, `/health` 200, `/watch` still 302 to login unauthenticated. **Live read-back against the real record:** 2026-09-14 now reports respiratory rate 13.88, SpO2 97.5, resting HR 84 and HRV 35.84 **all with `basis: "night"`** — four figures that existed only as daily averages before today; 2026-09-15 reports HRV alone with `basis: "day"`, because that night was recorded as 03:13–04:57 and no sample fell inside so narrow a window. The two nights' HRV figures differ by 21 ms and are *not* comparable — one is a night figure and one is a day figure, and the page now says which is which rather than putting them side by side unlabelled. Temperature rows: **0**, as expected until the export is switched on. Carry the whole night, and put it on the page without scoring it. Two patchers: `patch_fitlog_sleep_p2.py` (10 anchors, `health_ingest.py`) and `patch_fitlog_sleep_p2_page.py` (9 anchors, `app.py`), both reversible and `newline=""`. **Wrist temperature is the point of the phase** — every spelling Auto Export is known to use is now mapped, Fahrenheit converted, an unconvertible unit dropped rather than filed under a name ending `_c`, and `body_temperature` kept in its own canonical name so a thermometer reading is never averaged with a skin sensor. It is **not being exported yet**: check `skipped_metrics` after switching it on. New rule **S04 Overnight Basis** — a figure said to be measured over the night really is the mean of the samples inside the sleep span, with `n`, `min` and `max`; one that is not carries `basis: "day"` and says so on the page; a metric never sent is absent rather than zero. Time in bed now **sums the stretches** instead of spanning a break, which had been reading 6 h for a 5 h 20 m night. On `/watch`: a Sleep card with IST clock times, the stage split drawn to scale, breaks and measured awake time kept apart, the overnight figures with their basis, fourteen nights, and **his own median with n** — the only comparison anywhere on it. `resting_hr` and `hrv_ms` relabelled **Rest HR overnight** / **HRV overnight**, and the Today-so-far strip says where they come from; he had been reading them as cardiac figures all week. `/api/feed/watch` carries the night, `null` when there is none. New `test_sleep_overnight.py` **11/11** and `test_sleep_page.py` **13/13**, **24 declared and 24 seen to fail** across the two manifests — including `M_score`, which puts a sleep score on the card on purpose and requires the suite to catch it. Page suite green at 00:02, 12:00 and 23:58. Full sweep green: 53/53, kb_lint, 10/10 sleep-night, 23/23, 29/29, 36/36, 18/18, 19/19, 12/12, 39/39, 52/52, 5/5, 10/10, 8/8, 14/14, 56/56, 36/36, 12/12. Folder parity restored. *Found and fixed by rendering the page rather than trusting the assertions: time in bed was counting a 40-minute break, and the overnight figures were in a three-column table whose basis text ran off the right edge at 375px — now a wrapping list.*
+- 2026-09-15 `FITLOG_SLEEP_P1` — **DEPLOYED 15:43 IST.** `health_ingest.py` md5 `3b0fd810…`, byte-identical to the repo build; 8/8 anchors, compile check OK; rollback `health_ingest.py.bak-sleepp1-20260915_154304`, DB `/root/backups/fitlog/fitlog.db.pre-sleepp1-20260915_154222` (integrity ok, 13 tables, 213 raw bodies). Whole gate green on the server before the restart — negative control 10/10 SEEN, then 20 suites: sleep-night 10/10 at now / 00:02 / 23:58, 23/23, 29/29, 56/56, 36/36, 36/36, 18/18, 19/19, 12/12, 12/12, 39/39, 52/52, kb_lint, 53/53, 14/14, 5/5, 10/10, 8/8. Clean boot, no errors in the journal. **Re-parse committed 15:52** via the new `reparse_sleep_blocks.py` (DB backed up first, `--dry-run` read before committing): 5 bodies re-parsed, 5 sleep blocks, 2 dates touched, **0 values changed** — 09-14 stays 3.75 and 09-15 stays 1.67, and the tool's own span check says why: on both nights asleep + awake equals the recorded span to two decimals, so nothing was lost between the payload and the database. What the re-parse did buy is the block rows — real IST spans, stage splits and awake time for both nights — which is what Phase 2 reads.
+- 2026-09-15 `FITLOG_SLEEP_P1` (build) —  The sleep record, phase 1: the night is stored whole. `patch_fitlog_sleep_p1.py`, 8 anchors on `health_ingest.py`, reversible, compile-checked, `newline=""` so line endings survive a Windows run. **The four missing hours were not lost by this code** — read against `health_raw` on the server, Health Auto Export delivered a single 1 h 44 m block (`sleepStart 03:13:23`, `sleepEnd 04:57:30`, `totalSleep 1.6685396374927626`) and `health_metrics` stored 1.6685396374927626. Bit for bit. Neither suspect in the brief fired. The export window is a phone-side setting and is the remaining half of the fix. **What the code change buys is that widening the export will actually work:** Auto Export stamps every sleep point at midnight of the wake date, so two blocks of one night would have collided on `hae|sleep_hours|day|<date>|00:00:00` and the second would have replaced the first — the night would have kept reading as its last block and the export change would have looked successful. New rule **S03 Sleep Block Identity**: a sleep sample is keyed by its own `sleepStart`; overlapping blocks are competing descriptions and the longest span wins, never the sum; disjoint blocks add; `asleep`/`inBed` arrive as 0 and a total is believed only when positive; awake is never sleep; `_ist_stamp()` converts every stamp to IST before storage. New table `health_sleep_blocks` (created in place, additive, idempotent — no separate migration step) and `sleep_night()`, which reports measurements and a rule name and **no score of any kind**. `awakenings` counts breaks *between recorded blocks* — a floor, labelled as one — because Auto Export's aggregate carries no awakening count; `awake_h` is exact and reported separately. New `test_sleep_night.py` **10/10**, **10 declared and 10 seen to fail** under `tools/NEGATIVE_CONTROL.py`, green at 00:02 / 12:00 / 23:58. Regression sweep green: kb_lint PASS, smoke 53/53, 23/23, 29/29, 36/36, 18/18, 19/19, 39/39, 52/52, 12/12, 14/14, downdays 5/5. Folder parity restored (22 paired files byte-identical). **Also found, phone-side and not fixed by code:** a census of all 212 stored bodies shows **wrist temperature has never been exported** — no `apple_sleeping_wrist_temperature` point exists — while `respiratory_rate` (17 points) and `blood_oxygen_saturation` (31) do arrive and are already mapped.
 - 2026-09-14 v1.6.0 — **DEPLOYED 18:19 IST**, first of the two. Phase M: the trend leaves GutLog's down days out. `patch_fitlog_v160.py`, 6 anchors, reversible byte-for-byte. `app.py` sha256 `8f66d787…`, 77,578 bytes, byte-identical to the repo build. `gutlog_downdays()` reads the new bearer-gated `/api/feed/downdays`; `w_trend_card` draws a down day's bar hatched and named and leaves it out of mean / low / high, saying how many; `/api/feed/watch` reaches back 180 days (was 60) and carries `sleep_hours`. No rule reads any of it. New `test_downdays_trend.py` **5/5** against a real GutLog v3.17.0 — **5 declared, 5 seen to fail** against the reconstructed v1.5.0. Whole gate green on the server before the restart: 5/5, 39/39, 52/52, 23/23, 36/36, 18/18, 19/19, 29/29, 12/12, 56/56, 36/36, 12/12, 10/10, 14/14, 8/8. The gate's rollback fired once and correctly: the three cross-app suites and the new one were first pointed at `app.py.new`, whose suffix `importlib` refuses to load, so they printed nothing, v1.5.0 was restored and nothing restarted; rerun with a `.py`-named candidate. Rollback: `app.py.rollback-v150-20260914_180728`, `fitlog.db.pre-phaseM-20260914_180728` (`sqlite3.backup()`, integrity ok, 13 tables).
 - 2026-09-14 v1.5.0 — **DEPLOYED 05:40 IST.** Phase J: the read-only watch feed. `patch_fitlog_v150.py`, 2 anchors. `app.py` sha256 `6c9bf876…`, 74,819 bytes, byte-identical to the repo build. `GET /api/feed/watch?days=14` on the token that already existed — per day every resolved metric **with its source** plus `has_data`, workouts best-source-only with IST applied and `start_hm` carried so nobody slices a timestamp, and any medication epoch overlapping the window. No new table, no new ingestion, no verdict. Live after the deploy: the fortnight answers, the two stored workouts read 21:58 and 07:11 IST, and five days correctly report `has_data` False rather than zero. Whole FitLog gate green on the server first — 53/53, 23/23, 36/36, 12/12, 29/29, 18/18, 19/19, 39/39, 52/52, 12/12, 56/56, 36/36, 10/10, 14/14, 8/8 — plus `gutlog/test_phase_j.py` 18/18. Rollback: `app.py.bak-v150-…`, or `app.py.predeploy-phaseJ-20260914_053829` with `/root/backups/fitlog/fitlog.db.predeploy-phaseJ-20260914_053829`.
   *Repo gap noticed, not fixed:* `test_apple_records.py`, `test_recompute_apple.py` and `test_workout_day_ist.py` exist on the server and in `fitlog-ingest/` but **not** in the authoritative `fitlog/` folder, so `CHECK_FOLDER_PARITY` has nothing to compare and never notices. All three pass (56/56, 36/36, 12/12); they just are not where CLAUDE.md says the authoritative copy lives.

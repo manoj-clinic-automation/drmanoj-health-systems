@@ -1,0 +1,32 @@
+{
+  "_": [
+    "FITLOG_SLEEP_MEDIAN_N7. Against the reconstructed FITLOG_SLEEP_P2_PAGE",
+    "build the card shows a median over however many nights exist, so with",
+    "three on record it prints one -- which is what assertion 11 now refuses.",
+    "",
+    "Assertion 14 guards the other half: the median must still APPEAR once",
+    "there are enough nights. The previous build shows it at seven too, so a",
+    "version control cannot make that fail. The threshold is therefore raised",
+    "on purpose instead, which is the stronger control -- it shows the",
+    "assertion responds to the threshold rather than to a version change.",
+    "",
+    "  M_neverenough -- the threshold is set to 99, so the median is withheld",
+    "                   forever and the card never says anything about his own",
+    "                   normal. Assertion 14 must catch it."
+  ],
+  "suite": "test_sleep_page.py",
+  "app": "app.py",
+  "patcher": "patch_fitlog_sleep_median_n7.py",
+  "assertions": [
+    {"name": "11 no median is shown until there are enough nights", "control": "version"},
+
+    {"name": "14 at seven nights the median appears",
+     "control": "mutation",
+     "mutation": {
+       "id": "M_neverenough",
+       "why": "the threshold is raised to 99 so the median is withheld forever -- suppressing a misleading figure must not turn into suppressing the one comparison the page is allowed to make",
+       "find": "W_SLEEP_MEDIAN_MIN_N = 7",
+       "replace": "W_SLEEP_MEDIAN_MIN_N = 99"
+     }}
+  ]
+}

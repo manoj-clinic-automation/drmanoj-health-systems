@@ -1,0 +1,62 @@
+{
+  "_": [
+    "FITLOG_SLEEP_P1. Against the reconstructed previous build there is no",
+    "health_sleep_blocks table and no sleep_night(), and two blocks of one",
+    "night collide on hae|sleep_hours|day|<date>|00:00:00 so the second",
+    "replaces the first -- which is the truncation this phase exists to stop.",
+    "",
+    "Three assertions guard properties the previous build ALSO satisfied, or",
+    "would have failed against for a trivial reason (the function simply did",
+    "not exist) rather than because the property was violated. Those are put",
+    "under mutation control instead, which is the stronger evidence: it shows",
+    "the assertion responds to the thing it claims to measure.",
+    "",
+    "  M_awake   -- count awake time as sleep. Assertion 09 must catch it.",
+    "  M_overlap -- stop clustering overlapping blocks, so a night that is",
+    "               re-segmented by a later export is added to itself.",
+    "               Assertion 05 must catch it.",
+    "  M_wakedate-- file a block by the day it STARTED rather than the wake",
+    "               date Auto Export gives it, which splits every night that",
+    "               crosses midnight across two days. Assertion 07 must",
+    "               catch it."
+  ],
+  "suite": "test_sleep_night.py",
+  "app": "health_ingest.py",
+  "patcher": "patch_fitlog_sleep_p1.py",
+  "assertions": [
+    {"name": "01 a 5h41m night delivered in two blocks", "control": "version"},
+    {"name": "02 the night carries its span", "control": "version"},
+    {"name": "03 the night is never scored", "control": "version"},
+    {"name": "04 replaying the night does not add it to itself", "control": "version"},
+    {"name": "06 blocks arriving in separate payloads combine", "control": "version"},
+    {"name": "08 asleep=0 beside real stages is not a zero night", "control": "version"},
+    {"name": "10 a UTC-stamped block is stored in IST", "control": "version"},
+
+    {"name": "05 a re-segmented night is not added to itself",
+     "control": "mutation",
+     "mutation": {
+       "id": "M_overlap",
+       "why": "overlapping blocks stop being clustered, so a night re-sent as one merged block is added to the two it replaces",
+       "find": "        if clusters and b[\"start_ts\"] < clusters[-1][\"end\"]:",
+       "replace": "        if False and clusters and b[\"start_ts\"] < clusters[-1][\"end\"]:"
+     }},
+
+    {"name": "07 a night that starts before midnight is filed under its wake",
+     "control": "mutation",
+     "mutation": {
+       "id": "M_wakedate",
+       "why": "a block is filed by the day it started instead of the wake date Auto Export gives it, splitting every cross-midnight night in two",
+       "find": "            date = _parse_date(point.get(\"date\"))",
+       "replace": "            date = _parse_date(point.get(\"sleepStart\"))"
+     }},
+
+    {"name": "09 awake time is never counted as sleep",
+     "control": "mutation",
+     "mutation": {
+       "id": "M_awake",
+       "why": "awake time is added to the asleep total, which is the classic way a sleep record overstates a broken night",
+       "find": "        \"asleep_h\": asleep,\n        \"rem_h\": _sum_stage(clusters, \"rem_h\"),",
+       "replace": "        \"asleep_h\": (asleep or 0) + (_sum_stage(clusters, \"awake_h\") or 0),\n        \"rem_h\": _sum_stage(clusters, \"rem_h\"),"
+     }}
+  ]
+}

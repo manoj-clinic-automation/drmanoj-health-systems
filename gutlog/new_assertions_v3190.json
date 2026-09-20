@@ -34,7 +34,7 @@
        "replace": "        expected = r[\"current\"] - use * gap\n"
      }},
     {"name": "05 an SOS medicine is topped up to its keep-on-hand figure", "control": "version"},
-    {"name": "06 a medicine with no schedule and no keep is ordered from its use", "control": "version"},
+    {"name": "06 a medicine with no schedule and no keep is not ordered, and says so", "control": "version"},
     {"name": "07 what cannot be ordered is named with the reason", "control": "version"},
     {"name": "08 a medicine stopping before the 1st is not ordered", "control": "version"},
     {"name": "09 sending saves the order once for the month", "control": "version"},

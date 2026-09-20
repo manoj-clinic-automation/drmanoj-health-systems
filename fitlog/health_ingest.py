@@ -20,6 +20,27 @@ multi-source conflicts under a single named rule.
       - across feeds of the same source: the greater, never the sum
       - a partial batch can only add to a day, never shrink it
 
+    S03 Sleep Block Identity  (FITLOG_SLEEP_P1)
+      - Auto Export dates every sleep point at midnight of the day the
+        night is filed under, so two blocks of one night arrive with
+        identical stamps; a sleep sample is keyed by its own sleepStart
+      - blocks that OVERLAP are competing descriptions of one stretch of
+        the night and the longest-span one wins, never the sum
+      - blocks that do not overlap are different stretches and ADD
+      - a total is believed only when greater than zero: `asleep` is
+        Apple's retired pre-stage category and arrives as 0 on every
+        Watch night seen here. Awake time is never counted as sleep.
+
+    S04 Overnight Basis  (FITLOG_SLEEP_P2)
+      - a metric reported "overnight" is averaged over the samples whose
+        own timestamps fall inside the sleep span, and says so
+      - where no sample carried a time inside the span, the day's figure
+        is shown and labelled a day figure, never passed off as one
+        measured over the night
+      - resting HR and HRV are derived overnight by the Watch: they are
+        sleep figures as much as cardiac ones, and are shown as inputs,
+        not conclusions
+
 Deterministic. No LLM in the path. Python 3.9 compatible.
 
 Endpoints
@@ -96,6 +117,23 @@ METRIC_MAP = {
     "blood_oxygen_saturation": "spo2_pct",
     "mindful_minutes": "mindful_min",
     "mindful_session": "mindful_min",
+    # FITLOG_SLEEP_P2. Wrist temperature is measured by the Watch every
+    # night and was being dropped on the floor: no name here claimed it.
+    # He has had subjective feverishness for over two years with, until
+    # 2026-09-14, no documented temperature at all.
+    #
+    # As of the 2026-09-15 census of all 212 stored bodies, Auto Export is
+    # not sending ANY of these yet -- it has to be switched on in the app.
+    # Several spellings are claimed so the value lands whichever one it
+    # arrives under; anything else still shows up by name under
+    # skipped_metrics rather than being dropped silently.
+    "apple_sleeping_wrist_temperature": "wrist_temp_c",
+    "sleeping_wrist_temperature": "wrist_temp_c",
+    "wrist_temperature": "wrist_temp_c",
+    # A thermometer reading that reaches Health. Distinct from the wrist
+    # sensor and never averaged together with it.
+    "body_temperature": "body_temp_c",
+    "basal_body_temperature": "basal_body_temp_c",
     # Distance. Orphaned when the ios feed was retired - Auto Export
     # calls it walking_running_distance and nothing mapped that name, so
     # distance_km kept whatever the dead feed last wrote.
@@ -121,6 +159,12 @@ CONTEXT_ONLY = (
     "hrv_ms",
     "spo2_pct",
     "resp_rate",
+    # FITLOG_SLEEP_P2. Temperature is context, never a rule input. It is
+    # here to be LOOKED AT beside a night and a symptom, not to make the
+    # engine decide anything.
+    "wrist_temp_c",
+    "body_temp_c",
+    "basal_body_temp_c",
 )
 
 ALLOWED_SOURCES = ("applewatch", "healthconnect", "manual")
@@ -239,14 +283,25 @@ def _num(value):
 
 def _sleep_hours(point):
     """
-    Sleep arrives either as a total or split into phases.
-    Prefer an explicit asleep total; otherwise sum the phases.
+    Hours ASLEEP in one sleep block. None when the point measures nothing.
+
+    Every Apple Watch night in health_raw on this server carries
+    asleep=0 and inBed=0 beside a real totalSleep and real core / deep /
+    rem / awake figures: `asleep` is Apple's retired pre-stage category,
+    not a total. Preferring it merely because it is present would store
+    a zero night, so a total is believed only when it is greater than
+    zero.
+
     Values are hours in HAE v2.
     """
     for key in ("totalSleep", "asleep"):
         val = _num(point.get(key))
-        if val is not None:
+        if val is not None and val > 0:
             return val
+    # Apple's stages are Awake / REM / Core / Deep. "light" is kept for
+    # exporters using the older naming. "awake" is deliberately absent:
+    # it is time in bed not asleep, and adding it would overstate the
+    # night by exactly the part he was lying there awake for.
     phases = ("deep", "core", "rem", "light")
     total = 0.0
     seen = False
@@ -257,7 +312,13 @@ def _sleep_hours(point):
             seen = True
     if seen:
         return total
-    return _num(point.get("qty"))
+    qty = _num(point.get("qty"))
+    if qty is not None and qty > 0:
+        return qty
+    # Neither a positive total, nor stages, nor a usable qty. That is
+    # nothing measured, not a measurement of nothing -- returning 0.0
+    # would put a zero night on the record.
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -307,6 +368,11 @@ _MI_UNITS = ("mi", "mile", "miles")
 _M_UNITS = ("m", "meter", "meters", "metre", "metres")
 _KM_PER_MILE = 1.609344
 
+# FITLOG_SLEEP_P2. Temperature, converted rather than relabelled.
+_TEMP_METRICS = ("wrist_temp_c", "body_temp_c", "basal_body_temp_c")
+_C_UNITS = ("degc", "\u00b0c", "c", "celsius", "centigrade")
+_F_UNITS = ("degf", "\u00b0f", "f", "fahrenheit")
+
 
 def _apple_convert(canonical, value, unit):
     """Normalise a sample to the unit its canonical name promises."""
@@ -323,6 +389,17 @@ def _apple_convert(canonical, value, unit):
             return value * _KM_PER_MILE, "km"
         if u in _M_UNITS:
             return value / 1000.0, "km"
+    if canonical in _TEMP_METRICS:
+        if u in _F_UNITS:
+            return (value - 32.0) * 5.0 / 9.0, "degC"
+        if u in _C_UNITS:
+            return value, "degC"
+        # A temperature in a unit this cannot convert is DROPPED, not
+        # guessed at and not stored under its own unit. A canonical name
+        # ending _c quietly holding 98.6 is a lie in a health record, and
+        # a unit column nobody reads is not a defence. The caller skips
+        # a None.
+        return None, unit
     return value, unit
 
 
@@ -338,6 +415,10 @@ _APPLE_SUM = (
 _APPLE_MEAN = (
     "resting_hr", "walking_hr_avg", "hrv_ms", "resp_rate",
     "spo2_pct", "weight_kg",
+    # Levels, never totals. Adding two temperatures together would be
+    # nonsense, and the default is the mean anyway -- they are named here
+    # so that nobody has to check the default to know that.
+    "wrist_temp_c", "body_temp_c", "basal_body_temp_c",
 )
 
 
@@ -397,6 +478,119 @@ def _apple_time(raw):
     return part
 
 
+def _ist_stamp(raw):
+    """
+    "YYYY-MM-DD HH:MM:SS" in IST, or None when the stamp cannot be read.
+
+    Every time this system stores or shows is IST. Auto Export already
+    sends +0530 and passes straight through; a Z stamp is UTC and is
+    moved on by 5h30m; any other offset is converted. A naive stamp is
+    taken as already local, which is what every feed here sends.
+
+    None rather than a guess: a sleep block filed at the wrong hour is
+    worse than a blank one, because it would move the night onto the
+    wrong day.
+    """
+    if not raw or not isinstance(raw, str):
+        return None
+    text = raw.strip().replace("T", " ")
+    if len(text) < 19:
+        return None
+    try:
+        stamp = datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
+    rest = text[19:].strip()
+    if rest[:1] == ".":
+        rest = rest.lstrip(".0123456789").strip()
+    if not rest:
+        return stamp.strftime("%Y-%m-%d %H:%M:%S")
+    if rest[0] in ("Z", "z"):
+        moved = stamp + timedelta(minutes=IST_OFFSET_MINUTES)
+        return moved.strftime("%Y-%m-%d %H:%M:%S")
+    if rest[0] not in ("+", "-"):
+        return None
+    digits = rest[1:].replace(":", "")
+    if len(digits) < 4 or not digits[:4].isdigit():
+        return None
+    offset = int(digits[:2]) * 60 + int(digits[2:4])
+    if rest[0] == "-":
+        offset = -offset
+    moved = stamp + timedelta(minutes=IST_OFFSET_MINUTES - offset)
+    return moved.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _sleep_block_time(point, stamp):
+    """
+    The time of day that identifies WHICH block of the night this is.
+
+    S03. Auto Export stamps every sleep point at midnight of the day the
+    night is filed under -- the 2026-09-14 point on this server covers
+    23:08 on 09-13 to 03:19 on 09-14 and is still stamped
+    "2026-09-14 00:00:00 +0530". Two blocks of one night therefore arrive
+    indistinguishable, collide on one record slot, and the second
+    replaces the first. sleepStart is what tells them apart.
+
+    The hour returned may belong to the previous calendar day; it is a
+    slot label, not a date. Two blocks of one night sharing a start time
+    to the second would be the same block.
+    """
+    for key in ("sleepStart", "inBedStart"):
+        got = _apple_time(point.get(key))
+        if got:
+            return got
+    return _apple_time(stamp)
+
+
+def parse_sleep_blocks(payload):
+    """
+    Every sleep block in an Auto Export body, with its real IST span.
+
+    One dict per sleep_analysis point. The day's figure is derived from
+    these spans rather than from a single number, which is what lets a
+    night delivered in pieces be put back together -- and what stops a
+    re-segmented night from being added to itself.
+    """
+    out = []
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        data = payload if isinstance(payload, dict) else {}
+
+    for entry in data.get("metrics") or []:
+        if not isinstance(entry, dict):
+            continue
+        raw_name = (entry.get("name") or "").strip().lower()
+        if METRIC_MAP.get(raw_name) != "sleep_hours":
+            continue
+        for point in entry.get("data") or []:
+            if not isinstance(point, dict):
+                continue
+            date = _parse_date(point.get("date"))
+            if not date:
+                continue
+            start = _ist_stamp(point.get("sleepStart"))
+            end = _ist_stamp(point.get("sleepEnd"))
+            bed_start = _ist_stamp(point.get("inBedStart"))
+            bed_end = _ist_stamp(point.get("inBedEnd"))
+            asleep = _sleep_hours(point)
+            if asleep is None and not (start and end):
+                continue
+            out.append({
+                "date": date,
+                "start_ts": start,
+                "end_ts": end,
+                "in_bed_start": bed_start,
+                "in_bed_end": bed_end,
+                "asleep_h": asleep,
+                "rem_h": _num(point.get("rem")),
+                "core_h": _num(point.get("core")),
+                "deep_h": _num(point.get("deep")),
+                "awake_h": _num(point.get("awake")),
+                "device": str(point.get("source") or "").strip(),
+            })
+    return out
+
+
 def _apple_samples(payload):
     """
     Every Auto Export sample, unaggregated, with its time of day.
@@ -433,10 +627,14 @@ def _apple_samples(payload):
                 continue
             if canonical == "sleep_hours":
                 value = _sleep_hours(point)
+                # S03: the slot a sleep sample occupies is its BLOCK, not
+                # the midnight stamp every block of the night shares.
+                tod = _sleep_block_time(point, stamp)
             else:
                 value = _num(point.get("qty"))
                 if value is None:
                     value = _num(point.get("Avg"))
+                tod = _apple_time(stamp)
             if value is None:
                 continue
             # Bind to a fresh name: `unit` is the entry-level unit and is
@@ -444,8 +642,12 @@ def _apple_samples(payload):
             # the first sample, then makes every later sample look like
             # it is already in kcal and pass through unconverted.
             value, point_unit = _apple_convert(canonical, value, unit)
-            samples.append((date, _apple_time(stamp), canonical,
-                            value, point_unit))
+            if value is None:
+                # FITLOG_SLEEP_P2: a temperature in a unit the converter
+                # does not know. Dropped rather than filed under a name
+                # that promises Celsius.
+                continue
+            samples.append((date, tod, canonical, value, point_unit))
 
     for wk in data.get("workouts") or []:
         if not isinstance(wk, dict):
@@ -1007,7 +1209,347 @@ def _write_daily(cur, date, metric, value, unit, source, ts):
     )
 
 
-def store_apple(conn, records, workout_rows, source, raw_text):
+def _ensure_sleep_block_table(conn):
+    """
+    The per-block sleep store. Additive, idempotent, created in place.
+
+    Separate from health_hc_records because a sleep block is a span with
+    stages, not a scalar sample, and the night's arithmetic needs the
+    spans. Built here rather than in the base migration for the same
+    reason health_hc_records is: several suites hand-roll their schema
+    and the live database must not need a second deploy step.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS health_sleep_blocks ("
+        "block_key TEXT PRIMARY KEY, date TEXT NOT NULL, "
+        "source TEXT NOT NULL, feed TEXT NOT NULL DEFAULT '', "
+        "start_ts TEXT, end_ts TEXT, "
+        "in_bed_start TEXT, in_bed_end TEXT, "
+        "asleep_h REAL, rem_h REAL, core_h REAL, deep_h REAL, "
+        "awake_h REAL, device TEXT, ingested_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_sleep_blocks_date "
+        "ON health_sleep_blocks (date, source)"
+    )
+    return True
+
+
+def _span_minutes(start, end):
+    """Minutes between two IST stamps, or None."""
+    if not start or not end:
+        return None
+    try:
+        a = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+        b = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
+    return (b - a).total_seconds() / 60.0
+
+
+def cluster_sleep_blocks(blocks):
+    """
+    Group blocks that describe the same stretch of the night. Rule S03.
+
+    Two blocks that overlap are competing descriptions of one stretch --
+    Auto Export re-segmenting a night it has already delivered -- and the
+    longest-span description wins. Adding them would invent sleep he did
+    not have. Two blocks that do not overlap are different stretches and
+    add; touching end-to-start counts as separate, because that is two
+    recorded blocks with no gap rather than one.
+
+    Blocks with no usable span cannot be placed against the others and
+    stand alone. Returns a list of clusters, earliest first.
+    """
+    usable = []
+    loose = []
+    for b in blocks:
+        if b.get("start_ts") and b.get("end_ts") and b["end_ts"] > b["start_ts"]:
+            usable.append(b)
+        else:
+            loose.append(b)
+    usable.sort(key=lambda b: (b["start_ts"], b["end_ts"]))
+
+    clusters = []
+    for b in usable:
+        if clusters and b["start_ts"] < clusters[-1]["end"]:
+            cur = clusters[-1]
+            cur["members"].append(b)
+            if b["end_ts"] > cur["end"]:
+                cur["end"] = b["end_ts"]
+        else:
+            clusters.append({"start": b["start_ts"], "end": b["end_ts"],
+                             "members": [b]})
+
+    for cur in clusters:
+        best = cur["members"][0]
+        best_span = _span_minutes(best["start_ts"], best["end_ts"]) or 0.0
+        for b in cur["members"][1:]:
+            span = _span_minutes(b["start_ts"], b["end_ts"]) or 0.0
+            if span > best_span:
+                best, best_span = b, span
+        cur["winner"] = best
+        cur["span_min"] = best_span
+
+    for b in loose:
+        clusters.append({"start": b.get("start_ts"), "end": b.get("end_ts"),
+                         "members": [b], "winner": b, "span_min": None})
+    return clusters
+
+
+def _in_bed_hours(clusters):
+    """
+    Time in bed, summed over the stretches of the night.
+
+    NOT the span from the first stretch to the last. A night that runs
+    23:00 to 01:30, breaks, and resumes 02:10 to 05:00 SPANS six hours
+    and holds five hours twenty of recorded bed time. Spanning the gap
+    would put forty minutes he may well have spent out of bed into the
+    figure, and "in bed" would then read longer than anything the Watch
+    actually recorded -- on a record built for someone with insomnia,
+    overstating time in bed is precisely the wrong way to be wrong.
+
+    The in-bed stamps are preferred; a stretch that carries none falls
+    back to its sleep span.
+    """
+    total = 0.0
+    seen = False
+    for cur in clusters:
+        win = cur.get("winner") or {}
+        mins = _span_minutes(win.get("in_bed_start"), win.get("in_bed_end"))
+        if mins is None:
+            mins = _span_minutes(win.get("start_ts"), win.get("end_ts"))
+        if mins is None:
+            continue
+        total = total + mins
+        seen = True
+    if not seen:
+        return None
+    return total / 60.0
+
+
+def _sum_stage(clusters, key):
+    got = [c["winner"].get(key) for c in clusters]
+    got = [g for g in got if g is not None]
+    if not got:
+        return None
+    return sum(got)
+
+
+# Metrics worth reading over the NIGHT rather than over the day.
+# Deliberately all context-only: this is a record to look at, not an
+# input to any rule.
+OVERNIGHT_METRICS = ("wrist_temp_c", "resp_rate", "spo2_pct", "hrv_ms",
+                     "resting_hr")
+
+
+def _hae_record_time(record_key):
+    """
+    The time of day out of a FEED_HAE record key.
+
+    The key is built in parse_apple_records as
+    feed|metric|grain|date|HH:MM:SS and this is the only place that reads
+    it back; the two belong together. Valid for hae rows ONLY -- the HC
+    and retired ios keys are a different shape, which is why the caller
+    filters on feed. Returns "" rather than guessing.
+    """
+    parts = (record_key or "").split("|")
+    if len(parts) != 5 or parts[0] != FEED_HAE:
+        return ""
+    tod = parts[4]
+    if len(tod) == 8 and tod[2] == ":" and tod[5] == ":":
+        return tod
+    return ""
+
+
+def overnight_metrics(conn, date, source="applewatch",
+                      start_ts=None, end_ts=None, metrics=None):
+    """
+    What the Watch measured DURING the night. Rule S04 Overnight Basis.
+
+    Shown as inputs, not conclusions. Nothing here is scored, ranked, or
+    compared with a population figure.
+
+    Each metric comes back with a `basis`:
+      "night" -- the mean of the samples whose own timestamps fall inside
+                 the sleep span, with n, min and max so the reader can see
+                 how much it rests on
+      "day"   -- no sample carried a time inside the span, so the day's
+                 stored figure is shown AND SAID TO BE a day figure.
+                 Apple reports wrist temperature once a night stamped at
+                 midnight, which is exactly this case.
+
+    A metric with neither is absent, not zero.
+    """
+    names = tuple(metrics) if metrics else OVERNIGHT_METRICS
+    out = {}
+
+    if start_ts and end_ts:
+        days = sorted(set([start_ts[:10], end_ts[:10]]))
+        marks = ",".join(["?"] * len(days))
+        holes = ",".join(["?"] * len(names))
+        rows = conn.execute(
+            "SELECT record_key, date, metric, value, unit "
+            "FROM health_hc_records "
+            "WHERE source = ? AND feed = ? AND date IN (" + marks + ") "
+            "AND metric IN (" + holes + ")",
+            tuple([source, FEED_HAE] + days + list(names))).fetchall()
+        bucket = {}
+        for record_key, rdate, metric, value, unit in rows:
+            if value is None:
+                continue
+            tod = _hae_record_time(record_key)
+            if not tod:
+                continue
+            stamp = rdate + " " + tod
+            if stamp < start_ts or stamp > end_ts:
+                continue
+            bucket.setdefault(metric, []).append((float(value), unit))
+        for metric in names:
+            got = bucket.get(metric)
+            if not got:
+                continue
+            nums = [v for v, u in got]
+            out[metric] = {
+                "value": sum(nums) / len(nums),
+                "n": len(nums),
+                "min": min(nums),
+                "max": max(nums),
+                "unit": got[-1][1],
+                "basis": "night",
+            }
+
+    missing = [m for m in names if m not in out]
+    if missing:
+        holes = ",".join(["?"] * len(missing))
+        rows = conn.execute(
+            "SELECT metric, value, unit FROM health_metrics "
+            "WHERE date = ? AND source = ? AND metric IN (" + holes + ")",
+            tuple([date, source] + list(missing))).fetchall()
+        for metric, value, unit in rows:
+            if value is None:
+                continue
+            out[metric] = {
+                "value": float(value),
+                "n": None,
+                "min": None,
+                "max": None,
+                "unit": unit,
+                "basis": "day",
+            }
+    return out
+
+
+def sleep_night(conn, date, source="applewatch"):
+    """
+    The whole night filed under one date, rebuilt from its blocks.
+
+    Reports what was measured and nothing else. There is no score here
+    and no grade: a night is shown, never marked.
+
+    Returns None when nothing was recorded for that date. `awakenings`
+    counts the BREAKS BETWEEN recorded sleep blocks, which is a floor,
+    not a count of times he woke -- Auto Export's aggregate carries no
+    awakening count. `awake_h` is the measured time awake and is exact.
+    """
+    _ensure_sleep_block_table(conn)
+    rows = conn.execute(
+        "SELECT block_key, date, start_ts, end_ts, in_bed_start, in_bed_end, "
+        "asleep_h, rem_h, core_h, deep_h, awake_h, device "
+        "FROM health_sleep_blocks WHERE date = ? AND source = ? "
+        "ORDER BY start_ts, block_key", (date, source)).fetchall()
+    if not rows:
+        return None
+
+    blocks = []
+    for r in rows:
+        blocks.append({
+            "block_key": r[0], "date": r[1], "start_ts": r[2], "end_ts": r[3],
+            "in_bed_start": r[4], "in_bed_end": r[5], "asleep_h": r[6],
+            "rem_h": r[7], "core_h": r[8], "deep_h": r[9], "awake_h": r[10],
+            "device": r[11],
+        })
+
+    clusters = cluster_sleep_blocks(blocks)
+    starts = [c["start"] for c in clusters if c["start"]]
+    ends = [c["end"] for c in clusters if c["end"]]
+    bed_starts = [b["in_bed_start"] for b in blocks if b.get("in_bed_start")]
+    bed_ends = [b["in_bed_end"] for b in blocks if b.get("in_bed_end")]
+
+    start_ts = min(starts) if starts else None
+    end_ts = max(ends) if ends else None
+    bed_start = min(bed_starts) if bed_starts else start_ts
+    bed_end = max(bed_ends) if bed_ends else end_ts
+
+    asleep = _sum_stage(clusters, "asleep_h")
+    return {
+        "date": date,
+        "source": source,
+        "rule": "S03 Sleep Block Identity",
+        "blocks": len(blocks),
+        "stretches": len(clusters),
+        # Breaks BETWEEN recorded blocks. A floor on the number of times
+        # he woke, never presented as the number of times he woke.
+        "awakenings": max(0, len(clusters) - 1),
+        "start_ts": start_ts,
+        "end_ts": end_ts,
+        "in_bed_start": bed_start,
+        "in_bed_end": bed_end,
+        "asleep_h": asleep,
+        "rem_h": _sum_stage(clusters, "rem_h"),
+        "core_h": _sum_stage(clusters, "core_h"),
+        "deep_h": _sum_stage(clusters, "deep_h"),
+        "awake_h": _sum_stage(clusters, "awake_h"),
+        # Summed over the stretches, NOT the span from first to last.
+        # See _in_bed_hours: spanning a break would count time he may
+        # have spent out of bed as time in bed.
+        "in_bed_h": _in_bed_hours(clusters),
+        "device": (blocks[0].get("device") or "") if blocks else "",
+        # S04. Measured during the night, each carrying the basis it was
+        # worked out on. Never a verdict about the night.
+        "overnight": overnight_metrics(conn, date, source, start_ts, end_ts),
+    }
+
+
+def store_sleep_blocks(conn, blocks, source, ts, feed=None):
+    """
+    Upsert one payload's sleep blocks and return the dates they touch.
+
+    The key is the block's SPAN, never its value, so a redelivery of the
+    same block updates in place and a night cannot be added to itself.
+    """
+    if feed is None:
+        feed = FEED_HAE
+    _ensure_sleep_block_table(conn)
+    cur = conn.cursor()
+    touched = set()
+    for b in blocks or []:
+        key = "|".join([feed, source, b.get("date") or "",
+                        b.get("start_ts") or "", b.get("end_ts") or ""])
+        cur.execute(
+            "INSERT INTO health_sleep_blocks "
+            "(block_key, date, source, feed, start_ts, end_ts, "
+            " in_bed_start, in_bed_end, asleep_h, rem_h, core_h, deep_h, "
+            " awake_h, device, ingested_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(block_key) DO UPDATE SET "
+            "in_bed_start=excluded.in_bed_start, "
+            "in_bed_end=excluded.in_bed_end, asleep_h=excluded.asleep_h, "
+            "rem_h=excluded.rem_h, core_h=excluded.core_h, "
+            "deep_h=excluded.deep_h, awake_h=excluded.awake_h, "
+            "device=excluded.device, ingested_at=excluded.ingested_at",
+            (key, b.get("date"), source, feed, b.get("start_ts"),
+             b.get("end_ts"), b.get("in_bed_start"), b.get("in_bed_end"),
+             b.get("asleep_h"), b.get("rem_h"), b.get("core_h"),
+             b.get("deep_h"), b.get("awake_h"), b.get("device"), ts),
+        )
+        if b.get("date"):
+            touched.add(b["date"])
+    return sorted(touched)
+
+
+def store_apple(conn, records, workout_rows, source, raw_text,
+                sleep_blocks=None):
     """
     Record-level store for the Auto Export shape.
 
@@ -1074,8 +1616,22 @@ def store_apple(conn, records, workout_rows, source, raw_text):
             continue
         _write_daily(cur, date, metric, got[0], got[1], source, ts)
 
+    # S03: sleep_hours is written LAST and from the blocks, not from the
+    # generic day recompute. The generic path can only add scalars up; a
+    # night needs its spans, so that a re-segmented night is not added to
+    # itself and a night delivered in pieces is put back together.
+    sleep_dates = store_sleep_blocks(conn, sleep_blocks, source, ts)
+    for date in sorted(set(sleep_dates) | set(d for d, m in touched
+                                              if m == "sleep_hours")):
+        night = sleep_night(conn, date, source)
+        if night is None or night.get("asleep_h") is None:
+            continue
+        _write_daily(cur, date, "sleep_hours", night["asleep_h"], "hr",
+                     source, ts)
+
     conn.commit()
-    return new_rows, updated_rows, sorted(set(d for d, _ in touched))
+    all_dates = set(d for d, _ in touched) | set(sleep_dates)
+    return new_rows, updated_rows, sorted(all_dates)
 
 
 def store_hc(conn, records, raw_text, source="healthconnect",
@@ -1232,11 +1788,15 @@ def api_ingest():
     # in place for callers that already hold a day view, but nothing on
     # this route may overwrite a day with one payload's worth of it.
     records, workout_rows, skipped = parse_apple_records(payload)
+    # S03: the night is rebuilt from its blocks and their spans, not from
+    # the one midnight-stamped figure a day used to be.
+    sleep_blocks = parse_sleep_blocks(payload)
 
     conn = _connect()
     try:
         new_rows, updated_rows, dates = store_apple(
-            conn, records, workout_rows, source, raw_text)
+            conn, records, workout_rows, source, raw_text,
+            sleep_blocks=sleep_blocks)
     finally:
         conn.close()
 
@@ -1248,6 +1808,7 @@ def api_ingest():
         "records_new": new_rows,
         "records_updated": updated_rows,
         "workouts_stored": len(workout_rows),
+        "sleep_blocks": len(sleep_blocks),
         "dates": dates,
         "skipped_metrics": skipped,
     }), 200

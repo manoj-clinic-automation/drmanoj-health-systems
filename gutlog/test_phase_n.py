@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 GutLog v3.19.0 Phase N -- the monthly medicine order.
+(Cases 05, 06 and 10 updated for v3.20.0: SOS medicines left the monthly order.)
 
 Properties, not counts. Every numbered case enters a v3.19.0 code path, and
 every one is declared in new_assertions_v3190.json so tools/NEGATIVE_CONTROL.py
@@ -180,13 +181,17 @@ def main():
     check("04 filling the pillbox does not change the order", t04)
 
     def t05():
-        count_yesterday(ctx["X"], 12)
+        # v3.20.0: an SOS medicine rides its own running-low list, not the
+        # monthly order, and is judged on stock now against its keep figure.
+        count_yesterday(ctx["X"], 3)
         pack(ctx["X"], 15, "strip", keep=15)
-        l = line(order(), ctx["X"])
-        assert l and l["basis"] == "keep" and l["target"] == 15, "keep-on-hand not used: %s" % l
-        assert l["packs"] == 1 and l["qty"] == "1 strip of 15", l
+        j = order()
+        assert line(j, ctx["X"]) is None, "an SOS medicine rode the monthly order"
+        l = [x for x in j["sos"]["lines"] if x["med_id"] == ctx["X"]]
+        assert l and l[0]["basis"] == "keep" and l[0]["keep"] == 15, "keep-on-hand not used: %s" % l
+        assert l[0]["packs"] == 1 and l[0]["qty"] == "1 strip of 15", l
         assert stock(ctx["X"])["keep_units"] == 15 and stock(ctx["X"])["pack_type"] == "strip"
-        return "SOS medicine, 12 on hand, keep 15 -> 1 strip of 15"
+        return "SOS medicine, 3 on hand, keep 15 -> 1 strip of 15 on the running-low list"
     check("05 an SOS medicine is topped up to its keep-on-hand figure", t05)
 
     def t06():
@@ -194,14 +199,13 @@ def main():
         for _ in range(7):
             c.post("/api/now/dose", json={"med_id": ctx["Y"], "status": "EXTRA",
                                           "day": TODAY, "dtime": "00:00"})
-        l = line(order(), ctx["Y"])
-        per_day = 7 / 14.0
-        want = int(math.ceil(per_day * 40 - (1 - per_day * GAP) - 1e-9))
-        assert l and l["basis"] == "usage" and l["units"] == want and l["packs"] == 0, \
-            "want %d units from use, got %s" % (want, l)
-        assert l["qty"] == "%d units" % want, l["qty"]
-        return "7 taken in 14 days, 1 left, no pack size -> %s" % l["qty"]
-    check("06 a medicine with no schedule and no keep is ordered from its use", t06)
+        j = order()
+        names = dict((m["id"], m["name"]) for m in meds)
+        assert line(j, ctx["Y"]) is None, "an unscheduled medicine rode the monthly order"
+        assert not [x for x in j["sos"]["lines"] if x["med_id"] == ctx["Y"]], "ordered with no keep figure"
+        assert names[ctx["Y"]] in j["sos"]["nokeep"], "not named as needing a keep figure"
+        return "used but unscheduled, no keep -> not ordered, named for a keep figure"
+    check("06 a medicine with no schedule and no keep is not ordered, and says so", t06)
 
     def t07():
         sk = dict((s["name"], s["why"]) for s in order()["skipped"])
@@ -237,15 +241,14 @@ def main():
     check("09 sending saves the order once for the month", t09)
 
     def t10():
-        a0, x0 = stock(ctx["A"])["current"], stock(ctx["X"])["current"]
+        a0 = stock(ctx["A"])["current"]
         r = c.post("/api/order/received", json={"id": ctx["oid"]})
         assert r.status_code == 200, r.get_data(as_text=True)
         assert stock(ctx["A"])["current"] == a0 + ctx["lineA"]["units"], "received did not add to stock"
-        assert stock(ctx["X"])["current"] == x0 + 15
         assert c.post("/api/order/received", json={"id": ctx["oid"]}).status_code == 400, "received twice"
         assert c.post("/api/order/save", json={}).status_code == 400, "a received month was overwritten"
         c.post("/api/order/received/undo", json={"id": ctx["oid"]})
-        assert stock(ctx["A"])["current"] == a0 and stock(ctx["X"])["current"] == x0, "undo left stock behind"
+        assert stock(ctx["A"])["current"] == a0, "undo left stock behind"
         assert order()["saved"]["status"] == "OPEN"
         return "received adds every line once; undo takes it all back"
     check("10 order received adds to stock, once, and undoes cleanly", t10)

@@ -48,10 +48,12 @@ with sync_playwright() as p:
     pg.goto(B + "/setup"); pg.fill("input[name=pw]", "testpassword1"); pg.fill("input[name=pw2]", "testpassword1")
     pg.locator("input[name=pw2]").press("Enter"); pg.wait_for_load_state("networkidle")
     meds = pg.request.get(B + "/api/prnmeds/full").json()
-    A, X = meds[0], meds[1]
+    A, X, V, P2 = meds[0], meds[1], meds[2], meds[3]
     Y3 = (dt.date.today() - dt.timedelta(days=3)).isoformat()
     Y1 = (dt.date.today() - dt.timedelta(days=1)).isoformat()
     pg.request.post(B + "/api/schedule", data={"med_id": A["id"], "slot": "MORNING", "dose_text": "1 tab", "valid_from": Y3})
+    pg.request.post(B + "/api/schedule", data={"med_id": V["id"], "slot": "MORNING", "dose_text": "",
+                    "variants": "1|2|3", "valid_from": Y3})
     for mid, n in ((A["id"], 10), (X["id"], 3)):
         pg.request.post(B + "/api/stock/count", data={"med_id": mid, "qty": n})
     q("UPDATE stock_events SET at=?", (Y1 + " 00:00",))
@@ -122,8 +124,32 @@ with sync_playwright() as p:
     row = pg.locator("#stList .strow", has_text=X["name"]).first
     res("strip of 15" in row.inner_text() and "keep 15" in row.inner_text(), "row shows its pack and keep")
     plan = pg.request.get(B + "/api/order").json()
-    res(any(l["med_id"] == X["id"] and l["basis"] == "keep" for l in plan["lines"]),
-        "the SOS medicine joins the plan once it has a keep figure")
+    res(any(l["med_id"] == X["id"] and l["basis"] == "keep" for l in plan["sos"]["lines"])
+        and not any(l["med_id"] == X["id"] for l in plan["lines"]),
+        "the SOS medicine goes to the running-low list, not the monthly order")
+    sosl = pg.locator("#sosLines .ordl", has_text=X["name"])
+    res(sosl.count() == 1 and "strip of 15" in sosl.first.inner_text() and pg.locator("#sosSend").is_visible(),
+        "the SOS card lists it with Send")
+    pg.goto(B + "/"); pg.wait_for_load_state("networkidle"); time.sleep(0.8)
+    low = pg.locator("#nowOrder .stockalert", has_text="Running low")
+    res(low.count() == 1 and X["name"] in low.inner_text(), "the Now tab shows the Low banner")
+    pg.click('#nav button[data-t="meds"]'); time.sleep(0.3)
+    pg.click('.seg[data-seg="meds"] button[data-s="stock"]'); time.sleep(1.0)
+    vrow = pg.locator("#stList .strow", has_text=V["name"]).first
+    lb = vrow.locator(".sb .btn", has_text="Link strengths")
+    res(lb.count() == 1, "a medicine whose strengths vary offers Link strengths")
+    if lb.count():
+        lb.click(); time.sleep(0.3)
+        rows = vrow.locator(".pk .lk")
+        res(rows.count() == 3, "the link form has one row per strength")
+        rows.nth(0).locator(".lk-m").select_option(str(P2["id"]))
+        rows.nth(1).locator(".lk-m").select_option(str(P2["id"]))
+        rows.nth(1).locator(".lk-u").fill("2")
+        vrow.locator(".pk .btn").click(); time.sleep(1.0)
+        lk = q("SELECT variant, stock_med_id, units FROM stock_links WHERE med_id=? ORDER BY variant", (V["id"],))
+        res(lk == [("1", P2["id"], 1.0), ("2", P2["id"], 2.0)], "links saved: %s" % lk)
+        vrow = pg.locator("#stList .strow", has_text=V["name"]).first
+        res(P2["name"] in vrow.inner_text(), "the row now says where it is counted")
 
     for theme in ("light", "dark"):
         pg.evaluate("t=>document.documentElement.setAttribute('data-theme',t)", theme); time.sleep(0.3)

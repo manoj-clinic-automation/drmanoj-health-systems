@@ -1,0 +1,62 @@
+{
+  "_": [
+    "FITLOG_SLEEP_P2. Against the reconstructed FITLOG_SLEEP_P1 build no",
+    "temperature name is in METRIC_MAP, so every temperature case stores",
+    "nothing, and there is no overnight_metrics(), so the night carries no",
+    "`overnight` key at all.",
+    "",
+    "Three assertions guard properties that build ALSO satisfied, or would",
+    "have failed against for a trivial reason -- the function simply did not",
+    "exist -- rather than because the property was violated. Those go under",
+    "mutation control, which is the stronger evidence.",
+    "",
+    "  M_unitguess -- guess that an unknown temperature unit is Celsius, so a",
+    "                 Kelvin reading is filed under a name ending _c.",
+    "                 Assertion 03 must catch it.",
+    "  M_basis     -- label a day figure as measured over the night, which is",
+    "                 the whole point of the basis field. Assertion 07.",
+    "  M_zerofill  -- report a metric the Watch never sent as 0 instead of",
+    "                 leaving it out. A zero blood oxygen on a sleep page",
+    "                 reads as an event. Assertion 10 must catch it."
+  ],
+  "suite": "test_sleep_overnight.py",
+  "app": "health_ingest.py",
+  "patcher": "patch_fitlog_sleep_p2.py",
+  "assertions": [
+    {"name": "01 wrist temperature is mapped and stored", "control": "version"},
+    {"name": "02 a Fahrenheit temperature is converted", "control": "version"},
+    {"name": "04 a thermometer reading is stored and never merged", "control": "version"},
+    {"name": "05 temperature is context-only", "control": "version"},
+    {"name": "06 an overnight figure is averaged over the samples", "control": "version"},
+    {"name": "08 resting HR and HRV are carried on the night", "control": "version"},
+    {"name": "09 nothing the night carries is a score", "control": "version"},
+    {"name": "11 time in bed sums the stretches", "control": "version"},
+
+    {"name": "03 a temperature in an unknown unit is dropped",
+     "control": "mutation",
+     "mutation": {
+       "id": "M_unitguess",
+       "why": "an unconvertible temperature unit is guessed at as Celsius instead of dropped, so a Kelvin reading is filed under a canonical name ending _c",
+       "find": "        return None, unit",
+       "replace": "        return value, \"degC\""
+     }},
+
+    {"name": "07 a figure not measured inside the night says so",
+     "control": "mutation",
+     "mutation": {
+       "id": "M_basis",
+       "why": "a day figure is labelled as measured over the night, which is exactly what the basis field exists to prevent",
+       "find": "                \"basis\": \"day\",",
+       "replace": "                \"basis\": \"night\","
+     }},
+
+    {"name": "10 a metric the Watch never sent is absent, not zero",
+     "control": "mutation",
+     "mutation": {
+       "id": "M_zerofill",
+       "why": "a metric the Watch never sent is reported as 0 rather than left out; a zero blood oxygen on a sleep page reads as an event",
+       "find": "    missing = [m for m in names if m not in out]",
+       "replace": "    missing = [m for m in names if m not in out]\n    for _m in missing:\n        out[_m] = {\"value\": 0.0, \"n\": 0, \"min\": 0.0, \"max\": 0.0, \"unit\": \"\", \"basis\": \"day\"}"
+     }}
+  ]
+}

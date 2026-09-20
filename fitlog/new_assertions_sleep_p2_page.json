@@ -1,0 +1,65 @@
+{
+  "_": [
+    "FITLOG_SLEEP_P2_PAGE. Against the reconstructed v1.6.0 app.py there is",
+    "no Sleep card at all, the tables say 'Rest HR' rather than 'Rest HR",
+    "overnight', the strip does not say where those figures come from, and",
+    "the watch feed carries no night.",
+    "",
+    "Three assertions guard properties that build ALSO satisfied -- a page",
+    "with no sleep display scores no night, shows no mean where a median was",
+    "promised, and sets no small type in rules it does not have. A version",
+    "control cannot make any of them fail for the right reason, so each is",
+    "broken on purpose in a copy of the current build instead.",
+    "",
+    "  M_score     -- put a sleep score on the card. THIS IS THE ONE THAT",
+    "                 MATTERS. He has post-discontinuation insomnia and a",
+    "                 number graded every morning becomes its own cause; the",
+    "                 whole record is built so that this cannot appear.",
+    "                 Assertion 10 must catch it.",
+    "  M_mean      -- show the mean where the card promises a median, so one",
+    "                 bad night drags the comparison. Assertion 11.",
+    "  M_smalltype -- set 12px type in a new rule. Assertion 12."
+  ],
+  "suite": "test_sleep_page.py",
+  "app": "app.py",
+  "patcher": "patch_fitlog_sleep_p2_page.py",
+  "assertions": [
+    {"name": "01 the Sleep card renders and names the night", "control": "version"},
+    {"name": "02 the night is shown in hours and minutes", "control": "version"},
+    {"name": "03 the night's clock times are IST", "control": "version"},
+    {"name": "04 the stage split is named and drawn to scale", "control": "version"},
+    {"name": "05 breaks and measured awake time are separate", "control": "version"},
+    {"name": "06 an overnight figure is averaged over the night", "control": "version"},
+    {"name": "07 a figure not measured inside the night says so", "control": "version"},
+    {"name": "08 resting HR and HRV are labelled as derived overnight", "control": "version"},
+    {"name": "09 the Today-so-far strip says Rest HR and HRV are overnight", "control": "version"},
+    {"name": "13 the watch feed carries the whole night", "control": "version"},
+
+    {"name": "10 the page never scores, grades or ranks a night",
+     "control": "mutation",
+     "mutation": {
+       "id": "M_score",
+       "why": "a sleep score is put on the card -- the single thing this whole record is built to prevent",
+       "find": "           \" asleep</div>\")",
+       "replace": "           \" asleep · sleep score \" + str(int(round((latest.get(\"asleep_h\") or 0) * 12))) + \"/100</div>\")"
+     }},
+
+    {"name": "11 the only comparison is his own median",
+     "control": "mutation",
+     "mutation": {
+       "id": "M_mean",
+       "why": "the mean is shown where the card promises a median, so one bad night drags the figure he is compared with",
+       "find": "    mid = len(got) // 2",
+       "replace": "    return sum(got) / len(got)\n    mid = len(got) // 2"
+     }},
+
+    {"name": "12 nothing added here sets type below 14px",
+     "control": "mutation",
+     "mutation": {
+       "id": "M_smalltype",
+       "why": "a new rule is set to 12px, which is the size this page is not allowed to use",
+       "find": ".wbasis{font-size:14px;color:#5a6b78;line-height:1.5}",
+       "replace": ".wbasis{font-size:12px;color:#5a6b78;line-height:1.5}"
+     }}
+  ]
+}
