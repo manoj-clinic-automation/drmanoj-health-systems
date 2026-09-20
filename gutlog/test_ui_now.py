@@ -68,6 +68,15 @@ SHOT_DIR = os.path.abspath(os.environ.get("GUTLOG_UI_SHOTS")
                                            "gutlog_ui_shots"))
 
 
+
+def pick_time(loc, hhmm):
+    """GUTLOG_V3270_TIMEPICK: a time box is shown as two lists (hour, minute)
+    right after it; the phone's own time dialog is never used. Pick in the
+    lists the way a finger would, not by writing into the hidden box."""
+    w = loc.locator("xpath=following-sibling::span[contains(@class,'tpick')][1]")
+    w.locator(".tph").select_option(hhmm[:2])
+    w.locator(".tpm").select_option(hhmm[3:5])
+
 def _inside(child, parent):
     try:
         return os.path.commonpath([child, parent]) == parent
@@ -326,7 +335,7 @@ with sync_playwright() as p:
         pg.locator(".varpick .chip", has_text="145").click(); pg.locator(".varpick .go").click(); time.sleep(0.6)
         pg.locator("#nowSched .doserow", has_text=name).first.locator(".nm").click(); time.sleep(0.3)
         res(pg.locator(".varpick .tt").count() == 1, "Now strip shows the logged time")
-        pg.locator(".varpick .tt").fill("00:00"); pg.locator(".varpick .tm").click(); time.sleep(0.6)
+        pick_time(pg.locator(".varpick .tt"), "00:00"); pg.locator(".varpick .tm").click(); time.sleep(0.6)
         res(nrow(meds[0]["id"])["dtime"] == "00:00", "Save time retimes the dose to 00:00")
         pg.locator("#nowSched .doserow", has_text=name).first.locator(".nm").click(); time.sleep(0.3)
         pg.locator(".varpick .ch").click(); time.sleep(0.2)
@@ -338,14 +347,14 @@ with sync_playwright() as p:
         res(pg.locator("#dvList .dvrow").count() >= 1 and pg.locator("#dvNext").is_disabled(),
             "Day by day lists today; next-day arrow disabled")
         pg.locator("#dvList .dvrow", has_text=name).first.click(); time.sleep(0.3)
-        pg.locator("#dayView .varpick .tt").fill("00:01"); pg.locator("#dayView .varpick .go").click(); time.sleep(0.7)
+        pick_time(pg.locator("#dayView .varpick .tt"), "00:01"); pg.locator("#dayView .varpick .go").click(); time.sleep(0.7)
         res(nrow(meds[0]["id"])["dtime"] == "00:01", "day-view edit retimes")
         res("time edited" in pg.locator("#dvList .dvrow", has_text=name).first.inner_text(), "edited entry is marked")
         # backfill yesterday
         pg.click("#dvPrev"); time.sleep(0.8)
         res(pg.locator("#dvMiss .dvmiss").count() == 2, "yesterday shows 2 scheduled-not-logged")
         plain = pg.locator("#dvMiss .dvmiss", has_text=meds[1]["name"]).first
-        plain.locator(".tt").fill("07:15"); plain.locator(".go").click(); time.sleep(0.7)
+        pick_time(plain.locator(".tt"), "07:15"); plain.locator(".go").click(); time.sleep(0.7)
         ry = nrow(meds[1]["id"], Y1)
         res(ry["status"] == "TAKEN" and ry["dtime"] == "07:15", "backfilled yesterday at 07:15")
         var = pg.locator("#dvMiss .dvmiss", has_text=name).first

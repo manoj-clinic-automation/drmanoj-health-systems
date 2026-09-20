@@ -1,0 +1,24 @@
+{
+ "_": ["GutLog v3.27.0 -- one protein target, re-timed extra doses, no phone time dialog. 01, 03, 04 and 06 fail on v3.26.0 (57 g target; extra rows only undo). 02, 05 and 07 are shown failing by breaking the property on purpose: no plan gives 0, the time lists are never built, and the lists are made too wide for the folded screen."],
+ "suite": "test_v3270.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3270.py",
+ "assertions": [
+  {"name": "01 one protein target: the diet plan's", "control": "version"},
+  {"name": "03 an extra dose's row carries a time edit", "control": "version"},
+  {"name": "04 folded width: the extra dose's time strip fits", "control": "version"},
+  {"name": "06 the new time is saved and shown", "control": "version"},
+  {"name": "02 without a plan the old target is the fallback", "control": "mutation",
+   "mutation": {"id": "zerotarget", "why": "no plan gives a target of 0",
+    "find": "    except (TypeError, ValueError):\n        return PROTEIN_TARGET\n",
+    "replace": "    except (TypeError, ValueError):\n        return 0\n"}},
+  {"name": "05 no time box opens the phone's own dialog", "control": "mutation",
+   "mutation": {"id": "nolists", "why": "the static time boxes are never turned into lists",
+    "find": "if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>tpScan(document));\nelse tpScan(document);\n",
+    "replace": "\n"}},
+  {"name": "07 no page errors at the folded width", "control": "mutation",
+   "mutation": {"id": "toowide", "why": "the time lists are too wide for the folded screen",
+    "find": ".tpick select{width:auto;min-width:72px;",
+    "replace": ".tpick select{width:auto;min-width:420px;"}}
+ ]
+}
