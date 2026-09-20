@@ -36,6 +36,18 @@ assertion can be seen failing, and each declared assertion must use one:
       responds to the thing it claims to measure, not merely to a version
       change that happened to move several things at once.
 
+      A mutation may name a "module" -- a sidecar file beside app.py that
+      app.py imports (RxGuard's dose_ceiling.py, say). The harness cannot
+      break a sidecar by editing app.py, and it must never edit the real
+      file, so it copies the app's whole folder to a sibling
+      "_nc_mod_<id>" folder, breaks the module in the COPY, and runs the
+      suite against the copy's app.py. The copy imports its own broken
+      module; the real folder is never written.
+
+      One assertion may be declared more than once with different
+      controls (a sidecar mutation AND an app.py mutation, say); every
+      declaration must be seen failing on its own.
+
 Finally it runs the suite against the current build and requires ALL PASS.
 A manifest entry that is never seen failing is a hard failure here, with the
 assertion named, whatever the suite itself reported.
@@ -50,6 +62,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -156,7 +169,7 @@ def main():
     _, prev_fails, _ = run_suite(suite, prev, "the PREVIOUS build")
     for e in entries:
         if e.get("control") == "version":
-            verdict[e["name"]] = ("version", seen(e, prev_fails))
+            verdict[id(e)] = ("version", seen(e, prev_fails))
     print("")
 
     # ---- 2. mutations ----------------------------------------------------
@@ -169,20 +182,50 @@ def main():
     for gid, members in groups.items():
         mut = members[0]["mutation"]
         find, repl = mut["find"], mut["replace"]
-        n = src.count(find)
+        module = mut.get("module")
+        if module:
+            mod_real = os.path.join(work, module)
+            if (os.path.dirname(os.path.abspath(mod_real)) != work
+                    or not os.path.isfile(mod_real)):
+                print("  MUTATION '%s': module '%s' is not a file beside "
+                      "app.py." % (gid, module))
+                for e in members:
+                    verdict[id(e)] = ("mutation:" + gid, False)
+                continue
+            target_src = read(mod_real)
+        else:
+            target_src = src
+        n = target_src.count(find)
         if n != 1:
-            print("  MUTATION '%s': anchor found %d times, need 1 -- cannot "
-                  "break this property on purpose." % (gid, n))
+            print("  MUTATION '%s': anchor found %d times in %s, need 1 -- "
+                  "cannot break this property on purpose."
+                  % (gid, n, module or os.path.basename(app)))
             for e in members:
-                verdict[e["name"]] = ("mutation:" + gid, False)
+                verdict[id(e)] = ("mutation:" + gid, False)
             continue
-        mpath2 = os.path.join(work, "_nc_mut_" + gid + ".py")
-        made.append(mpath2)
-        write(mpath2, src.replace(find, repl, 1))
+        if module:
+            # A sibling copy of the whole folder, so every file the suite or
+            # the app reaches beside app.py -- or one level up -- is where it
+            # expects. Databases, backups and caches are not copied.
+            copy_dir = os.path.join(os.path.dirname(work), "_nc_mod_" + gid)
+            if os.path.exists(copy_dir):
+                shutil.rmtree(copy_dir)
+            shutil.copytree(work, copy_dir, ignore=shutil.ignore_patterns(
+                "__pycache__", "_nc_*", "*.db", "*.db-*", "*.bak", "*.bak.*"))
+            made.append(copy_dir)
+            write(os.path.join(copy_dir, module),
+                  target_src.replace(find, repl, 1))
+            mpath2 = os.path.join(copy_dir, os.path.basename(app))
+            label = "the MUTATED module %s [%s]" % (module, gid)
+        else:
+            mpath2 = os.path.join(work, "_nc_mut_" + gid + ".py")
+            made.append(mpath2)
+            write(mpath2, src.replace(find, repl, 1))
+            label = "the MUTATED build [" + gid + "]"
         print("  mutation '%s': %s" % (gid, mut.get("why", "")))
-        _, mut_fails, _ = run_suite(suite, mpath2, "the MUTATED build [" + gid + "]")
+        _, mut_fails, _ = run_suite(suite, mpath2, label)
         for e in members:
-            verdict[e["name"]] = ("mutation:" + gid, seen(e, mut_fails))
+            verdict[id(e)] = ("mutation:" + gid, seen(e, mut_fails))
     print("")
 
     # ---- 3. the current build --------------------------------------------
@@ -194,11 +237,11 @@ def main():
     print("-" * 72)
     bad = []
     for e in entries:
-        how, ok = verdict.get(e["name"], ("none", False))
+        how, ok = verdict.get(id(e), ("none", False))
         print("  [%s] %-58s  %s" % ("SEEN" if ok else "UNSEEN",
                                     e["name"][:58], how))
         if not ok:
-            bad.append(e["name"])
+            bad.append(e["name"] + "  (" + how + ")")
     print("-" * 72)
     print("declared new assertions : %d" % len(entries))
     print("seen to fail            : %d" % (len(entries) - len(bad)))
@@ -215,7 +258,10 @@ def main():
     if not args.keep:
         for f in made:
             try:
-                os.remove(f)
+                if os.path.isdir(f):
+                    shutil.rmtree(f)
+                else:
+                    os.remove(f)
             except OSError:
                 pass
     else:

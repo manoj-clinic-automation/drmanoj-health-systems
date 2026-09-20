@@ -61,6 +61,7 @@ gutlog/scan_lab/*.json
 # negative-control scratch builds (tools/NEGATIVE_CONTROL.py writes these beside app.py)
 gutlog/_nc_*.py
 */_nc_*.py
+_nc_mod_*/
 
 # ---------------------------------------------------------------------------
 # 2026-09-15. IMAGES AND OTHER BINARIES.
