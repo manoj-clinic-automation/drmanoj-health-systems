@@ -25,6 +25,8 @@ from functools import wraps
 from flask import (Flask, g, redirect, render_template_string, request,
                    session, url_for, flash, Response)
 from werkzeug.security import check_password_hash, generate_password_hash
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # HEALTH_SSO_V1
+import health_sso  # noqa: E402
 
 APP_VERSION = "1.8.0"   # RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST RXGUARD_V180_DOSE
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -2090,6 +2092,10 @@ def create_app(db_path=None, secret=None):
         @wraps(fn)
         def inner(*a, **kw):
             if not session.get("auth"):
+                # HEALTH_SSO_V1 -- signed in to GutLog or FitLog is signed in here
+                if health_sso.wants_bounce(request, session):
+                    return redirect(health_sso.bounce_url(
+                        "rxguard", health_sso.here(request)))
                 return redirect(url_for("login"))
             return fn(*a, **kw)
         return inner
@@ -2113,6 +2119,7 @@ def create_app(db_path=None, secret=None):
             if check_password_hash(pw_hash, pw):
                 session["auth"] = True
                 session["epoch"] = setting("auth_epoch", "1")
+                session.pop(health_sso.HOLD, None)  # HEALTH_SSO_V1
                 return redirect(url_for("dashboard"))
             flash("Incorrect password.")
             return redirect(url_for("login"))
@@ -2129,7 +2136,29 @@ def create_app(db_path=None, secret=None):
     @app.route("/logout")
     def logout():
         session.clear()
+        session[health_sso.HOLD] = True  # HEALTH_SSO_V1 -- stays locked
         return redirect(url_for("login"))
+
+    # HEALTH_SSO_V1 -----------------------------------------------------
+    @app.route("/sso/vouch")
+    def sso_vouch():
+        ok = bool(session.get("auth")) and \
+            session.get("epoch") == setting("auth_epoch", "1")
+        u = health_sso.vouch_url("rxguard", ok, request.args.get("to"),
+                                 request.args.get("next"), request.args.get("hops"))
+        return redirect(u) if u else ("Not found", 404)
+
+    @app.route("/sso/in")
+    def sso_in():
+        if not setting("password_hash"):
+            return redirect(url_for("login"))
+        ok, nxt = health_sso.accept("rxguard", request, get_db())
+        if not ok:
+            return redirect(url_for("login", sso="0"))
+        session["auth"] = True
+        session["epoch"] = setting("auth_epoch", "1")
+        session.pop(health_sso.HOLD, None)
+        return redirect(nxt)
 
     # ----------------------------------------------------------- dashboard
     def constraints_list():

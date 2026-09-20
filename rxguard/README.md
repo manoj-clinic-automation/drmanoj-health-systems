@@ -72,6 +72,39 @@ named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
 days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
 GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
 
+## One sign-in across the three apps — HEALTH_SSO_V1 (2026-09-20 09:14 IST)
+
+Moving from GutLog into RxGuard used to mean typing a password again. Now a
+plain page load (GET, `Accept: text/html`) with no session goes round the ring
+gutlog → rxguard → fitlog → gutlog via `/sso/vouch`; the first app that already
+has a session mints a ticket, and RxGuard's `/sso/in` signs him in exactly as
+its own password would, then continues to the page he asked for. Nobody signed
+in anywhere → RxGuard's own login, in at most three redirects.
+
+The ticket is **HMAC-SHA256 over {iss, aud, exp, nonce}** with a key only the
+server holds, bound to **one** receiving app, valid **60 seconds**, usable
+**once** (the nonce goes in the receiving app's own `sso_used` table). It rides
+in a URL for a single redirect, over HTTPS.
+
+What it deliberately never does: bounce an API or XHR call (they get the same
+login redirect they always did); follow a `next` that is not a plain path;
+send the browser anywhere but the three configured origins (an unknown target
+is a 404); or override Lock — logout sets a hold, so a locked app stays locked
+until its own password, even while the other two are open.
+
+**No `/root/health-sso.key` (mode 600, root) and every app behaves exactly as
+before** — that is both the default and the off switch, and it was re-verified
+live with the key absent before the key was created. Passwords, owner keys,
+epochs, feed tokens and API behaviour are unchanged; RxGuard's `RXGUARD_SECRET`
+was already a 64-character value, which is the precondition for vouching at all.
+
+Module `health_sso.py` beside `app.py`; patch `ops/patch_sso.py --app rxguard`
+(4 anchors here); suite `ops/test_sso.py`, **11/11** offline and on the server,
+running all three real apps on 127.0.0.1/.2/.3 so their cookies stay apart the
+way three subdomains do. Against the three pre-SSO builds the same suite splits
+exactly as it should: 02, 03, 04, 06, 07, 08 and 11 fail, and 01, 05, 09, 10
+still pass — those four guard behaviour that must **not** change.
+
 ## Daily dose — v1.8.0 (DEPLOYED 2026-09-20 08:46 IST)
 
 His ask, 19-Sep-2026: watch the **total dose of each ingredient**, not only

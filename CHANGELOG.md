@@ -3,6 +3,55 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — HEALTH_SSO_V1: one sign-in across all three apps
+
+**His ask (17-Sep).** Moving from GutLog into RxGuard or FitLog makes him sign
+in again; one sign-in should carry across all three.
+
+**How.** A plain page load (GET, `Accept: text/html`) with no session goes
+round the ring gutlog → rxguard → fitlog → gutlog via `/sso/vouch`. The first
+app that already has a session mints a ticket — **HMAC-SHA256, bound to one
+receiving app, 60 seconds, single use**, the nonce recorded in the receiving
+app's own database — and the browser lands on that app's `/sso/in`, which signs
+it in exactly as its own password would and continues to the page asked for.
+Nobody signed in anywhere → that app's own login, in at most three redirects.
+
+**The four refusals are the design.** It never bounces an API or XHR call, only
+page loads — bouncing a background fetch turns one failed request into three.
+It never follows a `next` that is not a plain path, and never sends the browser
+anywhere but the three configured origins; an unknown target is a 404. It never
+overrides Lock: logout sets a hold, so a locked app stays locked until its own
+password, even while the other two are open. And with **no
+`/root/health-sso.key`, every app behaves exactly as before** — the default is
+off, the off switch is `rm`, and that promise was re-verified live on the
+server with the key still absent, each app going to its own login and no ring,
+before the key was created.
+
+**A guessable session key, found by the gate rather than by the patch.** An SSO
+ticket is only as good as the session it turns into, so the first step was a
+blocking check that every app's own secret is set and ≥32 characters. GutLog
+and RxGuard were fine at 64. **FitLog had none**: `app.secret_key` fell back to
+a value derived from its *database path*, and the unit's environment file did
+not exist. That had been true since FitLog was built, and it is exactly what
+must not be allowed to become a vouch. A real secret is now in place at mode
+600 — which signed FitLog out once, the whole cost.
+
+**A stale test caught in passing.** On the server the cross-app analgesic
+mirror suite was 6/8, and the two failures were cases 03 and 06 — the ones
+whose old premise *was* the defect GutLog v3.21.0 fixed the day before. The
+updated suite had been committed but never copied to the server; the failure
+messages showed the new `same_dose` linking working correctly. Copied, 8/8.
+
+Evidence: `ops/test_sso.py` **11/11** offline and on the server, running all
+three real apps on 127.0.0.1/.2/.3 so their cookies stay apart the way three
+subdomains do. Against the three reconstructed pre-SSO builds the same suite
+splits exactly as it should — 02, 03, 04, 06, 07, 08, 11 fail and 01, 05, 09,
+10 still pass, those four guarding behaviour that must not change — which is
+the version control done by hand, since there is no manifest for this patch.
+`--reverse` is byte-identical to the input for all three apps. Full regression
+for all three apps **with a key present**, on the workstation and on the
+server, all green. Detail in each app's own auth section.
+
 ## 2026-09-20 — RxGuard v1.8.0: the total, not the duplicate
 
 **His ask (19-Sep).** Watch the **cumulative daily dose of each ingredient**,

@@ -14,6 +14,9 @@ from flask import (Flask, request, session, redirect, url_for, g,
                    send_from_directory)
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+import sys as _sso_sys  # HEALTH_SSO_V1
+_sso_sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import health_sso  # noqa: E402
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("GUTLOG_DB", os.path.join(BASE, "health3.db"))
@@ -449,6 +452,7 @@ def stamp_session():
     session.permanent = True
     session["ok"] = True
     session["ep"] = auth_epoch()
+    session.pop(health_sso.HOLD, None)  # HEALTH_SSO_V1
 
 def owner_set():
     """True once an owner key has been created."""
@@ -464,6 +468,9 @@ def login_required(f):
     def w(*a, **k):
         if not setting("pw_hash"): return redirect(url_for("setup"))
         if not session.get("ok") or session.get("ep") != auth_epoch():
+            # HEALTH_SSO_V1 -- signed in to RxGuard or FitLog is signed in here
+            if health_sso.wants_bounce(request, session):
+                return redirect(health_sso.bounce_url("gutlog", health_sso.here(request)))
             return redirect(url_for("login"))
         return f(*a, **k)
     return w
@@ -502,7 +509,28 @@ def login():
 
 @app.route("/logout")
 def logout():
-    session.clear(); return redirect(url_for("login"))
+    session.clear()
+    session[health_sso.HOLD] = True  # HEALTH_SSO_V1 -- Lock stays locked
+    return redirect(url_for("login"))
+
+# HEALTH_SSO_V1 ---------------------------------------------------------
+@app.route("/sso/vouch")
+def sso_vouch():
+    ok = bool(setting("pw_hash")) and bool(session.get("ok")) and \
+        session.get("ep") == auth_epoch()
+    u = health_sso.vouch_url("gutlog", ok, request.args.get("to"),
+                             request.args.get("next"), request.args.get("hops"))
+    return redirect(u) if u else ("Not found", 404)
+
+@app.route("/sso/in")
+def sso_in():
+    if not setting("pw_hash"):
+        return redirect(url_for("setup"))
+    ok, nxt = health_sso.accept("gutlog", request, db())
+    if not ok:
+        return redirect(url_for("login", sso="0"))
+    stamp_session()
+    return redirect(nxt)
 
 @app.route("/account", methods=["GET", "POST"])
 @login_required

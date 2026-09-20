@@ -34,6 +34,46 @@ carries `auth_epoch()`, so changing credentials invalidates live sessions.
 
 This is the pattern FitLog and RxGuard were built from.
 
+### One sign-in across the three apps — HEALTH_SSO_V1 (2026-09-20)
+
+Moving from GutLog into RxGuard or FitLog used to mean signing in again. Now a
+plain page load (GET, `Accept: text/html`) with **no session** goes round the
+ring gutlog → rxguard → fitlog → gutlog via `/sso/vouch`. The first app that
+already has a session mints a ticket and the browser lands on the asked-for
+app's `/sso/in`, which signs it in exactly as its own password would and then
+continues to the page that was asked for. Nobody signed in anywhere → that
+app's own login, in at most three redirects.
+
+The ticket is **HMAC-SHA256 over {iss, aud, exp, nonce}** with a key only the
+server holds. It is bound to **one** receiving app, lives **60 seconds**, and
+is usable **once** — the nonce is recorded in the receiving app's own database
+(`sso_used`). It rides in a URL for a single redirect, over HTTPS.
+
+Four things it deliberately never does:
+
+- **Never bounce an API or XHR call.** Only a page load goes round the ring; an
+  API call gets the same login redirect it always did. Bouncing a background
+  fetch would turn one failed request into three.
+- **Never follow a `next` that is not a plain path** on the receiving app, and
+  never send the browser anywhere but the three configured origins. An unknown
+  target is a 404.
+- **Never override Lock.** Logout sets a hold: a locked app stays locked until
+  its *own* password is typed, even while the other two are open. Lock means
+  lock.
+- **Never work without the key.** No `/root/health-sso.key` (mode 600, root)
+  and every app behaves exactly as it did before — which is both the default
+  and the off switch. That promise is asserted, and was re-verified live on the
+  server with the key absent before it was created.
+
+An SSO ticket is only as good as the session it turns into, so each app's own
+session secret must be set and at least 32 characters before SSO is turned on.
+FitLog's fell back to a value derived from its **database path** — guessable —
+so a FitLog without `FITLOG_SECRET` vouches for no one.
+
+Passwords, owner keys, auth epochs, API behaviour and feed tokens are all
+unchanged. The module is `health_sso.py` beside `app.py`; the patch is
+`ops/patch_sso.py --app gutlog` (5 anchors here), the suite `ops/test_sso.py`.
+
 ## Quick-log surface (the Now tab)
 
 The reason the app exists in this shape: logging a dose at 5am must be one tap,

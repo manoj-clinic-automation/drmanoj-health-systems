@@ -29,6 +29,39 @@ The owner key is a **per-route `@login_required` decorator** (app.py:95), not a
 Phase 3.5 ingest endpoints carry their own bearer token and needed no exemption
 patch. Verified on server 2026-09-10: `grep before_request app.py` → 0 matches.
 
+### FITLOG_SECRET — set at last, 2026-09-20
+
+`app.secret_key` read `FITLOG_SECRET` from the environment and, when it was
+unset, **fell back to a value derived from the database path**. That fallback
+is guessable by anyone who knows where the app lives, and it had been in force
+since the beginning: the unit's `EnvironmentFile=-/root/fitlog/.env` was
+optional and the file did not exist.
+
+A real 64-character secret is now in `/root/fitlog/.env`, mode 600, which is
+what the unit loads (`ingest.env` is read directly by the ingest blueprint and
+is a different file — do not move the secret there). Setting it **changed the
+session key, so FitLog signed out once**; that is the whole cost, and it was
+worth it, because a guessable session key is exactly what an SSO ticket must
+not be allowed to turn into.
+
+### One sign-in across the three apps — HEALTH_SSO_V1 (2026-09-20)
+
+FitLog joins the ring gutlog → rxguard → fitlog → gutlog. A plain page load
+with no session asks the other two whether he is signed in there; the first one
+that is mints a 60-second, single-use, single-app HMAC ticket and FitLog's
+`/sso/in` signs him in exactly as its own password would. Nobody signed in
+anywhere → FitLog's own login, in at most three redirects.
+
+**It changes nothing else.** The ingest endpoints keep their own bearer tokens
+and are never bounced — only page loads go round the ring. Logout sets a hold,
+so a locked FitLog stays locked until its own password. With no
+`/root/health-sso.key` the app behaves exactly as before.
+
+**FitLog could not have joined this before today**, because of the fallback key
+above: the whole ring is only as trustworthy as the weakest session it will
+vouch for. Module `health_sso.py` beside `app.py`; patch
+`ops/patch_sso.py --app fitlog` (4 anchors); suite `ops/test_sso.py`.
+
 ## Doses from GutLog — v1.1.0 (read-endpoint cutover)
 
 Doses are logged in GutLog. FitLog reads them from GutLog's read-only feed

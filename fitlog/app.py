@@ -14,6 +14,9 @@ Knowledge: knowledge/rules.json, exercises.json, protocols.json, med_stack.json
 import os, json, sqlite3, hashlib, secrets, functools
 from datetime import date, datetime, timedelta
 from flask import Flask, request, redirect, session, g, url_for
+import sys as _sso_sys  # HEALTH_SSO_V1
+_sso_sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import health_sso  # noqa: E402
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("FITLOG_DB", os.path.join(APP_DIR, "fitlog.db"))
@@ -108,6 +111,9 @@ def login_required(f):
         if not setting("password_hash"):
             return redirect(url_for("setup"))
         if not session.get("auth"):
+            # HEALTH_SSO_V1 -- signed in to GutLog or RxGuard is signed in here
+            if health_sso.wants_bounce(request, session):
+                return redirect(health_sso.bounce_url("fitlog", health_sso.here(request)))
             return redirect(url_for("login"))
         return f(*a, **k)
     return w
@@ -890,13 +896,38 @@ def login():
     if request.method == "POST":
         if sha(request.form.get("pw", "")) == setting("password_hash"):
             session["auth"] = True
+            session.pop(health_sso.HOLD, None)  # HEALTH_SSO_V1
             return redirect("/")
         return page("Login", "<h1>FitLog</h1><p>Wrong password.</p><a href='/login'>Retry</a>")
     return page("Login", "<h1>FitLog</h1><form method=post><input type=password name=pw placeholder='Password'><button>Login</button></form>")
 
 @app.route("/logout")
 def logout():
-    session.clear(); return redirect(url_for("login"))
+    session.clear()
+    session[health_sso.HOLD] = True  # HEALTH_SSO_V1 -- stays locked
+    return redirect(url_for("login"))
+
+# HEALTH_SSO_V1 ---------------------------------------------------------
+@app.route("/sso/vouch")
+def sso_vouch():
+    # FitLog falls back to a session key derived from its DB path when
+    # FITLOG_SECRET is unset -- guessable, so such a FitLog vouches for no one.
+    ok = bool(os.environ.get("FITLOG_SECRET")) and \
+        bool(setting("password_hash")) and bool(session.get("auth"))
+    u = health_sso.vouch_url("fitlog", ok, request.args.get("to"),
+                             request.args.get("next"), request.args.get("hops"))
+    return redirect(u) if u else ("Not found", 404)
+
+@app.route("/sso/in")
+def sso_in():
+    if not setting("password_hash"):
+        return redirect(url_for("setup"))
+    ok, nxt = health_sso.accept("fitlog", request, db())
+    if not ok:
+        return redirect(url_for("login", sso="0"))
+    session["auth"] = True
+    session.pop(health_sso.HOLD, None)
+    return redirect(nxt)
 
 # ---------------- routes: home / checkin ----------------
 @app.route("/")
