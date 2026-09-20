@@ -3,6 +3,39 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — GutLog v3.27.0, one protein target and a time picker that fits
+
+Three things he reported, deployed 21:24 IST.
+
+**The lunch protein figure was right; the target beside it was not.** Lunch
+really was 25.9 g. What was wrong is that the Meals card measured against a
+constant that predated the diet plan — "62 of 57 g" beside a plan card
+reading "62 / 100 g". The target now comes from the plan, with the old
+constant kept only as the fallback when there is no plan.
+
+**Not finished, and said so rather than quietly:** two hardcoded copies of
+the old constant remain in the page JavaScript — the meal basket's "day
+protein would reach n/57 g", and the day protein bar, which fills at 57 and
+therefore reads full while the card above it says "of 100". Both predate
+this release, byte-identical in the rollback copy, so v3.27.0 did not cause
+them; it also did not fix them, and the Meals tab is exactly where he
+reported the problem. The new suite's first assertion is called "one protein
+target: the diet plan's" and it passed, because it reads the server helper
+and never renders the basket or the bar — rule 2 again, in the release whose
+whole subject is that constant.
+
+**An SOS dose logged late can be re-timed.** Those rows had only Undo.
+Tapping one now offers 15 min / 30 min / 1 h / 2 h ago, or any time, saved
+through the existing retime path so the edit is audited like any other.
+
+**The phone's own time dialog is gone from every page.** On the folded
+screen its Set button sits off the cover display — our own Save button was
+always visible at 300 px, so this was Chrome's dialog, not our markup. Every
+time input is now two lists, hour and minute, with the real input hidden and
+kept in step, so nothing that reads a form changed. The UI suite was updated
+in the same release to pick in the lists, since a hidden input cannot be
+filled.
+
 ## 2026-09-20 — FitLog v1.7.0, the rings get their goals back
 
 The activity rings had been drawing as grey outlines reading "no goal on

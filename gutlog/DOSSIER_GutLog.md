@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.26.0)
+# GutLog — DOSSIER (v3.27.0)
 
 Single source of truth. Update after every change.
 
@@ -384,6 +384,51 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## One protein target, re-timed extras, no phone time dialog — v3.27.0
+
+Three things the owner reported on 20 Sep, marker `GUTLOG_V3270_TIMEPICK`,
+8 anchors, deployed 21:24 IST.
+
+**1. "Lunch protein looks too high."** The log was right — lunch really was
+25.9 g. The fault was that the Meals card read "62 of **57** g" while the
+plan card read "62 / **100** g": `PROTEIN_TARGET = 57` predated the diet
+plan and had never been replaced. `_protein_target()` now reads the plan's
+`targets.protein`, with 57 kept only as the fallback when no plan exists.
+Verified live: `_protein_target()` returns **100**.
+
+> **Not finished — two hardcoded 57s remain in the page JavaScript.** The
+> patch did not touch them and `test_v3270.py` does not cover them:
+> * `$('#ml_fmw')` — the meal basket's *"day protein would reach
+>   `{n}`/57 g"*, a bare literal with no fallback.
+> * `$('#dayPbar')` — the day protein bar's width, `p/57*100`, so the bar
+>   reads **full at 57 g** while the card above it says "of 100 g".
+>
+> A third, `(s.target||57)` in `loadRings`, is a legitimate fallback and is
+> correct as it stands. Both faults **predate v3.27.0** — they are
+> byte-identical in `app.py.bak-v3270-20260920_212354` — so this release did
+> not cause them, but it did not fix them either, and the Meals tab is
+> exactly where he reported the problem. This is the CLAUDE.md rule 2 lesson
+> again: assertion 01 is called "one protein target: the diet plan's" and
+> passed, because the suite reads the server helper and never renders the
+> basket or the bar. **Do not write "every target now uses the plan" until
+> these two are fixed with an assertion that fails first.**
+
+**2. "No way to fix the time of an SOS dose logged late."** Extra-dose rows
+had only Undo. Tapping a row now opens a time strip — 15 min / 30 min / 1 h
+/ 2 h ago, or any time — saving through the existing `/api/retime`, so every
+edit is audited in `edits` exactly as a scheduled-dose retime is.
+
+**3. "On the folded phone the Set button is not visible when I edit a
+time."** That was Chrome's own time dialog on the cover screen, not our
+markup — our "Save time" button was on screen at 300 px. No page opens that
+dialog any more: a MutationObserver renders every `input[type=time]` as two
+lists (hour, minute). The real input stays in the DOM, hidden, with `.value`
+kept in step both ways, so no reader and no form handler changed.
+
+`test_ui_now.py` was changed **on purpose** in the same release: its three
+`.tt.fill()` calls now pick in the lists (`pick_time`), because a hidden
+input cannot be filled. That is the expected consequence of 3, not drift.
 
 ## Food trials as periods — v3.26.0
 

@@ -299,7 +299,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS GUTLOG_V3230_CONTEXT GUTLOG_V3240_RECIPES GUTLOG_V3250_PLAN GUTLOG_V3260_TRIALS
+SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS GUTLOG_V3230_CONTEXT GUTLOG_V3240_RECIPES GUTLOG_V3250_PLAN GUTLOG_V3260_TRIALS GUTLOG_V3270_TIMEPICK
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -664,7 +664,7 @@ def api_summary(day):
         doses=one("SELECT COUNT(*) FROM doses WHERE day=?"),
         vitals=one("SELECT COUNT(*) FROM vitals WHERE day=?"),
         episodes=one("SELECT COUNT(*) FROM episodes WHERE day=?"),
-        protein=prot or 0, target=PROTEIN_TARGET, streak=streak,
+        protein=prot or 0, target=_protein_target(), streak=streak,
         patch=dict(patch) if patch else None)
 
 # ------------------------------------------------------------------ library
@@ -886,7 +886,21 @@ def api_mealcards():
                     "fm": r["fodmap"]}) for n, r in lib.items())
     return jsonify(day=day, cards=cards, done=done, today=todays, lib=nut,
                    missing=sorted(missing), kinds=dict((k, v[0]) for k, v in MEAL_KINDS.items()),
-                   protein_target=PROTEIN_TARGET)
+                   protein_target=_protein_target())
+
+
+# GUTLOG_V3270_TIMEPICK -- one protein target everywhere: the diet plan's when
+# there is one. The meal card read "62 of 57 g" beside a plan card reading
+# "62 / 100 g"; the fixed 57 g is now only the fallback.
+def _protein_target():
+    cfg = _plan_cfg()
+    try:
+        v = float(((cfg or {}).get("targets") or {}).get("protein"))
+    except (TypeError, ValueError):
+        return PROTEIN_TARGET
+    if v <= 0:
+        return PROTEIN_TARGET
+    return int(v) if v == int(v) else v
 
 
 def _log_meal(d, replace_id=None):
@@ -4467,7 +4481,7 @@ def api_review():
         consults=[dict(r) for r in db().execute("SELECT * FROM consults ORDER BY day DESC")],
         courses=[dict(r) for r in db().execute("SELECT * FROM courses ORDER BY start_day DESC")],
         files=[dict(r) for r in db().execute("SELECT id,day,ftype,label,orig,size FROM files ORDER BY day DESC, id DESC")],
-        daily=daily, dosecount=dosecount, registry=registry, target=PROTEIN_TARGET)
+        daily=daily, dosecount=dosecount, registry=registry, target=_protein_target())
 
 # ------------------------------------------------------------------ export
 @app.route("/export/<table>.csv")
@@ -5168,6 +5182,12 @@ color:var(--err);border-color:#E4C3BE}
 .ttab th,.ttab td{text-align:right;padding:6px 4px;border-top:1px solid var(--line)}
 .ttab th:first-child,.ttab td:first-child{text-align:left}
 .ttab th{font-size:13px;color:var(--muted);font-weight:700}
+/* GUTLOG_V3270_TIMEPICK */
+.tpick{display:inline-flex;align-items:center;gap:6px;font-size:18px;font-weight:700}
+.tpick select{width:auto;min-width:72px;padding:10px 8px;font-size:18px}
+.exrow.extime .t,.exrow.extime .m{cursor:pointer}
+.exrow.extime .t{text-decoration:underline dotted}
+.exago{margin:6px 0 8px}
 /* GUTLOG_V3230_CONTEXT */
 #nowCtx .dwtop{display:flex;align-items:center;gap:10px;margin:0 0 10px}
 #nowCtx .dwtop .q{margin:0}
@@ -7911,10 +7931,13 @@ async function loadNow(){
     const row=document.createElement('div');row.className='exrow';
     row.innerHTML='<span class="t"></span><span class="m"></span>'+
       '<button type="button" class="btn tiny u">Undo</button>';
-    row.querySelector('.t').textContent=e.dtime||'';
+    row.querySelector('.t').textContent=e.dtime||'--:--';
     row.querySelector('.m').textContent=e.medicine;
     row.querySelector('.u').onclick=async()=>{
       await post('/api/now/undo/'+e.id,{});toast('Removed');loadNow();};
+    row.classList.add('extime');row.title='Tap to change the time';
+    row.querySelector('.t').onclick=()=>exTimeEdit(row,e);
+    row.querySelector('.m').onclick=()=>exTimeEdit(row,e);
     el.appendChild(row);
   });
 }
@@ -8081,6 +8104,77 @@ function planBar(label,val,lo,hi,unit){
   w.appendChild(top);const bar=el('div','pb2b');const i=el('i','');
   i.style.width=Math.min(100,Math.round(100*val/(lo||1)))+'%';if(hi&&val>hi)i.className='over';
   bar.appendChild(i);w.appendChild(bar);return w;
+}
+/* GUTLOG_V3270_TIMEPICK -- no phone time dialog. On the folded phone the
+   system time dialog hid its Set button, so every time box on the page is
+   shown as two plain lists instead (hour, minute). The real box stays,
+   hidden, and keeps its value, so nothing that reads .value changes. */
+function tpPad(n){return (n<10?'0':'')+n;}
+const TP_DESC=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');
+function tpEnhance(inp){
+  if(!inp||inp.dataset.tp||!inp.parentNode)return;
+  inp.dataset.tp='1';
+  const w=document.createElement('span');w.className='tpick';
+  const h=document.createElement('select'),m=document.createElement('select');
+  h.className='tph';m.className='tpm';
+  h.setAttribute('aria-label','Hour');m.setAttribute('aria-label','Minute');
+  h.add(new Option('--',''));m.add(new Option('--',''));
+  for(let i=0;i<24;i++)h.add(new Option(tpPad(i),tpPad(i)));
+  for(let i=0;i<60;i++)m.add(new Option(tpPad(i),tpPad(i)));
+  w.appendChild(h);w.appendChild(document.createTextNode(':'));w.appendChild(m);
+  const show=v=>{const ok=/^\d\d:\d\d$/.test(v||'');h.value=ok?v.slice(0,2):'';m.value=ok?v.slice(3,5):'';};
+  Object.defineProperty(inp,'value',{configurable:true,
+    get(){return TP_DESC.get.call(inp);},
+    set(v){TP_DESC.set.call(inp,v);show(TP_DESC.get.call(inp));}});
+  const sync=()=>{
+    if(h.value&&!m.value)m.value='00';
+    if(!h.value)m.value='';
+    TP_DESC.set.call(inp,h.value?(h.value+':'+m.value):'');
+    inp.dispatchEvent(new Event('input',{bubbles:true}));
+    inp.dispatchEvent(new Event('change',{bubbles:true}));
+  };
+  h.onchange=sync;m.onchange=sync;
+  inp.style.display='none';
+  inp.parentNode.insertBefore(w,inp.nextSibling);
+  show(TP_DESC.get.call(inp));
+}
+function tpScan(root){(root||document).querySelectorAll('input[type=time]').forEach(tpEnhance);}
+new MutationObserver(ms=>ms.forEach(x=>x.addedNodes.forEach(n=>{
+  if(n.nodeType!==1)return;
+  if(n.matches&&n.matches('input[type=time]'))tpEnhance(n);
+  else if(n.querySelectorAll)tpScan(n);
+}))).observe(document.documentElement,{childList:true,subtree:true});
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>tpScan(document));
+else tpScan(document);
+
+/* An extra dose logged late gets its real time here. */
+function tpAgo(mins){const d=new Date(Date.now()-mins*60000);return tpPad(d.getHours())+':'+tpPad(d.getMinutes());}
+function exTimeEdit(rowEl,e){
+  const old=document.querySelector('.varpick');if(old)old.remove();
+  const box=document.createElement('div');box.className='varpick';
+  box.innerHTML='<p class="vt"></p><div class="chips exago"></div>'+
+    '<div class="vtm"><span class="lb">Time</span><input type="time" class="tt"></div>'+
+    '<div class="vb"><button type="button" class="cx">Cancel</button>'+
+    '<button type="button" class="go">Save time</button></div>';
+  box.querySelector('.vt').textContent=e.medicine+' - when was it taken?';
+  const tt=box.querySelector('.tt');tt.value=e.dtime||'';
+  const ago=box.querySelector('.exago');
+  const today=(nowData&&nowData.day)===todayISO;
+  [[15,'15 min ago'],[30,'30 min ago'],[60,'1 h ago'],[120,'2 h ago']].forEach(a=>{
+    if(!today)return;
+    const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=a[1];
+    b.onclick=()=>{tt.value=tpAgo(a[0]);ago.querySelectorAll('.chip').forEach(c=>c.classList.remove('sel'));b.classList.add('sel');};
+    ago.appendChild(b);
+  });
+  box.querySelector('.cx').onclick=()=>box.remove();
+  box.querySelector('.go').onclick=async()=>{
+    if(!tt.value){toast('Pick a time');return;}
+    try{const r=await post('/api/retime',{table:'doses',id:e.id,day:nowData.day,time:tt.value});
+      toast(r.unchanged?'No change':('Time set to '+tt.value));box.remove();loadNow();}
+    catch(err){toast(err.message);}
+  };
+  rowEl.parentNode.insertBefore(box,rowEl.nextSibling);
+  box.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 /* GUTLOG_V3260_TRIALS -- food trials as periods. */
 let TR=null,trOpen=null;
