@@ -121,6 +121,9 @@ CREATE TABLE IF NOT EXISTS stock_order_cfg (
 CREATE TABLE IF NOT EXISTS stock_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT, month TEXT NOT NULL, status TEXT DEFAULT 'OPEN',
   created TEXT, received_at TEXT DEFAULT '', lines TEXT DEFAULT '[]', text TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS meal_meta (
+  meal_id INTEGER PRIMARY KEY, card TEXT DEFAULT '', choices TEXT DEFAULT '{}',
+  onion INTEGER DEFAULT 0, extra TEXT DEFAULT '[]');
 CREATE TABLE IF NOT EXISTS stock_links (
   med_id INTEGER NOT NULL, variant TEXT NOT NULL, stock_med_id INTEGER NOT NULL,
   units REAL DEFAULT 1, PRIMARY KEY (med_id, variant));
@@ -285,7 +288,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE
+SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -733,6 +736,307 @@ def api_meals_today(day):
         "SELECT * FROM meals WHERE day=? ORDER BY mtime", (day,))]
     for r in rows: r["items"] = json.loads(r["items"] or "[]")
     return jsonify(rows)
+
+# ------------------------------------------------------------------ meal cards
+# GUTLOG_V3220_MEALS -- his usual day as cards on the Now tab. Each card opens
+# set to what he had last time, so an unchanged meal is one tap; a variation
+# is one chip. The cards are CONFIG (meals.local.json beside this file, never
+# committed -- it describes his diet), the meals they write are ordinary
+# `meals` rows, and which card and choices produced a row is kept beside it
+# in meal_meta, so Edit can reopen the card exactly as it was logged.
+MEAL_KINDS = {
+    # kind: (label, protein, kcal, fibre) for ONE medium serving -- typical
+    # values for the kind of dish, used only when a new dish has nothing
+    # better. Every item made from these is tagged "estimated".
+    "bread": ("Bread / baked", 8, 250, 2.5),
+    "rice": ("Rice / grain dish", 6, 300, 2),
+    "curry": ("Dal / curry", 7, 150, 4),
+    "sabzi": ("Dry sabzi", 2.5, 110, 3),
+    "fried": ("Fried snack", 4, 260, 2),
+    "sweet": ("Sweet", 3, 200, 0.8),
+    "drink": ("Drink", 3, 100, 0),
+    "salad": ("Salad / raw", 2, 60, 2.5),
+    "protein": ("Egg / paneer / fish dish", 14, 220, 1),
+}
+MEAL_SIZES = {"small": 0.75, "medium": 1.0, "large": 1.5}
+
+
+def _meal_cfg():
+    try:
+        path = os.environ.get("GUTLOG_MEALS_FILE") or os.path.join(BASE, "meals.local.json")
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {"cards": []}
+
+
+def _lib_map():
+    return dict((r["item"], dict(r)) for r in db().execute("SELECT * FROM library").fetchall())
+
+
+def _meal_items(pairs, lib):
+    """[(library item, quantity)] -> (meal items as /api/meals stores them,
+    names not in the library). Nutrition is copied at log time, like every
+    other meal row, so a later library edit never rewrites the past."""
+    out, missing = [], []
+    for name, q in pairs:
+        r = lib.get(name)
+        if not r:
+            missing.append(name)
+            continue
+        try:
+            q = max(0.25, min(10.0, float(q)))
+        except (TypeError, ValueError):
+            continue
+        out.append({"n": r["item"], "q": q, "p": r["protein"] or 0, "k": r["kcal"] or 0,
+                    "f": r["fibre"] or 0, "fm": r["fodmap"] if r["fodmap"] in FMAP else "M"})
+    return out, missing
+
+
+def _card_pairs(card, choices, onion):
+    """What a card's choices mean in library items."""
+    pairs, counts = [], {}
+    rows = card.get("rows") or []
+    for i, row in enumerate(rows):
+        if row.get("kind") == "count":
+            try:
+                counts[row.get("label")] = float(choices.get(str(i), row.get("q", 1)))
+            except (TypeError, ValueError):
+                counts[row.get("label")] = float(row.get("q", 1))
+    for i, row in enumerate(rows):
+        c = choices.get(str(i))
+        kind = row.get("kind")
+        if kind in ("fixed", "opt"):
+            on = row.get("on", kind == "fixed") if c is None else bool(c)
+            if on:
+                pairs += [(n, q) for n, q in row.get("items") or []]
+        elif kind == "count":
+            if row.get("items"):
+                pairs += [(n, q * counts.get(row.get("label"), 1)) for n, q in row["items"]]
+        elif kind == "pick":
+            opts = row.get("options") or []
+            try:
+                j = int(row.get("sel", 0) if c is None else c)
+            except (TypeError, ValueError):
+                j = -1
+            if 0 <= j < len(opts):
+                for n, q in opts[j].get("items") or []:
+                    if isinstance(q, str) and q.startswith("@"):
+                        q = counts.get(q[1:], 1)
+                    pairs.append((n, q))
+    if card.get("onion") and onion:
+        pairs.append((card.get("onion_item") or "Onion (tarka base)", 1))
+    return pairs
+
+
+def _meal_row_json(r):
+    d = dict(r)
+    d["items"] = json.loads(d["items"] or "[]")
+    m = db().execute("SELECT card, choices, onion, extra FROM meal_meta WHERE meal_id=?",
+                     (d["id"],)).fetchone()
+    d["card"] = m["card"] if m else ""
+    d["choices"] = json.loads(m["choices"] or "{}") if m else {}
+    d["onion"] = bool(m["onion"]) if m else False
+    d["extra"] = json.loads(m["extra"] or "[]") if m else []
+    return d
+
+
+@app.route("/api/mealcards")
+@login_required
+def api_mealcards():
+    day = _valid_day(request.args.get("day")) or today()
+    cfg = _meal_cfg()
+    lib = _lib_map()
+    cards, missing = [], set()
+    for c in cfg.get("cards") or []:
+        last = db().execute(
+            "SELECT m.choices, m.onion FROM meal_meta m JOIN meals x ON x.id=m.meal_id "
+            "WHERE m.card=? ORDER BY x.day DESC, x.mtime DESC, x.id DESC LIMIT 1",
+            (c.get("name"),)).fetchone()
+        rows = []
+        for row in c.get("rows") or []:
+            row = dict(row)
+            for n, _q in (row.get("items") or []):
+                if n not in lib:
+                    missing.add(n)
+            for o in row.get("options") or []:
+                for n, _q in (o.get("items") or []):
+                    if n not in lib:
+                        missing.add(n)
+            rows.append(row)
+        cards.append({"name": c.get("name"), "from": c.get("from", "00:00"),
+                      "onion": bool(c.get("onion")), "rows": rows,
+                      "last": json.loads(last["choices"] or "{}") if last else {},
+                      "last_onion": bool(last["onion"]) if last else False})
+    done = [r["slot"] for r in db().execute("SELECT slot FROM meals WHERE day=?", (day,))]
+    todays = [_meal_row_json(r) for r in db().execute(
+        "SELECT * FROM meals WHERE day=? ORDER BY mtime, id", (day,)).fetchall()]
+    nut = dict((n, {"p": r["protein"] or 0, "k": r["kcal"] or 0, "f": r["fibre"] or 0,
+                    "fm": r["fodmap"]}) for n, r in lib.items())
+    return jsonify(day=day, cards=cards, done=done, today=todays, lib=nut,
+                   missing=sorted(missing), kinds=dict((k, v[0]) for k, v in MEAL_KINDS.items()),
+                   protein_target=PROTEIN_TARGET)
+
+
+def _log_meal(d, replace_id=None):
+    """Shared by log and edit. A card meal or an 'other' meal, plus any
+    extra items. Returns (response dict, status)."""
+    lib = _lib_map()
+    card_name = (d.get("card") or "").strip()
+    choices = d.get("choices") or {}
+    onion = bool(d.get("onion"))
+    pairs = []
+    if card_name:
+        card = next((c for c in _meal_cfg().get("cards") or [] if c.get("name") == card_name), None)
+        if not card:
+            return {"ok": False, "err": "That meal card no longer exists."}, 400
+        pairs = _card_pairs(card, choices, onion)
+    extra = [(x.get("n"), x.get("q", 1)) for x in (d.get("extra") or []) if x.get("n")][:20]
+    items, missing = _meal_items(pairs + extra, lib)
+    if not items:
+        return {"ok": False, "err": "Nothing to log." + (
+            " Not in the food list: " + ", ".join(missing) if missing else "")}, 400
+    day = d.get("day") or today()
+    mtime = d.get("mtime") or now_hm()
+    if not _valid_day(day) or not _valid_hm(mtime):
+        return {"ok": False, "err": "Pick a real date and time."}, 400
+    slot = card_name or (d.get("slot") or "Meal")[:30]
+    p = sum(i["q"] * i["p"] for i in items)
+    k = sum(i["q"] * i["k"] for i in items)
+    f = sum(i["q"] * i["f"] for i in items)
+    fs = sum(i["q"] * FMAP[i["fm"]] for i in items)
+    if replace_id:
+        old = db().execute("SELECT * FROM meals WHERE id=?", (replace_id,)).fetchone()
+        if not old:
+            return {"ok": False, "err": "That meal is gone."}, 404
+        db().execute("UPDATE meals SET day=?, mtime=?, slot=?, items=?, protein=?, kcal=?, "
+                     "fibre=?, fscore=? WHERE id=?",
+                     (d.get("day") or old["day"], d.get("mtime") or old["mtime"], slot,
+                      json.dumps(items), round(p, 1), round(k), round(f, 1), round(fs, 2),
+                      replace_id))
+        mid = replace_id
+    else:
+        insert("meals", ["day", "mtime", "slot", "items", "protein", "kcal", "fibre",
+                         "fscore", "notes"],
+               [day, mtime, slot, json.dumps(items), round(p, 1), round(k), round(f, 1),
+                round(fs, 2), note(d)])
+        mid = db().execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
+    db().execute("INSERT OR REPLACE INTO meal_meta(meal_id, card, choices, onion, extra) "
+                 "VALUES(?,?,?,?,?)",
+                 (mid, card_name, json.dumps(choices), 1 if onion else 0,
+                  json.dumps([{"n": n, "q": q} for n, q in extra])))
+    db().commit()
+    return {"ok": True, "id": mid, "protein": round(p, 1), "missing": missing}, 200
+
+
+@app.route("/api/mealcards/log", methods=["POST"])
+@login_required
+def api_mealcards_log():
+    body, code = _log_meal(J())
+    return jsonify(**body), code
+
+
+@app.route("/api/meals/<int:mid>/replace", methods=["POST"])
+@login_required
+def api_meal_replace(mid):
+    body, code = _log_meal(J(), replace_id=mid)
+    return jsonify(**body), code
+
+
+@app.route("/api/meals/<int:mid>/delete", methods=["POST"])
+@login_required
+def api_meal_delete(mid):
+    db().execute("DELETE FROM meal_meta WHERE meal_id=?", (mid,))
+    db().execute("DELETE FROM meals WHERE id=?", (mid,))
+    db().commit()
+    return jsonify(ok=True)
+
+
+@app.route("/api/meals/<int:mid>/again", methods=["POST"])
+@login_required
+def api_meal_again(mid):
+    r = db().execute("SELECT * FROM meals WHERE id=?", (mid,)).fetchone()
+    if not r:
+        return jsonify(ok=False, err="That meal is gone."), 404
+    insert("meals", ["day", "mtime", "slot", "items", "protein", "kcal", "fibre", "fscore",
+                     "notes"],
+           [today(), now_hm(), r["slot"], r["items"], r["protein"], r["kcal"], r["fibre"],
+            r["fscore"], r["notes"] or ""])
+    nid = db().execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
+    m = db().execute("SELECT * FROM meal_meta WHERE meal_id=?", (mid,)).fetchone()
+    if m:
+        db().execute("INSERT OR REPLACE INTO meal_meta(meal_id, card, choices, onion, extra) "
+                     "VALUES(?,?,?,?,?)", (nid, m["card"], m["choices"], m["onion"], m["extra"]))
+        db().commit()
+    return jsonify(ok=True, id=nid)
+
+
+@app.route("/api/foods/search")
+@login_required
+def api_foods_search():
+    """Recent first, then favourites, then the rest; a query narrows all three."""
+    qy = (request.args.get("q") or "").strip().lower()
+    recent = []
+    for r in db().execute("SELECT items FROM meals ORDER BY day DESC, mtime DESC LIMIT 40"):
+        for it in json.loads(r["items"] or "[]"):
+            if it.get("n") and it["n"] not in recent:
+                recent.append(it["n"])
+    lib = _lib_map()
+    names = [n for n in recent if n in lib] + sorted(
+        [n for n, r in lib.items() if r["fav"] and n not in recent]) + sorted(
+        [n for n, r in lib.items() if not r["fav"] and n not in recent])
+    if qy:
+        words = qy.split()
+        names = [n for n in names
+                 if all(w in (n + " " + (lib[n]["tags"] or "")).lower() for w in words)]
+    return jsonify(foods=[{"n": n, "portion": lib[n]["portion"], "p": lib[n]["protein"],
+                           "k": lib[n]["kcal"], "est": "estimated" in (lib[n]["tags"] or ""),
+                           "recent": n in recent} for n in names[:30]])
+
+
+def _guess_kind(name):
+    t = name.lower()
+    for kind, words in (("bread", "pizza sandwich toast bread burger pav bun roll wrap"),
+                        ("fried", "samosa pakora kachori bhatura puri chips fries tikki vada"),
+                        ("rice", "biryani pulao rice khichdi noodle pasta upma poha"),
+                        ("sweet", "cake laddu halwa kheer barfi ice sweet pastry dessert gulab"),
+                        ("drink", "juice shake lassi coffee tea soup smoothie"),
+                        ("salad", "salad fruit raita"),
+                        ("protein", "egg paneer fish chicken tofu omelette"),
+                        ("curry", "dal curry chole rajma kadhi gravy")):
+        if any(w in t for w in words.split()):
+            return kind
+    return "sabzi"
+
+
+@app.route("/api/foods/new", methods=["POST"])
+@login_required
+def api_foods_new():
+    """A new dish by name only. Values come from its kind and size, tagged
+    'estimated' so every screen can say so; editable later in the library."""
+    d = J()
+    name = (d.get("name") or "").strip()[:80]
+    if not name:
+        return jsonify(ok=False, err="Name the dish."), 400
+    kind = d.get("kind") if d.get("kind") in MEAL_KINDS else _guess_kind(name)
+    lab, p, k, f = MEAL_KINDS[kind]
+    ex = db().execute("SELECT item FROM library WHERE LOWER(item)=LOWER(?)", (name,)).fetchone()
+    if ex:
+        r = db().execute("SELECT * FROM library WHERE item=?", (ex["item"],)).fetchone()
+        return jsonify(ok=True, n=r["item"], existed=True, kind=kind, p=r["protein"] or 0,
+                       k=r["kcal"] or 0, f=r["fibre"] or 0, fm=r["fodmap"])
+    insert("library", ["cat", "item", "portion", "protein", "kcal", "fibre", "fodmap", "status",
+                       "fav", "tags", "note"],
+           ["H", name, "1 medium serving", p, k, f, "M", "", 0, "estimated " + kind,
+            "Estimated from a typical " + lab.lower() + " serving; FODMAP not known. Edit when known."])
+    return jsonify(ok=True, n=name, existed=False, kind=kind, p=p, k=k, f=f, fm="M")
+
+
+@app.route("/api/foods/guess")
+@login_required
+def api_foods_guess():
+    return jsonify(kind=_guess_kind(request.args.get("name") or ""))
+
 
 # ------------------------------------------------------------------ PRN doses
 @app.route("/api/doses", methods=["POST"])
@@ -4272,6 +4576,18 @@ color:var(--err);border-color:#E4C3BE}
 .btn:active{transform:scale(.98)}
 .btnrow{display:flex;gap:9px;margin-top:12px;flex-wrap:wrap}
 .btnrow .btn{flex:1;min-width:140px}
+/* GUTLOG_V3220_MEALS */
+#mealTabs{margin:4px 0 6px}
+.mrow{padding:10px 0;border-top:1px solid var(--line)}
+.mstep{display:flex;align-items:center;gap:10px}
+.mq{min-width:74px;text-align:center;font-weight:700;font-size:16px}
+.mx{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:6px 0;font-size:15px}
+.mtd{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-top:1px solid var(--line);font-size:15px}
+.mtd small{display:block;color:var(--muted);font-size:14px;margin-top:2px}
+.macts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex:none;max-width:50%}
+.macts .chip{padding:7px 11px;font-size:14px}
+.mnew{margin-top:10px;padding:10px;border:1.5px dashed var(--line);border-radius:12px}
+.mpick{margin-top:10px}
 
 /* collapsible cards */
 .card.fold{padding:0;overflow:hidden}
@@ -4832,6 +5148,13 @@ function thmCycle(){
     </div>
     <button type="button" class="btn primary" id="n_bpSave">Save reading</button>
     <p class="hint" id="n_bpLast" style="margin:10px 0 0"></p>
+  </div>
+
+  <div class="card" id="nowMeal">
+    <div class="dwtop"><p class="q">Meal</p><span class="fs" id="mealSum"></span></div>
+    <div class="chips" id="mealTabs"></div>
+    <div id="mealBody"></div>
+    <div id="mealToday"></div>
   </div>
 
   <div class="card fold" id="nowDoses">
@@ -6743,7 +7066,173 @@ function openVariantPicker(rowEl,r){
   box.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 
+/* GUTLOG_V3220_MEALS -- the meal card on the Now tab. Opens on the card for
+   the time of day, set to what was had last time: an unchanged meal is one
+   tap. Other meal takes anything, including a dish never seen before. */
+let MC=null,mcCur=0,mcSel=null,mcEdit=null,mcDel=null,mcPick=false;
+const MC_SIZES=[['small',0.75,'Small'],['medium',1,'Medium'],['large',1.5,'Large']];
+function mcNowHM(){return new Date().toTimeString().slice(0,5);}
+function mcAuto(){
+  const now=mcNowHM();let best=-1,any=-1;
+  MC.cards.forEach((c,i)=>{if((c.from||'00:00')<=now){any=i;if(MC.done.indexOf(c.name)<0)best=i;}});
+  return best>=0?best:(any>=0?any:0);
+}
+function mcFresh(i,from){
+  const c=MC.cards[i];const src=from?from.choices:(c.last||{});const ch={};
+  c.rows.forEach((r,j)=>{const k=String(j);
+    if(src[k]!==undefined)ch[k]=src[k];
+    else if(r.kind==='fixed')ch[k]=true;
+    else if(r.kind==='opt')ch[k]=!!r.on;
+    else if(r.kind==='count')ch[k]=r.q||1;
+    else if(r.kind==='pick')ch[k]=(r.sel===undefined?0:r.sel);});
+  return {choices:ch,onion:from?!!from.onion:!!c.last_onion,
+    extra:(from&&from.extra?from.extra:[]).map(x=>({n:x.n,q:x.q}))};
+}
+function mcPairs(i,sel){
+  const out=[];if(i<0)return out;const c=MC.cards[i];const counts={};
+  c.rows.forEach((r,j)=>{if(r.kind==='count')counts[r.label]=Number(sel.choices[String(j)]||r.q||1);});
+  c.rows.forEach((r,j)=>{const v=sel.choices[String(j)];
+    if((r.kind==='fixed'||r.kind==='opt')&&v)(r.items||[]).forEach(x=>out.push([x[0],x[1]]));
+    else if(r.kind==='count'&&r.items)r.items.forEach(x=>out.push([x[0],x[1]*counts[r.label]]));
+    else if(r.kind==='pick'){const o=(r.options||[])[Number(v)];
+      if(o)(o.items||[]).forEach(x=>out.push([x[0],(typeof x[1]==='string'&&x[1][0]==='@')?(counts[x[1].slice(1)]||1):x[1]]));}});
+  if(c.onion&&sel.onion)out.push(['Onion (tarka base)',1]);
+  return out;
+}
+function mcEst(pairs){let p=0,k=0;pairs.forEach(x=>{const n=MC.lib[x[0]];if(n){p+=n.p*x[1];k+=n.k*x[1];}});return [p,k];}
+function mcSame(){
+  if(mcEdit||mcCur<0||mcSel.extra.length)return false;
+  const c=MC.cards[mcCur];if(!c.last||!Object.keys(c.last).length)return false;
+  return JSON.stringify(mcFresh(mcCur).choices)===JSON.stringify(mcSel.choices)&&!!c.last_onion===!!mcSel.onion;
+}
+async function loadMeals(){
+  try{MC=await jget('/api/mealcards?day='+todayISO);}catch(e){return;}
+  if(!MC.cards.length){$('#nowMeal').style.display='none';return;}
+  if(!mcEdit){mcCur=mcAuto();mcSel=mcFresh(mcCur);}
+  mcRender();
+}
+function mcTab(label,on,fn){const b=el('button','chip'+(on?' sel':''),label);b.type='button';b.onclick=fn;return b;}
+function mcRender(){
+  const tabs=$('#mealTabs');tabs.innerHTML='';
+  MC.cards.forEach((c,i)=>tabs.appendChild(mcTab(c.name+(MC.done.indexOf(c.name)>=0?' ✓':''),i===mcCur,()=>{mcCur=i;mcEdit=null;mcPick=false;mcSel=mcFresh(i);mcRender();})));
+  tabs.appendChild(mcTab('Other meal',mcCur<0,()=>{mcCur=-1;mcEdit=null;mcPick=true;mcSel={choices:{},onion:false,extra:[],slot:mcSlotGuess()};mcRender();}));
+  const b=$('#mealBody');b.innerHTML='';
+  if(mcEdit){const e=el('p','hint','Editing the '+mcEdit.slot+' logged at '+mcEdit.mtime+'. Save keeps that time.');e.style.margin='8px 2px';b.appendChild(e);}
+  if(mcCur>=0){
+    const c=MC.cards[mcCur];
+    c.rows.forEach((r,j)=>{const k=String(j);const row=el('div','mrow');
+      if(r.kind==='fixed'||r.kind==='opt'){
+        const on=!!mcSel.choices[k];const t=el('button','chip'+(on?' sel':''),(on?'✓ ':'')+(r.text||r.label));t.type='button';
+        t.onclick=()=>{mcSel.choices[k]=!on;mcRender();};row.appendChild(t);}
+      else if(r.kind==='count'){
+        const q=Number(mcSel.choices[k]||1);const lab=el('p','lbl',r.label);row.appendChild(lab);
+        const st=el('div','mstep');const mi=el('button','chip num','−');mi.type='button';const pl=el('button','chip num','+');pl.type='button';
+        const v=el('span','mq',(q%1?q:q)+' '+(r.unit||'')+(q===1?'':'s'));
+        mi.onclick=()=>{mcSel.choices[k]=Math.max(0.5,q<=1?q-0.5:q-1);mcRender();};
+        pl.onclick=()=>{mcSel.choices[k]=q<1?1:q+1;mcRender();};
+        st.appendChild(mi);st.appendChild(v);st.appendChild(pl);row.appendChild(st);}
+      else if(r.kind==='pick'){
+        row.appendChild(el('p','lbl',r.label));const ch=el('div','chips');
+        (r.options||[]).forEach((o,oi)=>{const on=Number(mcSel.choices[k])===oi;const t=el('button','chip'+(on?' sel':''),o.t);t.type='button';
+          t.onclick=()=>{mcSel.choices[k]=on?-1:oi;mcRender();};ch.appendChild(t);});
+        row.appendChild(ch);}
+      b.appendChild(row);});
+    if(c.onion){const row=el('div','mrow');row.appendChild(el('p','lbl','Onion in today’s cooking'));const ch=el('div','chips');
+      [['No onion',false],['Onion',true]].forEach(x=>{const t=el('button','chip'+(!!mcSel.onion===x[1]?' sel':''),x[0]);t.type='button';t.onclick=()=>{mcSel.onion=x[1];mcRender();};ch.appendChild(t);});
+      row.appendChild(ch);b.appendChild(row);}
+  }else{
+    const row=el('div','mrow');row.appendChild(el('p','lbl','Which meal'));const ch=el('div','chips');
+    ['Breakfast','Lunch','Snack','Dinner','Eating out'].forEach(s=>{const t=el('button','chip'+(mcSel.slot===s?' sel':''),s);t.type='button';t.onclick=()=>{mcSel.slot=s;mcRender();};ch.appendChild(t);});
+    row.appendChild(ch);b.appendChild(row);
+  }
+  if(mcSel.extra.length){const row=el('div','mrow');row.appendChild(el('p','lbl',mcCur>=0?'Also had':'Had'));
+    mcSel.extra.forEach((x,xi)=>{const line=el('div','mx');const nm=el('span','',x.n+(MC.lib[x.n]&&MC.lib[x.n].est?' (estimated)':''));
+      const st=el('div','mstep');const mi=el('button','chip num','−');mi.type='button';const pl=el('button','chip num','+');pl.type='button';
+      const v=el('span','mq','×'+x.q);
+      mi.onclick=()=>{if(x.q<=0.5){mcSel.extra.splice(xi,1);}else{x.q=x.q<=1?0.5:x.q-1;}mcRender();};
+      pl.onclick=()=>{x.q=x.q<1?1:x.q+1;mcRender();};
+      st.appendChild(mi);st.appendChild(v);st.appendChild(pl);line.appendChild(nm);line.appendChild(st);row.appendChild(line);});
+    b.appendChild(row);}
+  if(mcPick)b.appendChild(mcPicker());
+  else{const a=el('button','btn ghost','+ Something else');a.type='button';a.style.marginTop='10px';a.onclick=()=>{mcPick=true;mcRender();};b.appendChild(a);}
+  const pairs=mcPairs(mcCur,mcSel).concat(mcSel.extra.map(x=>[x.n,x.q]));
+  const e=mcEst(pairs);
+  b.appendChild(el('p','hint',pairs.length?('About '+e[0].toFixed(0)+' g protein · '+Math.round(e[1])+' kcal (estimated) · time taken when you press log'):'Add what you had.'));
+  if(MC.missing&&MC.missing.length&&mcCur>=0){const w=el('p','hint','Not in the food list yet, left out: '+MC.missing.join(', '));b.appendChild(w);}
+  const name=mcCur>=0?MC.cards[mcCur].name:(mcSel.slot||'Meal');
+  const go=el('button','btn primary',mcEdit?'Save changes':(mcSame()?('Log '+name.toLowerCase()+' — same as last time'):('Log '+name.toLowerCase())));
+  go.type='button';go.disabled=!pairs.length;
+  go.onclick=async()=>{if(go.dataset.busy)return;go.dataset.busy=1;
+    const body={card:mcCur>=0?MC.cards[mcCur].name:'',choices:mcSel.choices,onion:!!mcSel.onion,extra:mcSel.extra,slot:name};
+    try{
+      if(mcEdit){await post('/api/meals/'+mcEdit.id+'/replace',body);toast(name+' updated');}
+      else{body.day=todayISO;body.mtime=mcNowHM();const r=await post('/api/mealcards/log',body);
+        toast(name+' logged'+(r.missing&&r.missing.length?' · left out: '+r.missing.join(', '):''));}
+      mcEdit=null;mcPick=false;await loadMeals();
+    }catch(err){go.dataset.busy='';toast(err.message);}};
+  b.appendChild(go);
+  if(mcEdit){const cn=el('button','btn ghost','Cancel');cn.type='button';cn.style.marginTop='8px';cn.onclick=()=>{mcEdit=null;loadMeals();};b.appendChild(cn);}
+  mcToday();
+}
+function mcSlotGuess(){const h=Number(mcNowHM().slice(0,2));return h<11?'Breakfast':h<16?'Lunch':h<19?'Snack':'Dinner';}
+function mcPicker(){
+  const box=el('div','mpick');const inp=document.createElement('input');inp.type='text';inp.placeholder='Search food or type a new dish';inp.id='mcQ';
+  const res=el('div','chips');res.style.marginTop='8px';const nd=el('div','');
+  box.appendChild(inp);box.appendChild(res);box.appendChild(nd);
+  let tm=null;
+  const run=async()=>{const q=inp.value.trim();let j;try{j=await jget('/api/foods/search?q='+encodeURIComponent(q));}catch(e){return;}
+    res.innerHTML='';nd.innerHTML='';
+    j.foods.forEach(f=>{const t=el('button','chip',f.n+(f.est?' *':''));t.type='button';t.title=f.portion||'';
+      t.onclick=()=>{MC.lib[f.n]={p:f.p||0,k:f.k||0,est:f.est};mcSel.extra.push({n:f.n,q:1});mcPick=false;mcRender();};res.appendChild(t);});
+    if(q.length>=2&&!j.foods.some(f=>f.n.toLowerCase()===q.toLowerCase()))nd.appendChild(mcNewDish(q));};
+  inp.oninput=()=>{clearTimeout(tm);tm=setTimeout(run,220);};
+  setTimeout(()=>{run();},0);
+  const cl=el('button','btn ghost','Close');cl.type='button';cl.style.marginTop='8px';cl.onclick=()=>{mcPick=false;mcRender();};box.appendChild(cl);
+  return box;
+}
+function mcNewDish(name){
+  const w=el('div','mnew');w.appendChild(el('p','lbl','New dish: “'+name+'” — how big, and what kind?'));
+  let size=1,kind=null;const sz=el('div','chips');const kd=el('div','chips');kd.style.marginTop='8px';
+  MC_SIZES.forEach(s=>{const t=el('button','chip'+(s[1]===1?' sel':''),s[2]);t.type='button';t.onclick=()=>{size=s[1];sz.querySelectorAll('.chip').forEach(c=>c.classList.remove('sel'));t.classList.add('sel');};sz.appendChild(t);});
+  const drawKinds=()=>{kd.innerHTML='';Object.keys(MC.kinds).forEach(kk=>{const t=el('button','chip'+(kk===kind?' sel':''),MC.kinds[kk]);t.type='button';t.onclick=()=>{kind=kk;drawKinds();};kd.appendChild(t);});};
+  jget('/api/foods/guess?name='+encodeURIComponent(name)).then(j=>{kind=j.kind;drawKinds();}).catch(()=>drawKinds());
+  w.appendChild(sz);w.appendChild(kd);
+  const add=el('button','btn primary','Add “'+name+'”');add.type='button';add.style.marginTop='10px';
+  add.onclick=async()=>{try{const r=await post('/api/foods/new',{name:name,kind:kind});
+      MC.lib[r.n]={p:r.p,k:r.k,est:!r.existed};mcSel.extra.push({n:r.n,q:size});mcPick=false;
+      toast(r.existed?r.n+' was already in your foods':r.n+' added — values estimated');mcRender();}
+    catch(err){toast(err.message);}};
+  w.appendChild(add);
+  w.appendChild(el('p','hint','Values are estimated from a typical dish of that kind and marked as such; edit them later in the food list if you want.'));
+  return w;
+}
+function mcToday(){
+  const box=$('#mealToday');box.innerHTML='';const t=MC.today||[];
+  let p=0;t.forEach(m=>p+=m.protein||0);
+  $('#mealSum').textContent=t.length?(t.length+' logged · '+Math.round(p)+' of '+MC.protein_target+' g protein'):'nothing yet today';
+  if(!t.length)return;
+  box.appendChild(el('p','lbl','Today'));
+  t.forEach(m=>{const line=el('div','mtd');
+    const txt=el('div','');txt.appendChild(el('b','',m.mtime+' · '+m.slot));
+    txt.appendChild(el('small','',m.items.map(i=>i.n+(i.q!==1?' ×'+i.q:'')).join(', ')+' · '+Math.round(m.protein||0)+' g protein'));
+    const acts=el('div','macts');
+    const ed=el('button','chip','Edit');ed.type='button';
+    ed.onclick=()=>{mcEdit={id:m.id,slot:m.slot,mtime:m.mtime};mcPick=false;
+      const ci=MC.cards.findIndex(c=>c.name===m.card);
+      if(m.card&&ci>=0){mcCur=ci;mcSel=mcFresh(ci,m);}
+      else{mcCur=-1;mcSel={choices:{},onion:false,slot:m.slot,extra:(m.card?[]:m.items.map(i=>({n:i.n,q:i.q}))).concat(m.card?[]:[])};
+        if(!m.card){m.items.forEach(i=>{if(!MC.lib[i.n])MC.lib[i.n]={p:i.p,k:i.k};});}}
+      mcRender();$('#nowMeal').scrollIntoView({behavior:'smooth'});};
+    const ag=el('button','chip','Again');ag.type='button';
+    ag.onclick=async()=>{try{await post('/api/meals/'+m.id+'/again',{});toast(m.slot+' logged again, now');loadMeals();}catch(err){toast(err.message);}};
+    const de=el('button','chip',mcDel===m.id?'Sure?':'Delete');de.type='button';
+    de.onclick=async()=>{if(mcDel!==m.id){mcDel=m.id;mcToday();return;}
+      try{await post('/api/meals/'+m.id+'/delete',{});mcDel=null;toast('Deleted');loadMeals();}catch(err){toast(err.message);}};
+    acts.appendChild(ed);acts.appendChild(ag);acts.appendChild(de);
+    line.appendChild(txt);line.appendChild(acts);box.appendChild(line);});
+}
 async function loadNow(){
+  loadMeals();
   loadStockAlerts();
   loadOrderDue();
   loadMedStatus();

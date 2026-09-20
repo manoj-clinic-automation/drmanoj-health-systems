@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.21.0)
+# GutLog — DOSSIER (v3.22.0)
 
 Single source of truth. Update after every change.
 
@@ -377,6 +377,67 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## Meal cards on the Now tab — v3.22.0
+
+Meals were not being logged. Not forgotten — **logging one took ten to fifteen
+taps and typed numbers**, so it lost to every other thing happening at
+breakfast. A food diary nobody fills in is not a food diary, and the data it
+was supposed to feed (the FODMAP work, the protein target, food challenges)
+was quietly starving.
+
+The fix is not a better form. It is the observation that **most meals are the
+same meal**. So a card opens already set to what he had last time and the
+button reads *"Log lunch — same as last time"*: one tap, and the time is taken
+at the moment of logging rather than typed.
+
+### The card
+
+Six cards — Morning, Breakfast, Before lunch, Lunch, Evening tea, Dinner —
+**defined in `meals.local.json` beside `app.py`**, mode 600, never committed
+(CLAUDE.md §5d: what he eats is the health record). The Now tab opens on the
+card for the time of day: the latest card whose `from` time has passed and
+that is not yet logged today.
+
+- A different choice is **one chip**, not a form.
+- Counts step in **halves**, because half a slice is a real portion and
+  "1 or 2" is not a measurement.
+- An **onion switch** on lunch and dinner adds the onion base item when it is
+  on — it is the thing most likely to differ day to day and most likely to
+  matter.
+- A food the library does not have is **named, not silently dropped**, and the
+  rest of the meal still logs. A missing ingredient must never cost the meal.
+
+### The dish that is not on any card
+
+His question when he saw the mockup was the right one: *what happens with
+pizza, or something new?* Two answers, both one tap from where he already is:
+
+- **"+ Something else"** on every card, and an **"Other meal"** tab: search his
+  own foods, **recent first**, then favourites — because the thing he is
+  looking for is nearly always something he has eaten lately.
+- A dish never seen before: **name, size (small/medium/large), kind** (guessed
+  from the name). It is added to the library as an ordinary item, tagged
+  `estimated <kind>`, with values from a typical dish of that kind and FODMAP
+  **"M" with a note saying it is unknown**. Guessing a number is acceptable
+  here *only because the guess is labelled as one* — an unlabelled estimate in
+  a food diary is worse than a gap. The same name typed again reuses the item
+  rather than making a second.
+
+### Today's meals, and fixing a mistake
+
+Under the card: **Edit** (reopens the card exactly as logged; Save keeps the
+original day and time, so correcting what was eaten never rewrites when),
+**Again** (logs the same meal now) and **Delete** (two taps).
+
+### What it deliberately does not touch
+
+New table `meal_meta` (card, choices, onion, extras per meal) created by
+`SCHEMA` — no migration step, no `schema_version` bump. **`meals` rows keep
+exactly their old shape**, so every existing total, the Meals tab and the
+review export are untouched: the card is a faster way to write the same row,
+not a new kind of record. `GUTLOG_MEALS_FILE` overrides the config path for
+tests only.
 
 ## One tablet is one dose — v3.21.0
 
@@ -852,6 +913,22 @@ via OLS reverse proxy.
 > pulled that file out from under the browser suite mid-run on 2026-09-15 —
 > which aborts loudly, as designed, but wastes a fifteen-minute run.
 
+- `test_meal_cards.py` — **12/12 PASS** (2026-09-20, v3.22.0), on Windows and
+  on the server; **14 declared new assertions, 14 seen to fail** (12 against
+  the reconstructed v3.21.0, 2 by mutation). The fixture uses **invented
+  foods** and a scratch card file, so no assertion can pass by accident on his
+  real diet. Asserts that the cards come from the meal file and name what the
+  library lacks; that one tap logs the card as it stands; that choices, half
+  counts and "last time" are remembered; the onion switch and a deselected
+  choice; that **a missing food never breaks a log**; that Edit keeps the
+  original time while rewriting what was eaten; Again; Delete; a dish by name
+  only becoming an estimated item and being reused next time; that search puts
+  what was eaten recently first; and that the Now tab carries the card.
+  **Case 12 drives real Chromium**: one tap logs breakfast "same as last
+  time", a new dish is added and logged, zero page errors, no sideways scroll.
+  The two mutations are the errors that would still look right — the egg count
+  ignored by the chosen style, and Edit stamping *now* instead of the logged
+  time.
 - `test_one_dose.py` — **5/5 PASS** (2026-09-20, v3.21.0), on Windows and on the
   server under Python 3.9; **4 declared new assertions, 4 seen to fail** — two
   against the reconstructed v3.20.0, and two by deliberate mutation because
@@ -1185,6 +1262,35 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-20 v3.22.0 — meal cards on the Now tab. DEPLOYED 09:43 IST.**
+  `app.py` sha256 `a8a31320…`, 430,912 bytes on the server, **byte-identical to
+  the repo build**; pre-flight confirmed `GUTLOG_V3210_ONEDOSE` present, no
+  v3.22.0 marker, and sha256 equal to the repo before anything was copied.
+  `--reverse` reproduces the pre-patch build byte-for-byte. Rollback:
+  `cp /root/gutlog/app.py.bak-v3220-20260920_094246 /root/gutlog/app.py`.
+  `patch_gutlog_v3220.py`, **6 anchors**, Jinja-token guard.
+  Database backed up before the patch (`health3.db.pre-v3220-20260920_094142`,
+  integrity ok, 29 tables, 9 meals, 91 library items) and again by the seeder.
+  **No `schema_version` bump** — `meal_meta` is `CREATE TABLE IF NOT EXISTS` in
+  `SCHEMA`; confirmed live after the restart: present with the expected
+  columns, 0 rows, `schema_version` still 3.3.4, and the 9 existing `meals`
+  rows untouched in shape.
+  Server gates before the restart: **test_meal_cards 12/12**, test_one_dose
+  5/5, a 18/18, b 16/16, c 20/20, d 18/18, e 13/13, f 8/8, g 14/14, i 18/18,
+  m 19/19, n 14/14, o 10/10, watch_tiles 7/7, j 28/28, and `ops/test_sso.py`
+  **11/11** — the meal anchors do not overlap the SSO ones, and that was
+  checked rather than assumed. Offline: `test_ui_now` **196 PASS / 0 FAIL**,
+  `test_ui_order` ALL PASS, negative control **14 declared, 14 seen to fail**.
+  **The seed** (`seed_meals.py`, dry run read first, `INSERT OR IGNORE`, its
+  own backup): library **91 → 160**, 69 added, 0 already there, and the dry run
+  ended on the line that matters — *every food the cards name is present*. The
+  recipe file was deleted from the server afterwards; it was needed only for
+  the seed. `meals.local.json` stays, mode 600, because the app reads it.
+  **Live, read-only, nothing logged on his record:** `/api/mealcards` 200 with
+  **6 cards and an empty `missing` list**, 18 rows across them, the onion
+  switch on lunch and dinner only; the food search finds a seeded recipe; the
+  served page carries `nowMeal`; no traceback; anonymous still 302. No meal was
+  logged during verification — only GETs were issued.
 - **2026-09-20 v3.21.0 — one tablet is one dose, and the 18-Sep correction.
   DEPLOYED 08:22 IST.** `app.py` sha256 `37fec194…`, 402,687 bytes on the
   server, **byte-identical to the repo build**; pre-flight confirmed

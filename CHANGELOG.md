@@ -3,6 +3,52 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — GutLog v3.22.0: most meals are the same meal
+
+**The problem was never forgetfulness.** Logging a meal took **ten to fifteen
+taps and typed numbers**, so at breakfast it lost to everything else, and
+meals simply were not logged. A food diary nobody fills in is not a food
+diary — and the work downstream of it (the FODMAP challenges, the protein
+target) was quietly starving.
+
+**The fix is not a better form.** It is the observation that most meals are
+the same meal. A card on the Now tab opens already set to what he had last
+time, and the button reads *"Log lunch — same as last time"*: **one tap**,
+with the time taken at the moment of logging rather than typed. A different
+choice is one chip; counts step in **halves**, because half a slice is a real
+portion and "1 or 2" is not a measurement; an onion switch on lunch and dinner
+covers the thing most likely to differ day to day.
+
+**His question about the mockup was the right one:** what happens with pizza,
+or something new? "+ Something else" on every card and an "Other meal" tab:
+search his own foods with **recent first**, or type a dish never seen before —
+name, size, kind — and it is added with values estimated from a typical dish
+of that kind, **tagged `estimated` and carrying a note that its FODMAP value
+is unknown**. Guessing a number is acceptable here *only because the guess is
+labelled as one*; an unlabelled estimate in a food diary is worse than a gap.
+The same name typed again reuses the item instead of making a second.
+
+**Two refusals worth naming.** A food the library lacks is **named, not
+silently dropped**, and the rest of the meal still logs — a missing ingredient
+must never cost the meal. And **Edit keeps the original day and time**: fixing
+what was eaten must never rewrite *when*, which is mutation-controlled, since
+stamping "now" on an edit is the plausible-looking version of that bug.
+
+**What it deliberately does not touch.** New `meal_meta` table via SCHEMA, no
+migration, no `schema_version` bump, and **`meals` rows keep exactly their old
+shape** — so every existing total, the Meals tab and the review export are
+untouched. The card is a faster way to write the same row, not a new kind of
+record. The six cards live in a gitignored file beside `app.py` (what he eats
+is the health record).
+
+Gates: `test_meal_cards` **12/12** with **14 declared / 14 seen to fail**, on
+invented foods and a scratch card file; case 12 drives real Chromium. Every
+GutLog suite green on the server, plus `ops/test_sso.py` 11/11 — the meal
+anchors do not overlap the SSO ones and that was checked, not assumed.
+`test_ui_now` 196 PASS / 0 FAIL. Seed: library 91 → 160, and the dry run ended
+on *every food the cards name is present*. Detail in
+`gutlog/DOSSIER_GutLog.md`.
+
 ## 2026-09-20 — HEALTH_SSO_V1: one sign-in across all three apps
 
 **His ask (17-Sep).** Moving from GutLog into RxGuard or FitLog makes him sign

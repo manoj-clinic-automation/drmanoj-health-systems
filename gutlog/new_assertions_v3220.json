@@ -1,0 +1,79 @@
+{
+ "_": [
+  "GutLog v3.22.0 -- meal cards. v3.21.0 has no card, no endpoints and no meal_meta, so every assertion fails there by version.",
+  "Two boundaries are also broken on purpose in the current build: the egg count carried into the chosen style, and Edit keeping the time the meal was logged."
+ ],
+ "suite": "test_meal_cards.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3220.py",
+ "assertions": [
+  {
+   "name": "01 the cards come from the meal file, with what the library lacks",
+   "control": "version"
+  },
+  {
+   "name": "02 one tap logs the card as it stands",
+   "control": "version"
+  },
+  {
+   "name": "03 choices, counts in halves, and 'last time' remembered",
+   "control": "version"
+  },
+  {
+   "name": "04 the onion switch and a deselected choice",
+   "control": "version"
+  },
+  {
+   "name": "05 a missing food never breaks a log",
+   "control": "version"
+  },
+  {
+   "name": "06 Edit keeps the original time and rewrites the meal",
+   "control": "version"
+  },
+  {
+   "name": "07 Again logs the same meal now",
+   "control": "version"
+  },
+  {
+   "name": "08 Delete removes the meal",
+   "control": "version"
+  },
+  {
+   "name": "09 a dish never seen before, by name only",
+   "control": "version"
+  },
+  {
+   "name": "10 search puts what was eaten recently first",
+   "control": "version"
+  },
+  {
+   "name": "11 the Now tab carries the meal card",
+   "control": "version"
+  },
+  {
+   "name": "12 in a real browser: one tap, and a new dish",
+   "control": "version"
+  },
+  {
+   "name": "03 choices, counts in halves",
+   "control": "mutation",
+   "mutation": {
+    "id": "nocount",
+    "why": "egg style ignores the egg count",
+    "find": "                        q = counts.get(q[1:], 1)\n",
+    "replace": "                        q = 1\n"
+   }
+  },
+  {
+   "name": "06 Edit keeps the original time",
+   "control": "mutation",
+   "mutation": {
+    "id": "edittime",
+    "why": "edit stamps now instead of the logged time",
+    "find": "(d.get(\"day\") or old[\"day\"], d.get(\"mtime\") or old[\"mtime\"], slot,",
+    "replace": "(d.get(\"day\") or old[\"day\"], now_hm(), slot,"
+   }
+  }
+ ]
+}
