@@ -22,8 +22,17 @@ mode, so `sed -i` would have sent every subsequent line to a deleted file.
 392 masked, 0 values left, 944 lines before and after, byte-identical to the
 same substitution replayed over the pre-change copy, and a probe request
 afterwards appended normally. The interim copy was removed only once those
-checks passed. Masking the file does not un-expose the key for 11–20 Sep;
-whether to rotate it is a separate call.
+checks passed.
+
+**The exposure is closed and accepted — the key was not rotated**, by the
+owner's decision: the log was unreadable by any unprivileged or remote
+account, and that token is send-only, POST-only and `healthconnect`-only with
+no read access, so nothing that could have read it could have used it for
+anything. Recorded in the DOSSIER with the measured modes, because "root-only"
+is the right conclusion but not literally the permission — the logs directory
+is 750 `root:nobody`, so CyberPanel's `lsadm`/`lscpd` and the litespeed worker
+could read it too. The gunicorn log never carried it at all: 0 unredacted
+values across the live file and all eight rotated copies.
 
 **`backup.sh`: the obvious one-character fix was wrong.** Widening
 `--exclude='*.db'` to `'*.db*'` does drop the twenty timestamped copies of the

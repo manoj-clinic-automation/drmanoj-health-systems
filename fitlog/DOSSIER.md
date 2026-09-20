@@ -714,9 +714,36 @@ delete the file either — that orphans the fd. There is **no logrotate rule**
 for it: OLS self-rolls at `rollingSize 10M` / `keepDays 10`, and at ~160 KB
 it will not roll for months, so there were **no rotated copies** to clean.
 
-`FITLOG_HC_TOKEN` was in cleartext on disk from 11 Sep to 20 Sep. Masking the
-log removes it from the file; it does not un-expose it for that window.
-Rotating it is the owner's call — `ingest.env`, mode 600, then restart.
+### The exposure — CLOSED, ACCEPTED, NOT ROTATED (owner's decision, 2026-09-20)
+
+`FITLOG_HC_TOKEN` sat in cleartext on disk from 11 Sep to 20 Sep. **The owner
+decided not to rotate it**, on two grounds: the log was not readable by any
+unprivileged or remote account, and the token is send-only — scoped POST-only,
+`healthconnect`-only, **no read access** (CLAUDE.md §5a). Nothing that could
+have read it could have done anything with it that it could not already do.
+This is recorded as accepted, not as unfinished.
+
+Who could actually read it, measured rather than assumed:
+
+| Path | Mode | Owner |
+|---|---|---|
+| `/home/fit.dr-manoj.in` | `drwx--x--x` | `fitdr5911:fitdr5911` |
+| `…/logs` | `drwxr-x---` | `root:nobody` |
+| `…/logs/fit.dr-manoj.in.access_log` | `-rw-r--r--` | `nobody:nobody` |
+
+So: root; the litespeed worker itself, which runs as `nobody` and wrote the
+file; and `lsadm` and `lscpd`, CyberPanel's own daemons, which are the only
+secondary members of group `nobody`. **"Root-only" is the right conclusion but
+not literally the mode** — the directory is 750 `root:nobody`, not 700, and
+the file's world-readable bit is only held back by that directory. The
+fifteen per-site users (`fitdr5911`, `healt4504`, `rxdrm3815` and the rest)
+are **not** in group `nobody` and could not traverse the directory. Worth
+knowing before anyone relaxes that directory's mode.
+
+The gunicorn access log never held it: `/var/log/fitlog/access.log` and all
+eight rotated copies show **0** unredacted `k=` values — `RedactingLogger`
+worked as designed throughout. The OLS log was the only place it ever landed,
+and it is now masked.
 
 The gunicorn log is unaffected: `RedactingLogger` writes `k=<redacted>`.
 
