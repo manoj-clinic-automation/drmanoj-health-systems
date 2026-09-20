@@ -1,0 +1,58 @@
+{
+ "_": [
+  "GutLog v3.24.0 -- Recipes. v3.23.0 has no recipes table, routes or segment, so all seven fail by version (01 fails because the seed refuses without the table). Two boundaries are also broken on purpose."
+ ],
+ "suite": "test_recipes.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3240.py",
+ "assertions": [
+  {
+   "name": "01 the seed loads cards, dry run first",
+   "control": "version"
+  },
+  {
+   "name": "02 the list carries group, flags and stage",
+   "control": "version"
+  },
+  {
+   "name": "03 a card opens in full",
+   "control": "version"
+  },
+  {
+   "name": "04 his stage survives a re-seed",
+   "control": "version"
+  },
+  {
+   "name": "05 a serving logs as a meal",
+   "control": "version"
+  },
+  {
+   "name": "06 the Meals tab has a Recipes segment; the API needs a login",
+   "control": "version"
+  },
+  {
+   "name": "07 in a real browser: find and open a recipe",
+   "control": "version"
+  },
+  {
+   "name": "07 in a real browser",
+   "control": "mutation",
+   "mutation": {
+    "id": "savebar",
+    "why": "meal Save bar left over the recipe book",
+    "find": "(tab==='meals'&&(seg.meals==='foods'||seg.meals==='recipes'))||",
+    "replace": "(tab==='meals'&&seg.meals==='foods')||"
+   }
+  },
+  {
+   "name": "04 his stage survives",
+   "control": "mutation",
+   "mutation": {
+    "id": "stagecheck",
+    "why": "accept any stage",
+    "find": "    if st not in RECIPE_STAGE_KEYS:\n        return jsonify(ok=False, err=\"Unknown stage.\"), 400\n",
+    "replace": ""
+   }
+  }
+ ]
+}
