@@ -696,19 +696,27 @@ CyberPanel may rewrite `vhost.conf` if the vhost is edited through its UI or
 on some SSL operations — **re-check this line after any CyberPanel change to
 fit.dr-manoj.in.**
 
-**Still open: the 392 lines already written.** Between 11 Sep and 20 Sep the
-log accumulated 392 request lines carrying the live token in clear. The
-format change stops new ones; it does not touch those. Rewriting them in
-place is blocked pending the owner's go-ahead — see the runbook note below.
-Until they are stripped, `FITLOG_HC_TOKEN` should be treated as exposed to
-anyone who can read `/home/fit.dr-manoj.in/logs/`.
+**The 392 lines already written are masked (2026-09-20 13:17 IST).** Between
+11 Sep and 20 Sep the log had accumulated 392 request lines carrying the live
+token in clear; the format change stops new ones but does nothing about
+those. Each `k=<value>` is now `k=***`. Checked: 392 masked, **0** values
+left anywhere in the file, 944 lines before and after, and the result is
+byte-identical to re-running the same substitution over the pre-change copy —
+so nothing but the key changed. `source=healthconnect` survives on all 392,
+which is the field diagnosis actually reads. The pre-change copy was removed
+only after those checks passed.
 
-There is **no logrotate rule** for that file — OLS self-rolls at
-`rollingSize 10M` / `keepDays 10`, and at ~180 KB it will not roll for
-months, so there are currently **no rotated copies** to clean. Rewriting it
-means writing through the *same inode* (`sed … > tmp; cat tmp > log`), not
-`sed -i`: litespeed holds the fd, so replacing the inode would send every
-new line to a deleted file. Do not delete it — that orphans the fd.
+Rewriting it was done through the **same inode** (`sed … > tmp; cat tmp >
+log`), never `sed -i`: litespeed holds the fd in append mode, so replacing
+the inode would send every new line to a deleted file. Inode `260060899`
+before and after, and a probe request afterwards appended normally. Do not
+delete the file either — that orphans the fd. There is **no logrotate rule**
+for it: OLS self-rolls at `rollingSize 10M` / `keepDays 10`, and at ~160 KB
+it will not roll for months, so there were **no rotated copies** to clean.
+
+`FITLOG_HC_TOKEN` was in cleartext on disk from 11 Sep to 20 Sep. Masking the
+log removes it from the file; it does not un-expose it for that window.
+Rotating it is the owner's call — `ingest.env`, mode 600, then restart.
 
 The gunicorn log is unaffected: `RedactingLogger` writes `k=<redacted>`.
 
@@ -718,7 +726,7 @@ Two logs answer "did the request arrive, and what did we say back?".
 
 | Log | Written by | Path | Notes |
 |---|---|---|---|
-| OLS vhost access log | OpenLiteSpeed | `/home/fit.dr-manoj.in/logs/fit.dr-manoj.in.access_log` | Config: `/usr/local/lsws/conf/vhosts/fit.dr-manoj.in/vhost.conf`. Rolls at 10 M, `keepDays 10`. Since 2026-09-20 logs `%m %U %H` — **path only, no query string**, so the `?k=` token is no longer recorded. Lines written before that still carry it. |
+| OLS vhost access log | OpenLiteSpeed | `/home/fit.dr-manoj.in/logs/fit.dr-manoj.in.access_log` | Config: `/usr/local/lsws/conf/vhosts/fit.dr-manoj.in/vhost.conf`. Rolls at 10 M, `keepDays 10`. Since 2026-09-20 logs `%m %U %H` — **path only, no query string**, so the `?k=` token is no longer recorded, and the 392 lines written before that have been masked to `k=***`. |
 | gunicorn access log | FitLog | `/var/log/fitlog/access.log` | `gunicorn_conf.py`, `RedactingLogger`. 30-day logrotate (`/etc/logrotate.d/fitlog`). |
 
 Gunicorn ran with no access log until 2026-09-11, which is why a client-side

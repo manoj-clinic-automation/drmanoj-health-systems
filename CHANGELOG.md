@@ -14,8 +14,16 @@ the instruction; method and protocol were kept with it, because every ingest
 diagnosis starts by asking which requests were POSTs and what they returned,
 and `%U` on its own would have cost that for nothing. Graceful restart,
 `SIGUSR1`, zero downtime; **only that one vhost changed** and all eight on
-the box answered afterwards. **The 392 existing lines are not yet stripped** —
-that step is waiting on the owner.
+the box answered afterwards.
+
+The 392 lines already on disk were then masked to `k=***` (13:17 IST). The
+rewrite went through the **same inode** — litespeed holds that fd in append
+mode, so `sed -i` would have sent every subsequent line to a deleted file.
+392 masked, 0 values left, 944 lines before and after, byte-identical to the
+same substitution replayed over the pre-change copy, and a probe request
+afterwards appended normally. The interim copy was removed only once those
+checks passed. Masking the file does not un-expose the key for 11–20 Sep;
+whether to rotate it is a separate call.
 
 **`backup.sh`: the obvious one-character fix was wrong.** Widening
 `--exclude='*.db'` to `'*.db*'` does drop the twenty timestamped copies of the
