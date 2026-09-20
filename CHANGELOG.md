@@ -3,6 +3,33 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — FitLog v1.7.1, the health check stops lying
+
+`/health` had reported **version 1.3.1 through four releases** — v1.4.0,
+v1.5.0, v1.6.0 and v1.7.0 all shipped without touching the literal sitting
+in the route. The deployment runbook reads that endpoint to confirm a
+deploy, so it would have confirmed the wrong build without hesitating: the
+one check whose entire job is to say what is running was the thing
+misreporting it.
+
+The version now lives in one constant, with a comment in the file saying
+every release bumps it, and the route reads the constant. There is no
+version literal left in the route or anywhere else in the file — that is
+its own assertion, because a second copy is how the first one went stale.
+A fourth assertion holds the body to app, version and ok: `/health` has no
+login in front of it, so what it carries matters. That one is caught by a
+mutation that makes the body report a count from the record, since the old
+build did not leak either and a version control would prove nothing.
+
+All three apps now answer with their real build — GutLog `ok 3.27.2`,
+RxGuard `ok 1.8.2`, FitLog `1.7.1` — and CLAUDE.md now says the endpoints
+are authoritative rather than warning readers not to trust one of them.
+That is only true for as long as releases keep bumping the constant, and
+the table says so.
+
+Found sideways: while giving GutLog a `/healthz` it had never had, the
+obvious next question was whether the other two were honest. One was not.
+
 ## 2026-09-20 — GutLog v3.27.1 and v3.27.2, and three tidy-ups
 
 **v3.27.1 finishes the protein target.** v3.27.0 moved it to the plan's

@@ -13,15 +13,20 @@ Clinic automation lives separately in `drmanoj-clinic-automation` — do not mix
 ## Apps & ports
 | App | Subdomain | Port | DB (live path) | Health check |
 |---|---|---|---|---|
-| GutLog v3.27.2 | health.dr-manoj.in | 8020 | /root/gutlog/health3.db | `/healthz` → `ok 3.27.2` (text/plain, added 2026-09-20) |
+| GutLog v3.27.2 | health.dr-manoj.in | 8020 | /root/gutlog/health3.db | `/healthz` → `ok 3.27.2` (text/plain) |
 | RxGuard v1.8.2 | rx.dr-manoj.in | 8031 | /root/rxguard/ | `/healthz` → `ok 1.8.2` (text/plain) |
-| FitLog v1.7.0 | fit.dr-manoj.in | 8040 | /root/fitlog/fitlog.db (verified on server 2026-09-10) | `/health` → JSON. **Not `/healthz`, and its `version` reads 1.3.1 — stale since v1.4.0, believe the table not the endpoint** |
+| FitLog v1.7.1 | fit.dr-manoj.in | 8040 | /root/fitlog/fitlog.db (verified on server 2026-09-10) | `/health` → `{"app","version","ok"}`. Note the spelling: **`/health`, not `/healthz`** |
 
-**Read the column before you curl.** Until 2026-09-20 GutLog had no health route at
-all, and three briefs in a row told a session to "read `/healthz`" on it. A 404
-there is indistinguishable from a broken deploy, which is the opposite of what a
-health check is for. All three now answer; only FitLog's still misreports its
-version, and fixing that is a FitLog release, not a doc change.
+**The endpoints are authoritative — curl them, and believe what they say.**
+Each app's version lives in one `APP_VERSION` constant that its health route
+reads, and **every release bumps that constant**; a release that forgets is a
+release that lies about itself. Both faults this rule exists for were live on
+2026-09-20: GutLog had no health route at all while three briefs told sessions
+to read `/healthz` on it (a 404 is indistinguishable from a broken deploy), and
+FitLog's `/health` reported 1.3.1 through four releases. Fixed in GutLog
+v3.27.2 and FitLog v1.7.1, each with an assertion that the body carries the
+app's own version and nothing from the record — these are the routes with no
+login in front of them.
 
 ## Non-negotiable conventions
 1. **Deterministic engines only** in safety/decision paths — rules as JSON knowledge files, no LLM calls in analysis. Every decision surfaces which named rules fired.

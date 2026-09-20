@@ -1,4 +1,4 @@
-# FitLog — DOSSIER (v1.7.0)
+# FitLog — DOSSIER (v1.7.1)
 
 Single source of truth. Update after every change.
 
@@ -641,6 +641,32 @@ the FitLog analogue of GutLog's `test_ui_now.py` lesson.
 Every string the page builds is plain concatenation, never an f-string —
 Python 3.9 has no PEP 701, and CSS/SVG braces inside an f-string are a
 live hazard in this codebase.
+
+## `/health` tells the truth — v1.7.1 (`FITLOG_V171_VERSION`, 2026-09-20)
+
+`GET /health` → `{"app":"fitlog","version":"1.7.1","ok":true}`. No login.
+
+It had answered **`"version": "1.3.1"` through four releases** — v1.4.0,
+v1.5.0, v1.6.0 and v1.7.0 all shipped without touching the literal in the
+route. The deployment runbook reads this endpoint to confirm a deploy, so
+it would have cheerfully confirmed the wrong build; the one check whose job
+is to tell you what is running was the thing lying about it. Found while
+giving GutLog a `/healthz` it had never had.
+
+The version now lives in one `APP_VERSION` constant with a comment in the
+file saying every release bumps it, and the route reads that constant —
+there is no version literal left in the route, and none anywhere else in
+the file. Assertion 04 holds `/health` to `app`, `version` and `ok` and
+nothing else; a version control cannot show that failing, since the old
+build did not leak either, so it is caught by a mutation that makes the
+body report a count from the record. Suite `test_health_version.py` 4/4,
+negative control 4/4 seen to fail. Deployed 22:39 IST, `app.py` sha256
+`ec54174d…`, rollback `app.py.bak-v171-20260920_223921`.
+
+All three apps now report their real build: GutLog `ok 3.27.2`, RxGuard
+`ok 1.8.2`, FitLog `1.7.1`. CLAUDE.md's table says the endpoints are
+authoritative, which is only true for as long as releases keep bumping the
+constant.
 
 ## Ring goals — v1.7.0 (`FITLOG_V170_RINGGOALS`, 2026-09-20)
 

@@ -7,6 +7,7 @@ FITLOG_V150_WATCHFEED -- FitLog v1.5.0 read-only watch feed for GutLog.
 FITLOG_V160_DOWNDAYS -- FitLog v1.6.0 trend excludes GutLog's down days.
 FITLOG_SLEEP_P2_PAGE -- the sleep record on /watch. Measured, never scored.
 FITLOG_V170_RINGGOALS -- FitLog v1.7.0 rings use the last goals the Watch sent.
+FITLOG_V171_VERSION -- FitLog v1.7.1 /health reports the running version.
 FitLog v1.0 — Personal physical capacity & recovery engine.
 Dr. Manoj Agarwal | fit.dr-manoj.in | port 8040
 Single-file Flask + SQLite. Deterministic rule engine (no LLM in decision path).
@@ -18,6 +19,11 @@ from flask import Flask, request, redirect, session, g, url_for
 import sys as _sso_sys  # HEALTH_SSO_V1
 _sso_sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import health_sso  # noqa: E402
+
+# FITLOG_V171_VERSION -- one version, reported by /health. BUMP THIS IN EVERY
+# RELEASE: the deploy runbook reads /health to confirm which build is running,
+# and it answered 1.3.1 through four releases before this was noticed.
+APP_VERSION = "1.7.1"
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("FITLOG_DB", os.path.join(APP_DIR, "fitlog.db"))
@@ -1976,7 +1982,7 @@ def watch_view():
 
 @app.route("/health")
 def health():
-    return {"app": "fitlog", "version": "1.3.1", "ok": True}
+    return {"app": "fitlog", "version": APP_VERSION, "ok": True}
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=8040, debug=False)
