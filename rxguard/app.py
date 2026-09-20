@@ -26,7 +26,7 @@ from flask import (Flask, g, redirect, render_template_string, request,
                    session, url_for, flash, Response)
 from werkzeug.security import check_password_hash, generate_password_hash
 
-APP_VERSION = "1.7.0"   # RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST
+APP_VERSION = "1.8.0"   # RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST RXGUARD_V180_DOSE
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KNOWLEDGE_DIR = os.path.join(BASE_DIR, "knowledge")
 DEFAULT_DB = os.path.join(BASE_DIR, "rxguard.db")
@@ -264,6 +264,8 @@ CREATE TABLE IF NOT EXISTS kb_alerts (
     status TEXT DEFAULT 'new', created TEXT);
 
 CREATE TABLE IF NOT EXISTS kb_meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS dose_ceilings (
+  ing TEXT PRIMARY KEY, ceiling REAL, confirmed TEXT DEFAULT '', updated TEXT);
 """
 
 
@@ -933,6 +935,100 @@ def _split_molecules(mol):
     return out
 
 
+# --------------------------------------------------------------------------
+# Daily dose -- RXGUARD_V180_DOSE
+# The total of each ingredient over a rolling window, held against a ceiling.
+# The engine is dose_ceiling.py; the rules name his medicines and live only
+# on the server (knowledge/dose_rules.local.json). A ceiling typed on /dose
+# wins over the file. Every failure is a message, never an exception.
+# --------------------------------------------------------------------------
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+import dose_ceiling  # noqa: E402
+
+DOSE_RULES_PATH = os.environ.get("RXGUARD_DOSE_RULES",
+                                 os.path.join(KNOWLEDGE_DIR, dose_ceiling.RULES_FILE))
+DOSE_FEED_DAYS = 4
+
+
+def dose_now():
+    """IST, from UTC -- the doses are stamped in IST whatever the server's zone."""
+    try:
+        off = int(os.environ.get("RXGUARD_UTC_OFFSET_MIN", "330"))
+    except ValueError:
+        off = 330
+    return datetime.utcnow() + timedelta(minutes=off)
+
+
+def gutlog_doses(days=DOSE_FEED_DAYS):
+    """(data, error) from GutLog /api/feed/doses. Never raises."""
+    import urllib.request
+    if not gutlog_feed_enabled():
+        return None, "Not connected for this database (a test or scratch copy)."
+    try:
+        with open(GUTLOG_TOKEN_FILE, encoding="utf-8") as fh:
+            tok = fh.read().strip()
+    except OSError:
+        return None, "GutLog feed token not found."
+    since = (dose_now().date() - timedelta(days=days)).isoformat()
+    url = GUTLOG_FEED_URL.rstrip("/") + "/api/feed/doses?since=" + since
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + tok})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=3) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        return None, "GutLog dose feed not reachable (%s)." % type(e).__name__
+    if not isinstance(data, dict) or not data.get("ok"):
+        return None, "GutLog dose feed returned an unexpected answer."
+    return data, None
+
+
+def dose_overrides():
+    out = {}
+    try:
+        for r in get_db().execute("SELECT ing, ceiling, confirmed FROM dose_ceilings").fetchall():
+            out[r["ing"]] = {"ceiling": r["ceiling"], "confirmed": r["confirmed"] or ""}
+    except Exception:
+        pass
+    return out
+
+
+def dose_rules():
+    rules, err = dose_ceiling.load_rules(DOSE_RULES_PATH, norm_key)
+    if rules is not None:
+        dose_ceiling.apply_overrides(rules, dose_overrides())
+    return rules, err
+
+
+def dose_view(stack):
+    """{on, err, rows, findings, version, rules}. Off (on=False) when no rules
+    file is installed; err set when GutLog cannot be read."""
+    out = {"on": False, "err": "", "rows": [], "findings": [], "version": "", "rules": None}
+    try:
+        rules, err = dose_rules()
+        if rules is None:
+            out["err"] = err
+            return out
+        out.update(on=True, rules=rules, version=rules["meta"].get("version", ""))
+        ev, err = gutlog_doses()
+        if err:
+            out["err"] = err
+            return out
+        res = dose_ceiling.run(ev.get("events") or [], stack or {}, rules, dose_now(),
+                               finding, norm_key)
+    except Exception as e:
+        out["err"] = "Daily dose could not be computed (%s)." % type(e).__name__
+        return out
+    for f in res["findings"]:
+        f["theoretical"] = False
+        f["involves"] = []
+        f["unlisted"] = False
+    out["rows"] = res["rows"]
+    out["findings"] = res["findings"]
+    return out
+
+
 def astaken_view(data):
     listed = {}
     for m in active_meds():
@@ -978,6 +1074,9 @@ def astaken_view(data):
     conditions = active_conditions()
     dosed = astaken_dosed(items)
     findings = stack_findings(keys, conditions, set(not_listed), dosed)
+    # RXGUARD_V180_DOSE -- the daily-dose findings count like any other
+    dose = dose_view(data)
+    findings.extend(dose["findings"])
 
     if not_listed:
         findings.append(finding(
@@ -1039,7 +1138,8 @@ def astaken_view(data):
             "listed_not_taken": [display_name(k) for k in listed_not_taken],
             "unknown": unknown, "unmapped": unmapped, "red": red, "amber": amber,
             "rec": reconcile_view(data), "stale_findings": stale_n,
-            "since": data.get("since", ""), "days": data.get("days", "")}
+            "since": data.get("since", ""), "days": data.get("days", ""),
+            "dose": dose}
 
 
 # --------------------------------------------------------------------------
@@ -1876,6 +1976,7 @@ button:hover{opacity:.88}
  <a href="{{ url_for('dashboard') }}" class="{{ 'on' if nav=='dash' }}">Dashboard</a>
  <a href="{{ url_for('card') }}" class="{{ 'on' if nav=='card' }}">One-page list</a>
  <a href="{{ url_for('astaken') }}" class="{{ 'on' if nav=='astaken' }}">As taken (GutLog)</a>
+ <a href="{{ url_for('dose_page') }}" class="{{ 'on' if nav=='dose' }}">Daily dose</a>
  <div class="grp">Check</div>
  <a href="{{ url_for('episode') }}" class="{{ 'on' if nav=='episode' }}">Quick check</a>
  <a href="{{ url_for('analyse_view') }}" class="{{ 'on' if nav=='analyse' }}">Full analysis</a>
@@ -2800,6 +2901,21 @@ def create_app(db_path=None, secret=None):
         <td>{% if r.listed %}yes{% else %}<span class="flag AMBER">NO</span>{% endif %}</td>
         <td>{% if r.known %}yes{% else %}<span class="flag UNKNOWN">NO</span>{% endif %}</td>
         </tr>{% endfor %}</table>
+        {% if v.dose and v.dose.on %}
+        <h2>Daily dose</h2>
+        {% if v.dose.err %}<p class="muted">{{ v.dose.err }}</p>
+        {% elif v.dose.rows %}{% set rows = v.dose.rows %}<table><tr><th>Ingredient</th><th>Taken</th><th>Ceiling</th><th>Room</th><th></th></tr>
+        {% for r in rows %}<tr>
+        <td>{{ r.name }}{% if r.products|length > 1 %}<br><span class="muted">{{ r.products|join(' + ') }}</span>{% endif %}</td>
+        <td class="num">{{ '%g'|format(r.total) }} {{ r.unit }}<br><span class="muted">{{ r.window_h|int }} h</span></td>
+        <td class="num">{% if r.ceiling is not none %}{{ '%g'|format(r.ceiling) }} {{ r.unit }}{% if not r.confirmed %}<br><span class="chip">default</span>{% endif %}{% else %}<span class="flag UNKNOWN">not set</span>{% endif %}</td>
+        <td class="num">{% if r.room is not none %}{% if r.room >= 0 %}{{ '%g'|format(r.room) }} {{ r.unit }}{% else %}<span class="flag RED">over {{ '%g'|format(-r.room) }}</span>{% endif %}{% endif %}</td>
+        <td class="muted">{% if r.state == 'over' %}under the ceiling at {{ r.frees }}{% elif r.state == 'at' %}at the ceiling until {{ r.frees }}{% endif %}</td>
+        </tr>{% endfor %}</table>
+        <p class="muted"><a href="{{ url_for('dose_page') }}">Ceilings and class rules &rarr;</a></p>
+        {% else %}<p class="muted">Nothing with a ceiling taken in the last few days.
+        <a href="{{ url_for('dose_page') }}">Ceilings &rarr;</a></p>{% endif %}
+        {% endif %}
         <h2>Findings from what was actually taken</h2>
         {% for f in v.findings %}{% if f.unlisted %}<p class="muted" style="margin:0 0 3px">
           <span class="chip">involves a medicine not on your list</span></p>{% endif %}
@@ -3075,6 +3191,93 @@ def create_app(db_path=None, secret=None):
                          stdout=logf, stderr=logf, start_new_session=True)
         flash("Fetching in the background. Refresh this page in a minute or two.")
         return redirect(url_for("kb_review"))
+
+    # ------------------------------------------------ daily dose (v1.8.0)
+    @app.route("/dose", methods=["GET", "POST"])
+    @login_required
+    def dose_page():
+        """RXGUARD_V180_DOSE -- totals, the ceiling editor, the class rules."""
+        if request.method == "POST":
+            ing = norm_key(request.form.get("ing", ""))
+            raw = (request.form.get("ceiling") or "").strip()
+            try:
+                val = float(raw) if raw else None
+            except ValueError:
+                flash("A ceiling must be a number, or blank for none.")
+                return redirect(url_for("dose_page"))
+            if val is not None and val <= 0:
+                flash("A ceiling must be above zero, or blank for none.")
+                return redirect(url_for("dose_page"))
+            rules, _e = dose_rules()
+            if not rules or ing not in rules["ingredients"]:
+                flash("Unknown ingredient; nothing changed.")
+                return redirect(url_for("dose_page"))
+            now_s = dose_now().strftime("%Y-%m-%d %H:%M")
+            db = get_db()
+            db.execute("INSERT INTO dose_ceilings (ing, ceiling, confirmed, updated) "
+                       "VALUES (?, ?, ?, ?) ON CONFLICT(ing) DO UPDATE SET "
+                       "ceiling=excluded.ceiling, confirmed=excluded.confirmed, "
+                       "updated=excluded.updated", (ing, val, now_s[:10], now_s))
+            db.commit()
+            flash("Saved and confirmed: %s %s." % (
+                rules["ingredients"][ing]["label"],
+                ("%g %s" % (val, rules["ingredients"][ing]["unit"])) if val is not None
+                else "no ceiling"))
+            return redirect(url_for("dose_page"))
+        stack, err = gutlog_stack(14)
+        dv = dose_view(stack) if stack else {"on": False, "err": err or "", "rows": [],
+                                              "findings": [], "version": "", "rules": None}
+        if stack is None:
+            rules, _e = dose_rules()
+            dv["on"] = rules is not None
+            dv["rules"] = rules
+            dv["version"] = rules["meta"].get("version", "") if rules else ""
+        body = """
+        <h1>Daily dose</h1>
+        <p class="sub">Each ingredient totalled across every product that carries it &mdash;
+        combinations, strengths and routes &mdash; over a rolling window, against your ceiling.
+        No GREEN: a row without a flag is a total, not a clearance.</p>
+        {% if not dv.rules %}
+        <div class="card">Dose rules are not installed on this server
+        (knowledge/dose_rules.local.json).{% if dv.err %} {{ dv.err }}{% endif %}</div>
+        {% else %}
+        {% if dv.err %}<div class="card"><strong>GutLog not readable.</strong>
+        <p class="muted" style="margin:6px 0 0">{{ dv.err }}</p></div>{% endif %}
+        {% if dv.rows %}{% set rows = dv.rows %}<table><tr><th>Ingredient</th><th>Taken</th><th>Ceiling</th><th>Room</th><th></th></tr>
+        {% for r in rows %}<tr>
+        <td>{{ r.name }}{% if r.products|length > 1 %}<br><span class="muted">{{ r.products|join(' + ') }}</span>{% endif %}</td>
+        <td class="num">{{ '%g'|format(r.total) }} {{ r.unit }}<br><span class="muted">{{ r.window_h|int }} h</span></td>
+        <td class="num">{% if r.ceiling is not none %}{{ '%g'|format(r.ceiling) }} {{ r.unit }}{% if not r.confirmed %}<br><span class="chip">default</span>{% endif %}{% else %}<span class="flag UNKNOWN">not set</span>{% endif %}</td>
+        <td class="num">{% if r.room is not none %}{% if r.room >= 0 %}{{ '%g'|format(r.room) }} {{ r.unit }}{% else %}<span class="flag RED">over {{ '%g'|format(-r.room) }}</span>{% endif %}{% endif %}</td>
+        <td class="muted">{% if r.state == 'over' %}under the ceiling at {{ r.frees }}{% elif r.state == 'at' %}at the ceiling until {{ r.frees }}{% endif %}</td>
+        </tr>{% endfor %}</table>{% endif %}
+        {% for f in dv.findings %}{% set findings = [f] %}""" + ASTAKEN_FINDING_BLOCK + """{% endfor %}
+        <h2>Ceilings</h2>
+        <p class="muted">A ceiling marked <span class="chip">default</span> came from the rules
+        file and has not been confirmed by you. Saving a row confirms it. Leave the box blank
+        for no ceiling.</p>
+        <table><tr><th>Ingredient</th><th>Window</th><th>Ceiling</th><th></th></tr>
+        {% for k, r in dv.rules.ingredients|dictsort %}{% if not r.class_only %}<tr>
+        <td>{{ r.label }}{% if r.consequence %}<br><span class="muted">{{ r.consequence }}</span>{% endif %}</td>
+        <td class="num">{{ r.window_h|int }} h{% if r.max_units is not none %}<br><span class="muted">max {{ '%g'|format(r.max_units) }} unit</span>{% endif %}</td>
+        <td><form method="post" style="display:flex;gap:6px;align-items:center">
+          <input type="hidden" name="ing" value="{{ k }}">
+          <input name="ceiling" inputmode="decimal" style="width:6em"
+            value="{{ '%g'|format(r.ceiling) if r.ceiling is not none else '' }}"> {{ r.unit }}
+          <button>{{ 'Save' if r.confirmed else 'Confirm' }}</button></form></td>
+        <td class="muted">{% if r.confirmed %}confirmed {{ r.confirmed }}{% else %}<span class="chip">default</span>{% endif %}</td>
+        </tr>{% endif %}{% endfor %}</table>
+        <h2>Class rules</h2>
+        {% for c in dv.rules.classes %}<div class="card"><strong>{{ c.label }}</strong>
+        &middot; {{ c.members|map('replace', '_', ' ')|join(', ') }} &middot; {{ c.window_h|int }} h
+        {% if c.consequence %}<p class="muted" style="margin:6px 0 0">{{ c.consequence }}</p>{% endif %}</div>
+        {% endfor %}
+        <p class="muted">Rules {{ dv.version }} &middot; DC001&ndash;DC009 &middot; the window
+        is 20 hours for once-a-day ingredients so a dose taken a little earlier than yesterday's
+        is not read as two.</p>
+        {% endif %}
+        """
+        return page(body, nav="dose", title="Daily dose", dv=dv)
 
     @app.route("/api/feed/status")
     def api_feed_status():

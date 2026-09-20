@@ -3,6 +3,59 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — RxGuard v1.8.0: the total, not the duplicate
+
+**His ask (19-Sep).** Watch the **cumulative daily dose of each ingredient**,
+not only duplicates: an ingredient inside a fixed-dose combination counts into
+the same pool as the standalone product, one generic by two routes is one pool,
+and classes carry a load of their own.
+
+Until now RxGuard could say *these two products interact*, but not *you have
+had too much of this today* — and the second question is the one that ordinary,
+sensible-looking behaviour gets wrong. Nine rules, DC001–DC009, each finding
+naming the rule that fired.
+
+**The window is the interesting decision.** A flat 24 h is the obvious choice
+and it is wrong: a nightly medicine taken at 22:00 one night and 21:30 the next
+is **23.5 h apart**, inside a 24 h window, so a flat rule reports two doses in
+one day every time he goes to bed early. The first build did exactly that. Once-
+a-day ingredients get **20 h**, several-times-a-day get 24 h, class sedative
+load 12 h. It is mutation-controlled — widening it back to a flat 24 h makes the
+assertion fail.
+
+**Two places the engine refuses to guess.** A double entry is *counted* and then
+**named** (DC008): the higher total is the safer claim, and silently discarding
+the second entry would make that reading unavailable. A concentration (mg/mL) is
+not an amount per unit, so a syrup stays DC009 until the rules file gives an
+amount — an invented number inside a dose total is worse than no number.
+
+**GutLog is not touched by this release.** The engine reads GutLog's existing
+dose and stack feeds and nothing else; findings join the as-taken list, so the
+page, the dashboard count and GutLog's banner all carry them with no change on
+the GutLog side. The ceilings name his medicines, so they are a server-only
+gitignored file at mode 600; a missing file means the feature is simply off, and
+says so.
+
+**This release is why yesterday's GutLog correction had to come first.** The
+same tablet had been recorded five times through the symptom screens, and a
+ceiling engine reads that as three times the limit. On the corrected log the
+engine raises exactly one thing, and it is real.
+
+**A weakness worth naming.** All 13 declared assertions are *version* controls,
+and v1.7.0 has no dose engine at all — so each fails there for the same trivial
+reason. For the three that guard a **boundary** rather than a feature, the
+boundary was additionally broken on purpose in the current engine, and each was
+caught by exactly its own assertion and no other. Those three are not in the
+manifest because `tools/NEGATIVE_CONTROL.py` can only mutate the *app* file and
+these properties live in a sidecar module. Teaching the harness to mutate a
+named module is the fix, and it is not done.
+
+Gates: `test_dose_ceiling` 13/13 on both machines (invented molecules, real
+GutLog on loopback), 13 declared / 13 seen; `test_astaken_honest` 16/16,
+`test_astaken` 15/15, `test_reconcile` 18/18, `test_conditions` 10/10,
+`test_kb` 32/32, `smoke_test` 49/49, `validate` 50/50. Patcher 8 anchors,
+`--reverse` byte-identical to v1.7.0. Detail in `rxguard/README.md`.
+
 ## 2026-09-20 — GutLog v3.21.0: one tablet is one dose, however many symptoms
 
 **His report.** *"On 18th September it only accepted multiple [entries] due to

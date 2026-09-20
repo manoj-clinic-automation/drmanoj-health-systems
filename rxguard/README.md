@@ -1,4 +1,4 @@
-# RxGuard v1.7.0
+# RxGuard v1.8.0
 
 `rx.dr-manoj.in` · service `rxguard` · port 8031 · `/root/rxguard`
 
@@ -71,6 +71,114 @@ token, RxGuard on a scratch database; covers reconciliation both ways, the
 named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
 days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
 GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
+
+## Daily dose — v1.8.0 (DEPLOYED 2026-09-20 08:46 IST)
+
+His ask, 19-Sep-2026: watch the **total dose of each ingredient**, not only
+duplicates. Until now RxGuard could say *these two products interact* but not
+*you have had too much of this today* — and the second question is the one that
+gets answered wrong by ordinary, sensible-looking behaviour.
+
+Three things make one pool, and all three are the point:
+
+- an ingredient **inside a fixed-dose combination** counts into the same pool
+  as the standalone product;
+- **one generic by two routes** is one pool, not two;
+- some **classes** carry a load of their own, independent of any one member.
+
+Every logged dose is broken into its ingredients (amount per unit × units
+taken), summed over a rolling window, and held against a ceiling.
+
+### The windows, and why they are not both 24 h
+
+| kind of ingredient | window |
+|---|---|
+| once a day | **20 h** |
+| several times a day | **24 h** |
+| class sedative load | 12 h |
+
+A flat 24 h window is the obvious choice and it is wrong. A nightly medicine
+taken at 22:00 one night and 21:30 the next is **23.5 h apart** — inside a 24 h
+window, so a flat rule reports two doses in one day, every time he goes to bed
+early. The first build did exactly that. 20 h for once-a-day ingredients is
+what stops a false alarm that would have fired most weeks, and it is
+mutation-controlled: widening it back to a flat 24 h makes the assertion fail.
+
+"Now" is IST computed from UTC (`RXGUARD_UTC_OFFSET_MIN`, default 330), so the
+window is right whatever zone the server clock is in.
+
+### The rules
+
+| id | level | what it says |
+|---|---|---|
+| DC001 | RED | an ingredient is over its ceiling in the current window |
+| DC002 | AMBER | an ingredient went over its ceiling in the last 3 days |
+| DC003 | AMBER | an ingredient with no ceiling set was taken — set one |
+| DC004 | AMBER | more units of a product-limited ingredient than allowed (patches are counted, not weighed) |
+| DC005 | AMBER | more distinct members of a class than the class allows |
+| DC006 | AMBER / RED | one addition on top of a class's regular medicine; RED for two or more |
+| DC007 | AMBER | two members of a "not together" class in the same window |
+| DC008 | UNKNOWN | the same product logged twice within 10 minutes |
+| DC009 | UNKNOWN | a dose of a ruled ingredient whose amount cannot be read |
+
+**DC008 counts the dose and names it.** A double entry is *counted*, because
+the higher total is the safer claim, and then said out loud so he can correct
+it. Silently discarding the second entry would make the safer reading
+unavailable. **DC009 never guesses.** A concentration (mg/mL) is not an amount
+per unit, so a syrup stays DC009 until the rules file gives an amount — an
+invented number in a dose total is worse than no number.
+
+Composition is read from GutLog's own `molecule` and `strength` fields
+("a + b" / "60 mg + 325 mg"), falling back to the number in the name only when
+no strength is recorded. A varying-strength medicine is read from the strengths
+actually picked.
+
+### What is where
+
+The engine is `dose_ceiling.py` — pure functions, no network, no database, no
+Flask; `app.py` hands it the feed and the rules and renders what comes back.
+It reads GutLog's existing `/api/feed/doses` and `/api/feed/stack` and nothing
+else, so **GutLog is not changed by this release at all**. The ceilings name
+his medicines, so they live in `knowledge/dose_rules.local.json` — server only,
+mode 600, gitignored (CLAUDE.md §5d). **A missing rules file is not an error**:
+the feature is simply not set up, and says so in one line.
+
+A ceiling typed on `/dose` overrides the file and is marked confirmed; every
+file ceiling reads *default* until he confirms it. Findings join the as-taken
+list, so `/astaken`, the Dashboard count and GutLog's banner all carry them
+with no change on the GutLog side. New table `dose_ceilings`, created by
+`SCHEMA`; no migration step.
+
+**Blocking at the moment of logging is phase 2, not this build.**
+
+### Evidence
+
+`test_dose_ceiling.py` **13/13** on the workstation and on the server, running
+a real GutLog on loopback with **invented molecules**, so no assertion can pass
+by accident on the real record. Negative control: **13 declared, 13 seen to
+fail** against the reconstructed v1.7.0.
+
+Those 13 are all *version* controls, and that is a weakness worth naming: v1.7.0
+has no dose engine at all, so every one of them fails there for the same trivial
+reason. For the three assertions that guard a **boundary** rather than a
+feature, the boundary was additionally broken on purpose in the current engine
+and each was caught by exactly its own assertion and no other:
+
+| mutation | caught by |
+|---|---|
+| a combination reads only its first molecule | 01 |
+| the 20 h window ignored, everything flat 24 h | 06 |
+| the double-entry check removed | 08 |
+
+`tools/NEGATIVE_CONTROL.py` can only mutate the **app** file, and these
+properties live in the sidecar engine module, so those three are not yet in the
+manifest — they were run separately and are recorded here. Teaching the harness
+to mutate a named module is the fix, and it is not done.
+
+Server gates before the restart: `test_astaken_honest.py` 16/16,
+`test_astaken.py` 15/15, `test_reconcile.py` 18/18, `test_conditions.py` 10/10,
+`test_kb.py` 32/32, `smoke_test.py` 49/49, `validate.py` 50/50. `/healthz`
+reports `ok 1.8.0`.
 
 ## As taken, honestly — v1.7.0 (DEPLOYED 2026-09-15 09:40 IST)
 
