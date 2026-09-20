@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.22.0)
+# GutLog — DOSSIER (v3.23.0)
 
 Single source of truth. Update after every change.
 
@@ -377,6 +377,40 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## Day context — v3.23.0
+
+A food trial cannot be read honestly without knowing what else the day held.
+A bad gut day after a new food means one thing on an ordinary day and quite
+another after a long drive, a night of broken sleep, or a fever. Until now
+none of that was recorded, so every challenge result carried an unknown that
+could not be recovered afterwards — **you cannot reconstruct last Tuesday's
+travel from the diary once Tuesday has gone**.
+
+**Day context** is a card on the Now tab, above Down day: Today / Yesterday,
+and six toggle chips — Heavy exertion, Poor sleep, Travel, Unwell, Stress,
+Ate out. One tap marks, a second clears, and the summary says what is marked.
+Yesterday is there because the marking often only occurs to him the next
+morning, and a context he cannot backfill by one day is a context he will
+stop using.
+
+Two tables, `day_context` (day, tag, primary key day+tag — so a repeated tap
+is harmless rather than a duplicate) and `day_context_note`, created by
+`SCHEMA`: no migration step, no `schema_version` bump. `/api/daycontext`
+GET/POST behind the login; `/api/feed/daycontext` read-only on the feed token,
+so a trial reading — or FitLog — can ask what a day held without reaching into
+the database.
+
+### Why it is not part of Down days
+
+Down days (v3.17.0) mark **how he was**; day context marks **what the day
+did to him**. They answer different questions and a day can easily be one
+without the other — a long drive he coped with fine is travel and not a down
+day. Folding them together would have made both unreadable, so Down day stays
+exactly as it was and nothing existing changes.
+
+Only the six keys are accepted; an unknown tag and a future day are refused,
+and that refusal is mutation-controlled.
 
 ## Meal cards on the Now tab — v3.22.0
 
@@ -913,6 +947,17 @@ via OLS reverse proxy.
 > pulled that file out from under the browser suite mid-run on 2026-09-15 —
 > which aborts loudly, as designed, but wastes a fifteen-minute run.
 
+- `test_day_context.py` — **7/7 PASS** (2026-09-20, v3.23.0), on Windows and on
+  the server; **9 declared new assertions, 9 seen to fail** (7 by version, 2 by
+  mutation). Asserts that the card offers the six circumstances and a fresh day
+  is unmarked; that a tap marks, a repeat is harmless and a second tap clears —
+  **never a duplicate**; that yesterday and today are kept apart; that an
+  unknown tag and a future day are refused; that the read-only feed carries the
+  marked days and **refuses without the token**; that the card sits above Down
+  day and the API needs a login. **Case 7 drives real Chromium**: one tap saves
+  a mark today, Yesterday shows its own, no page errors at 390px. The two
+  mutations are the ones that would still look right — Yesterday quietly
+  pointing at today, and any tag being accepted.
 - `test_meal_cards.py` — **12/12 PASS** (2026-09-20, v3.22.0), on Windows and
   on the server; **14 declared new assertions, 14 seen to fail** (12 against
   the reconstructed v3.21.0, 2 by mutation). The fixture uses **invented
@@ -1262,6 +1307,28 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-20 v3.23.0 — Day context. DEPLOYED 10:31 IST.** `app.py` sha256
+  `9e17fe3f…`, 436,209 bytes on the server, **byte-identical to the repo
+  build**; pre-flight confirmed `GUTLOG_V3220_MEALS` present, no v3.23.0
+  marker, and sha256 equal to the repo before anything was copied. `--reverse`
+  reproduces v3.22.0 byte-for-byte (`a8a31320…`). Rollback:
+  `cp /root/gutlog/app.py.bak-v3230-20260920_103117 /root/gutlog/app.py`.
+  `patch_gutlog_v3230.py`, **7 anchors**, Jinja guard. Database backed up first
+  (`health3.db.pre-v3230-20260920_103056`, integrity ok, 30 tables).
+  **No `schema_version` bump** — `day_context` and `day_context_note` are
+  `CREATE TABLE IF NOT EXISTS` in `SCHEMA`; confirmed live after the restart:
+  both present with the expected columns, **0 rows**, 3.3.4 unchanged,
+  30 → 32 tables.
+  Server gates before the restart: **test_day_context 7/7**, meal_cards 12/12,
+  one_dose 5/5, a 18/18, b 16/16, c 20/20, d 18/18, e 13/13, f 8/8, g 14/14,
+  i 18/18, j 28/28, m 19/19, n 14/14, o 10/10, watch_tiles 7/7, and
+  `ops/test_sso.py` **11/11**. Offline: `test_ui_now` **196 PASS / 0 FAIL**,
+  `test_ui_order` ALL PASS, negative control **9 declared, 9 seen to fail**.
+  **Live, read-only — nothing was marked on his record** (GETs only, no POST):
+  `/api/daycontext` 302 anonymous and 200 logged in, returning the six options
+  with `tags` empty; `/api/feed/daycontext` **401 without the token** and 200
+  with it, `days` empty; the Day context card is in the served page; no
+  traceback; anonymous `/` still 302.
 - **2026-09-20 v3.22.0 — meal cards on the Now tab. DEPLOYED 09:43 IST.**
   `app.py` sha256 `a8a31320…`, 430,912 bytes on the server, **byte-identical to
   the repo build**; pre-flight confirmed `GUTLOG_V3210_ONEDOSE` present, no

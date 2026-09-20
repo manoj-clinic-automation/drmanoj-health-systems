@@ -1,0 +1,58 @@
+{
+ "_": [
+  "GutLog v3.23.0 -- Day context. v3.22.0 has no card, tables or endpoints, so all seven fail there by version; two boundaries are also broken on purpose in the current build."
+ ],
+ "suite": "test_day_context.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3230.py",
+ "assertions": [
+  {
+   "name": "01 the card offers the six circumstances",
+   "control": "version"
+  },
+  {
+   "name": "02 a tap marks, a tap clears, never a duplicate",
+   "control": "version"
+  },
+  {
+   "name": "03 yesterday can be marked separately",
+   "control": "version"
+  },
+  {
+   "name": "04 bad input is refused",
+   "control": "version"
+  },
+  {
+   "name": "05 the read-only feed for trials and FitLog",
+   "control": "version"
+  },
+  {
+   "name": "06 the Now tab carries the card; the API needs a login",
+   "control": "version"
+  },
+  {
+   "name": "07 in a real browser: one tap marks the day",
+   "control": "version"
+  },
+  {
+   "name": "07 in a real browser",
+   "control": "mutation",
+   "mutation": {
+    "id": "noyday",
+    "why": "Yesterday button points at today",
+    "find": "function ctxYesterday(){const d=new Date(todayISO+'T12:00:00');d.setDate(d.getDate()-1);return d.toISOString().slice(0,10);}",
+    "replace": "function ctxYesterday(){return todayISO;}"
+   }
+  },
+  {
+   "name": "04 bad input is refused",
+   "control": "mutation",
+   "mutation": {
+    "id": "anytag",
+    "why": "accept any tag",
+    "find": "        if tag not in DAY_CONTEXT_KEYS:\n            return jsonify(ok=False, err=\"Unknown tag.\"), 400\n",
+    "replace": ""
+   }
+  }
+ ]
+}

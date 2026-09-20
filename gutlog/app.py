@@ -121,6 +121,9 @@ CREATE TABLE IF NOT EXISTS stock_order_cfg (
 CREATE TABLE IF NOT EXISTS stock_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT, month TEXT NOT NULL, status TEXT DEFAULT 'OPEN',
   created TEXT, received_at TEXT DEFAULT '', lines TEXT DEFAULT '[]', text TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS day_context (
+  day TEXT NOT NULL, tag TEXT NOT NULL, created TEXT, PRIMARY KEY (day, tag));
+CREATE TABLE IF NOT EXISTS day_context_note (day TEXT PRIMARY KEY, note TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS meal_meta (
   meal_id INTEGER PRIMARY KEY, card TEXT DEFAULT '', choices TEXT DEFAULT '{}',
   onion INTEGER DEFAULT 0, extra TEXT DEFAULT '[]');
@@ -288,7 +291,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS
+SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS GUTLOG_V3230_CONTEXT
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -3116,6 +3119,80 @@ def api_feed_downdays():
                    runs=_down_runs([r["day"] for r in rows]))
 
 
+# ------------------------------------------------------------------ day context
+# GUTLOG_V3230_CONTEXT -- what else was going on that day: heavy exertion,
+# poor sleep, travel, unwell, stress, ate out. Two taps (open, tap), stored
+# one row per day+tag, so a food trial or a symptom comparison can set these
+# days aside instead of blaming whatever was eaten. Separate from a down day:
+# a down day is his symptom cluster; context is the circumstance around it.
+DAY_CONTEXT = [
+    ("exertion", "Heavy exertion"),
+    ("poor_sleep", "Poor sleep"),
+    ("travel", "Travel"),
+    ("unwell", "Unwell"),
+    ("stress", "Stress"),
+    ("ate_out", "Ate out"),
+]
+DAY_CONTEXT_KEYS = dict(DAY_CONTEXT)
+
+
+def _ctx_for(day):
+    return [r["tag"] for r in db().execute(
+        "SELECT tag FROM day_context WHERE day=? ORDER BY created", (day,)).fetchall()]
+
+
+@app.route("/api/daycontext")
+@login_required
+def api_daycontext():
+    day = _valid_day(request.args.get("day")) or today()
+    note_row = db().execute("SELECT note FROM day_context_note WHERE day=?", (day,)).fetchone()
+    return jsonify(day=day, tags=_ctx_for(day), note=note_row["note"] if note_row else "",
+                   options=[{"key": k, "label": l} for k, l in DAY_CONTEXT])
+
+
+@app.route("/api/daycontext", methods=["POST"])
+@login_required
+def api_daycontext_set():
+    """{day, tag, on} toggles one tag; {day, note} sets the day's note.
+    Idempotent: turning on a tag that is on changes nothing."""
+    d = J()
+    day = _valid_day(d.get("day") or today())
+    if not day:
+        return jsonify(ok=False, err="Pick a real date, not in the future."), 400
+    if "tag" in d:
+        tag = d.get("tag")
+        if tag not in DAY_CONTEXT_KEYS:
+            return jsonify(ok=False, err="Unknown tag."), 400
+        if d.get("on"):
+            db().execute("INSERT OR IGNORE INTO day_context(day, tag, created) VALUES(?,?,?)",
+                         (day, tag, now_s()))
+        else:
+            db().execute("DELETE FROM day_context WHERE day=? AND tag=?", (day, tag))
+    if "note" in d:
+        nt = note(d, "note", 200)
+        if nt:
+            db().execute("INSERT INTO day_context_note(day, note) VALUES(?,?) "
+                         "ON CONFLICT(day) DO UPDATE SET note=excluded.note", (day, nt))
+        else:
+            db().execute("DELETE FROM day_context_note WHERE day=?", (day,))
+    db().commit()
+    return jsonify(ok=True, day=day, tags=_ctx_for(day))
+
+
+@app.route("/api/feed/daycontext")
+@feed_required
+def api_feed_daycontext():
+    """Read-only: which days carry which circumstances, for any consumer that
+    compares days (food trials, FitLog trends)."""
+    since = _feed_since(90)
+    out = {}
+    for r in db().execute("SELECT day, tag FROM day_context WHERE day>=? ORDER BY day",
+                          (since,)).fetchall():
+        out.setdefault(r["day"], []).append(r["tag"])
+    return jsonify(ok=True, app="gutlog", since=since,
+                   days=[{"day": k, "tags": v} for k, v in sorted(out.items())])
+
+
 def _act_minutes_by_day(since):
     marks = ",".join("?" for _ in LOAD_KINDS)
     rows = db().execute(
@@ -4587,6 +4664,10 @@ color:var(--err);border-color:#E4C3BE}
 .macts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex:none;max-width:50%}
 .macts .chip{padding:7px 11px;font-size:14px}
 .mnew{margin-top:10px;padding:10px;border:1.5px dashed var(--line);border-radius:12px}
+/* GUTLOG_V3230_CONTEXT */
+#nowCtx .dwtop{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+#nowCtx .dwtop .q{margin:0}
+#nowCtx .fs{margin-left:auto;font-size:14px;color:var(--muted);text-align:right}
 .mpick{margin-top:10px}
 
 /* collapsible cards */
@@ -5217,6 +5298,13 @@ function thmCycle(){
       <div id="n_msk"></div>
       <div id="painList"></div>
     </div>
+  </div>
+
+  <div class="card" id="nowCtx">
+    <div class="dwtop"><p class="q">Day context</p><span class="fs" id="ctxSum"></span></div>
+    <div class="chips" id="ctxDay"></div>
+    <div class="chips" id="ctxTags" style="margin-top:10px"></div>
+    <p class="hint" style="margin:10px 2px 0">Anything unusual about the day. These days are set aside when foods and symptoms are compared.</p>
   </div>
 
   <div class="card" id="nowDown">
@@ -7239,6 +7327,7 @@ async function loadNow(){
   loadActivity();
   loadPain();
   loadDown();
+  loadCtx();
   loadWatch();
   nowData=await jget('/api/now?day='+todayISO);
   const box=$('#nowSched');box.innerHTML='';
@@ -7424,6 +7513,30 @@ async function loadPain(){
 let downState=null;
 function downTempSkipped(){
   try{ return localStorage.getItem('gl_temp_skip')===todayISO; }catch(e){ return false; }
+}
+/* GUTLOG_V3230_CONTEXT -- one tap marks a circumstance on today (or
+   yesterday, for last night's sleep noticed this morning); tap again clears. */
+let ctxDay=null;
+function ctxYesterday(){const d=new Date(todayISO+'T12:00:00');d.setDate(d.getDate()-1);return d.toISOString().slice(0,10);}
+async function loadCtx(){
+  const card=$('#nowCtx');if(!card)return;
+  if(!ctxDay)ctxDay=todayISO;
+  let j;try{j=await jget('/api/daycontext?day='+ctxDay);}catch(e){return;}
+  const dd=$('#ctxDay');dd.innerHTML='';
+  [['Today',todayISO],['Yesterday',ctxYesterday()]].forEach(x=>{
+    const b=el('button','chip'+(ctxDay===x[1]?' sel':''),x[0]);b.type='button';
+    b.onclick=()=>{ctxDay=x[1];loadCtx();};dd.appendChild(b);});
+  const box=$('#ctxTags');box.innerHTML='';
+  j.options.forEach(o=>{const on=j.tags.indexOf(o.key)>=0;
+    const b=el('button','chip'+(on?' sel':''),(on?'✓ ':'')+o.label);b.type='button';
+    b.onclick=async()=>{if(b.dataset.busy)return;b.dataset.busy=1;
+      try{await post('/api/daycontext',{day:ctxDay,tag:o.key,on:!on});
+        toast((on?'Cleared: ':'Marked: ')+o.label+(ctxDay===todayISO?'':' (yesterday)'));loadCtx();}
+      catch(err){b.dataset.busy='';toast(err.message);}};
+    box.appendChild(b);});
+  const labels=j.options.filter(o=>j.tags.indexOf(o.key)>=0).map(o=>o.label);
+  $('#ctxSum').textContent=labels.length?labels.join(' · '):'nothing marked';
+  card.classList.toggle('on',labels.length>0);
 }
 async function loadDown(){
   const card=$('#nowDown');

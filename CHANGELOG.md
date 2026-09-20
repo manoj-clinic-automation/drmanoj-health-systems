@@ -3,6 +3,41 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — GutLog v3.23.0: the day around the trial
+
+**A food trial cannot be read honestly without knowing what else the day
+held.** A bad gut day after a new food means one thing on an ordinary day and
+quite another after a long drive, a broken night, or a fever. None of that was
+being recorded — and the point that makes it urgent rather than tidy is that
+**it cannot be recovered afterwards**. You cannot reconstruct last Tuesday's
+travel from the diary once Tuesday has gone, so every challenge result up to
+now carries an unknown that is permanently unrecoverable.
+
+**Day context** is a card on the Now tab above Down day: Today / Yesterday and
+six toggle chips — Heavy exertion, Poor sleep, Travel, Unwell, Stress, Ate out.
+One tap marks, a second clears. Yesterday is there because the marking usually
+only occurs to him the next morning, and a context he cannot backfill by a day
+is a context he will stop using.
+
+**Why it is not folded into Down days.** Down days mark *how he was*; day
+context marks *what the day did to him*. A long drive he coped with fine is
+travel and not a down day. Merging them would have made both unreadable, so
+Down day is untouched.
+
+The primary key is day+tag, so a repeated tap is harmless rather than a
+duplicate; only the six keys are accepted, and an unknown tag or a future day
+is refused — mutation-controlled, along with Yesterday quietly pointing at
+today, which is the version of this bug that would still look right on screen.
+A read-only feed endpoint on the existing token lets a trial reading, or
+FitLog, ask what a day held without reaching into the database.
+
+Two tables via SCHEMA, no migration, no `schema_version` bump, nothing existing
+changed. Gates: `test_day_context` **7/7** with **9 declared / 9 seen to fail**,
+case 7 driving real Chromium; every GutLog suite green on the server plus
+`ops/test_sso` 11/11; `test_ui_now` 196 PASS / 0 FAIL. Verified live with GETs
+only — **nothing was marked on his record**. Detail in
+`gutlog/DOSSIER_GutLog.md`.
+
 ## 2026-09-20 — GutLog v3.22.0: most meals are the same meal
 
 **The problem was never forgetfulness.** Logging a meal took **ten to fifteen
