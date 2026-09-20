@@ -3,6 +3,50 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — GutLog v3.25.0: a plan you can only read in the evening is not a plan
+
+The diet plan existed as a document. A document cannot tell him at four in the
+afternoon whether he has had enough protein today, or which rotation rule he
+is about to break — and by the time it is read in the evening, the meal that
+would have fixed it has been eaten.
+
+**"Today against the plan"** is a card on the Now tab, computed **entirely
+from the meals already logged**. It only became possible because of the last
+three releases: v3.22.0 made logging a meal one tap, v3.24.0 put the recipes
+where the plant and calcium values live. This one reads that record back.
+
+Today's protein, calcium, fibre and energy against targets — and **protein per
+main meal**, because three meals reaching a daily total between them is a
+different thing from one large meal doing all the work. This week's plant
+points, with **a spice counting a quarter**: a pinch of something is not the
+same plant event as a bowl of it, and counting it whole would make the score
+meaningless inside a week. The rotation rules each report a standing.
+
+**Foods that lack a calcium value are named rather than treated as zero.** A
+total quietly computed over a missing figure reads as a low day instead of an
+incomplete one, and he would go and correct the wrong thing.
+
+**It stays quiet in a thin week.** With fewer than three logged days, "short"
+rules still show their standing if he opens This week, but they make no
+suggestion. Three days is not evidence of falling behind — it is evidence of
+not having logged — and a card that scolds him for a gap it cannot see would
+be both wrong and self-defeating. On the live data this is the branch actually
+running: two logged days this week, four rules standing at "short", none of
+them in the tips. Checked against the meals table, not inferred from the suite.
+
+**It blocks nothing and writes nothing.** `/api/plan?day=` is a GET; no schema
+change, no table, no stored verdict, so nothing can go stale and no judgement
+outlives the meals it was read from. The targets, rules and food map are his
+diet, so they sit in a gitignored file beside `app.py` — **no plan file, no
+card**, asserted first.
+
+Gates: `test_plan` **9/9** with **12 declared / 12 seen to fail**, on invented
+foods and a fixed past week so the result cannot drift with the real diary;
+the three mutations are the quiet ones — counting a spice whole, ignoring
+quantity when totalling calcium, mistiming a "have it today". Every GutLog
+suite green on the server plus `ops/test_sso` 11/11; `test_ui_now` 196 PASS /
+0 FAIL. Detail in `gutlog/DOSSIER_GutLog.md`.
+
 ## 2026-09-20 — GutLog v3.24.0: the cooking, not just the calories
 
 v3.22.0 put his recipe collection into the food library so the meal cards

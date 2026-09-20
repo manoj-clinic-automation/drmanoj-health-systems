@@ -1,0 +1,76 @@
+{
+ "_": [
+  "GutLog v3.25.0 -- diet plan. v3.24.0 has no /api/plan or card, so all nine fail by version; three boundaries are also broken on purpose (spice weight, calcium by quantity, when fish is suggested)."
+ ],
+ "suite": "test_plan.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3250.py",
+ "assertions": [
+  {
+   "name": "01 no plan file, no card",
+   "control": "version"
+  },
+  {
+   "name": "02 today's totals against the targets",
+   "control": "version"
+  },
+  {
+   "name": "03 this week's plant count",
+   "control": "version"
+  },
+  {
+   "name": "04 the same dal two days running",
+   "control": "version"
+  },
+  {
+   "name": "05 the same sabzi more than twice a week",
+   "control": "version"
+  },
+  {
+   "name": "06 fish falling behind",
+   "control": "version"
+  },
+  {
+   "name": "07 limits: parantha and sweets",
+   "control": "version"
+  },
+  {
+   "name": "08 the card sits under the meal card",
+   "control": "version"
+  },
+  {
+   "name": "09 in a real browser: the card and the week",
+   "control": "version"
+  },
+  {
+   "name": "03 this week's plant count",
+   "control": "mutation",
+   "mutation": {
+    "id": "noquarter",
+    "why": "spices count as a whole plant",
+    "find": "plants[p] = 0.25 if p in quarter else 1.0",
+    "replace": "plants[p] = 1.0"
+   }
+  },
+  {
+   "name": "02 today's totals",
+   "control": "mutation",
+   "mutation": {
+    "id": "caq",
+    "why": "calcium ignores the quantity eaten",
+    "find": "ca += float(info[\"ca\"]) * float(it.get(\"q\") or 0)",
+    "replace": "ca += float(info[\"ca\"])"
+   }
+  },
+  {
+   "name": "06 fish falling behind",
+   "control": "mutation",
+   "mutation": {
+    "id": "nag",
+    "why": "suggest fish every day it is due",
+    "find": "                elif need == avail and not today_has:\n",
+    "replace": "                elif not today_has:\n"
+   }
+  }
+ ]
+}

@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.24.0)
+# GutLog — DOSSIER (v3.25.0)
 
 Single source of truth. Update after every change.
 
@@ -377,6 +377,55 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## The diet plan in the app — v3.25.0
+
+The plan existed as a document. A document cannot tell him, at four in the
+afternoon, whether he has had enough protein today or which of this week's
+rotation rules he is about to break — and by the time he reads it in the
+evening, the meal that would have fixed it has been eaten.
+
+**"Today against the plan"** is a card on the Now tab under the meal card,
+computed **entirely from the meals he has already logged**. The earlier
+releases are what make it possible: v3.22.0 made logging a meal one tap,
+v3.24.0 put the recipes where the plants and calcium values live. This one
+reads that record back.
+
+- **Today**: protein, calcium, fibre and energy so far against targets, as
+  bars; protein **per main meal** against an aim, because three meals hitting
+  a daily total between them is a different thing from one large meal doing
+  all the work.
+- **Foods that lack a calcium value are named.** A total quietly computed over
+  foods with a missing figure reads as a low day rather than an incomplete
+  one, and he would correct the wrong thing.
+- **This week's plant points** against the target, with easy additions he has
+  not yet had. **A spice counts a quarter** — a pinch of something is not the
+  same plant event as a bowl of it, and counting it whole would make the score
+  meaningless within a week. Mutation-controlled.
+- **Up to five suggestions** for the next meal.
+- **"This week"** opens each rotation rule's standing: *on track / due / short
+  / at limit / over*.
+
+### The two things it refuses to do
+
+**It nags nothing in a thin week.** In a week with fewer than three logged
+days, "short" rules still show their standing when he opens This week, but
+they produce **no suggestion**. Three days is not evidence of falling behind,
+it is evidence of not having logged; a card that scolds him for the gap it
+cannot see would be wrong *and* would teach him to stop opening it.
+Mutation-controlled, and on the live data today this is the branch actually
+running — 2 logged days this week, four rules standing at "short", and not one
+of them in the tips.
+
+**It blocks nothing and writes nothing.** `/api/plan?day=` is a GET that
+computes from logged meals: no schema change, no table, no stored verdict.
+Nothing can go stale, and nothing the card says can be wrong in a way that
+outlives the meals it was read from.
+
+The targets, the rotation rules and the food map (plants, calcium, tags) are
+his diet, so they live in `diet_plan.local.json` beside `app.py`, mode 600,
+never committed. **No plan file, no card** — asserted first, so a clone of
+this app for anyone else simply does not show it.
 
 ## Recipes — v3.24.0
 
@@ -1000,6 +1049,20 @@ via OLS reverse proxy.
 > pulled that file out from under the browser suite mid-run on 2026-09-15 —
 > which aborts loudly, as designed, but wastes a fifteen-minute run.
 
+- `test_plan.py` — **9/9 PASS** (2026-09-20, v3.25.0), on Windows and on the
+  server; **12 declared new assertions, 12 seen to fail** (9 by version, 3 by
+  mutation). Invented foods and a **fixed past week**, so the result cannot
+  drift with the real diary. Asserts that with no plan file the card is off;
+  today's totals with calcium scaled **by quantity** (half a portion counting
+  half) and unknowns named; the week's plant count including recipe plants
+  with a spice at a quarter, and last week not counted; the same dal two days
+  running flagged while two different ones are fine; the same sabzi at the
+  limit on one day and over on the next, with the previous Sunday correctly
+  outside the week; a rule falling behind reading *due* midweek, *have it
+  today* on the last chance and *short* afterwards — **never "on track"**; and
+  the daily and weekly limits. **Case 9 drives real Chromium.** The three
+  mutations are the quiet ones: counting a spice whole, ignoring quantity when
+  totalling calcium, and getting the timing of a "have it today" wrong.
 - `test_recipes.py` — **7/7 PASS** (2026-09-20, v3.24.0), on Windows and on the
   server; **9 declared new assertions, 9 seen to fail** (7 by version, 2 by
   mutation). The fixture uses **invented cards** and runs the **real seeder**,
@@ -1374,6 +1437,33 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-20 v3.25.0 — the diet plan in the app. DEPLOYED 10:56 IST.**
+  `app.py` sha256 `11a5090e…`, 462,028 bytes on the server, **byte-identical to
+  the repo build**; pre-flight confirmed `GUTLOG_V3240_RECIPES` present, no
+  v3.25.0 marker, and sha256 equal to the repo first. `--reverse` reproduces
+  v3.24.0 byte-for-byte (`f8ec9dbf…`). Rollback:
+  `cp /root/gutlog/app.py.bak-v3250-20260920_105542 /root/gutlog/app.py`.
+  `patch_gutlog_v3250.py`, **7 anchors**, Jinja guard. **No schema change at
+  all** — `/api/plan` is a GET computed from logged meals, so there is nothing
+  to migrate and nothing stored that can go stale. The database was backed up
+  anyway (`health3.db.pre-v3250-20260920_105503`, integrity ok, 33 tables).
+  Plan file `diet_plan.local.json` at mode 600, validated on the server before
+  the patch: 7 targets, 10 rules, 71 foods, 23 quarter-weight items, 6 easy
+  additions.
+  Server gates before the restart: **test_plan 9/9**, recipes 7/7,
+  day_context 7/7, meal_cards 12/12, one_dose 5/5, a 18/18, b 16/16, c 20/20,
+  d 18/18, e 13/13, f 8/8, g 14/14, i 18/18, j 28/28, m 19/19, n 14/14,
+  o 10/10, watch_tiles 7/7, `ops/test_sso.py` **11/11**. Offline: `test_ui_now`
+  **196 PASS / 0 FAIL**, `test_ui_order` ALL PASS, negative control **12
+  declared, 12 seen**.
+  **Live, read-only:** anonymous `/api/plan` 302, logged in 200 with `on: true`
+  for 2026-09-20; today's totals all zero because nothing is logged yet today,
+  **`calcium_missing` empty**, the week at 7.0 points of its target from 7
+  plants since 2026-09-14, one tip naming easy additions, and all 10 rotation
+  rules reporting a standing. **The quiet branch is the one running**: only 2
+  days this week carry a logged meal, so the four rules standing at "short"
+  produce no suggestion — verified against the meals table rather than assumed
+  from the suite.
 - **2026-09-20 v3.24.0 — Recipes. DEPLOYED 10:42 IST.** `app.py` sha256
   `f8ec9dbf…`, 449,765 bytes on the server, **byte-identical to the repo
   build**; pre-flight confirmed `GUTLOG_V3230_CONTEXT` present, no v3.24.0

@@ -294,7 +294,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS GUTLOG_V3230_CONTEXT GUTLOG_V3240_RECIPES
+SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS GUTLOG_V3230_CONTEXT GUTLOG_V3240_RECIPES GUTLOG_V3250_PLAN
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -1142,6 +1142,186 @@ def api_recipe_log(slug):
                             "day": d.get("day") or today(), "mtime": d.get("mtime") or now_hm(),
                             "extra": [{"n": r["name"], "q": q}]})
     return jsonify(**body), code
+
+
+# ------------------------------------------------------------------ diet plan
+# GUTLOG_V3250_PLAN -- the diet plan, checking itself. Targets, rotation rules
+# and a food map (plants, calcium, tags) come from diet_plan.local.json beside
+# this file (his diet -- never committed). Everything is computed at read
+# time from the meals he logged: today's totals against the targets, this
+# week's plant count, each rotation rule's standing, and a few plain
+# suggestions for the next meal. Advisory only: nothing is blocked, nothing
+# is written. No file = feature off.
+def _plan_cfg():
+    try:
+        path = os.environ.get("GUTLOG_PLAN_FILE") or os.path.join(BASE, "diet_plan.local.json")
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def _plan_food(name, cfg, rec):
+    f = (cfg.get("foods") or {}).get(name) or {}
+    plants = f.get("plants")
+    if plants is None:
+        plants = rec.get(name, [])
+    return {"plants": [p.lower() for p in plants], "ca": f.get("ca"), "tags": f.get("tags") or []}
+
+
+def _plan_days(start, end):
+    """{day: [meal rows with items]} for start..end inclusive."""
+    out = {}
+    for r in db().execute("SELECT day, mtime, slot, items, protein, kcal, fibre FROM meals "
+                          "WHERE day>=? AND day<=? ORDER BY day, mtime", (start, end)).fetchall():
+        d = dict(r)
+        d["items"] = json.loads(d["items"] or "[]")
+        out.setdefault(d["day"], []).append(d)
+    return out
+
+
+def _tags_of(meals, cfg, rec):
+    s = set()
+    for m in meals:
+        for it in m["items"]:
+            if (it.get("q") or 0) > 0:
+                s.update(_plan_food(it.get("n") or "", cfg, rec)["tags"])
+    return s
+
+
+def _has(tags, prefix):
+    return sorted(t for t in tags if t == prefix or t.startswith(prefix))
+
+
+def _short(tag):
+    return tag.split(":", 1)[1] if ":" in tag else tag
+
+
+def plan_view(day):
+    cfg = _plan_cfg()
+    if cfg is None:
+        return {"on": False}
+    rec = {}
+    try:
+        for r in db().execute("SELECT name, data FROM recipes").fetchall():
+            rec[r["name"]] = (json.loads(r["data"] or "{}").get("plants") or [])
+    except sqlite3.OperationalError:
+        rec = {}
+    tg = cfg.get("targets") or {}
+    d0 = date.fromisoformat(day)
+    monday = d0 - timedelta(days=d0.weekday())
+    yday = (d0 - timedelta(days=1)).isoformat()
+    days = _plan_days(min(monday, d0 - timedelta(days=1)).isoformat(), day)
+    todays = days.get(day, [])
+
+    # today's totals
+    ca, ca_missing, sweets = 0.0, [], 0
+    mains = dict((s, 0.0) for s in cfg.get("main_meals") or [])
+    for m in todays:
+        if m["slot"] in mains:
+            mains[m["slot"]] += m["protein"] or 0
+        has_sweet = False
+        for it in m["items"]:
+            info = _plan_food(it.get("n") or "", cfg, rec)
+            if info["ca"] is None:
+                if it.get("n") not in ca_missing:
+                    ca_missing.append(it.get("n"))
+            else:
+                ca += float(info["ca"]) * float(it.get("q") or 0)
+            if _has(info["tags"], "sweet"):
+                has_sweet = True
+        sweets += 1 if has_sweet else 0
+    today = {"kcal": round(sum(m["kcal"] or 0 for m in todays)),
+             "protein": round(sum(m["protein"] or 0 for m in todays), 1),
+             "fibre": round(sum(m["fibre"] or 0 for m in todays), 1),
+             "calcium": round(ca), "calcium_missing": ca_missing, "sweets": sweets,
+             "mains": [{"slot": k, "protein": round(v, 1), "logged": any(m["slot"] == k for m in todays)}
+                       for k, v in mains.items()], "meals": len(todays)}
+
+    # this week's plants
+    quarter = set(p.lower() for p in cfg.get("quarter") or [])
+    plants = {}
+    for dd, ms in days.items():
+        if dd < monday.isoformat():
+            continue
+        for m in ms:
+            for it in m["items"]:
+                for p in _plan_food(it.get("n") or "", cfg, rec)["plants"]:
+                    plants[p] = 0.25 if p in quarter else 1.0
+    points = sum(plants.values())
+    easy = [p for p in cfg.get("easy_adds") or [] if p.lower() not in plants]
+
+    # rules
+    week_days = [(monday + timedelta(days=i)).isoformat() for i in range(7)]
+    left = 6 - d0.weekday()
+    tags_by_day = dict((dd, _tags_of(days.get(dd, []), cfg, rec)) for dd in week_days + [yday])
+    rules, tips = [], []
+    # a week he only started logging late is not "short" -- too little record to say
+    logged_days = sum(1 for dd in week_days if days.get(dd))
+    for r in cfg.get("rules") or []:
+        t, pre, lab = r.get("type"), r.get("tag", ""), r.get("label", "")
+        row = {"id": r.get("id"), "label": lab, "status": "ok", "detail": ""}
+        if t == "no_repeat_days":
+            both = sorted(set(_has(tags_by_day[yday], pre)) & set(_has(tags_by_day[day], pre)))
+            prev = _has(tags_by_day[yday], pre)
+            if both:
+                row.update(status="over", detail="%s yesterday and today" % ", ".join(_short(x) for x in both))
+            elif prev:
+                row["detail"] = "yesterday: " + ", ".join(_short(x) for x in prev)
+                if not _has(tags_by_day[day], pre):
+                    tips.append("%s: not %s again today" % (lab.replace("Same ", "").replace(" two days running", "").capitalize(),
+                                                          " or ".join(_short(x) for x in prev)))
+        elif t == "max_each":
+            cnt = {}
+            for dd in week_days:
+                for x in _has(tags_by_day.get(dd, set()), pre):
+                    cnt[x] = cnt.get(x, 0) + 1
+            over = sorted(x for x, n in cnt.items() if n > r.get("max", 2))
+            full = sorted(x for x, n in cnt.items() if n == r.get("max", 2))
+            if over:
+                row.update(status="over", detail=", ".join("%s %d times" % (_short(x), cnt[x]) for x in over))
+            elif full:
+                row.update(status="full", detail="%s: %d this week, no more" % (", ".join(_short(x) for x in full), r.get("max", 2)))
+        elif t in ("min_days", "max_days"):
+            n = sum(1 for dd in week_days if _has(tags_by_day.get(dd, set()), pre))
+            lo, hi = r.get("min"), r.get("max")
+            row["detail"] = ("%d of %d this week" % (n, lo) if lo else "%d this week" % n) + (" (max %d)" % hi if hi and not lo else "")
+            if hi is not None and n > hi:
+                row["status"] = "over"
+            elif hi is not None and n == hi and lo is None:
+                row["status"] = "full"
+                tips.append("%s: %d this week, none more" % (lab, n))
+            elif lo is not None and n < lo:
+                today_has = bool(_has(tags_by_day[day], pre))
+                need = lo - n
+                avail = left + (0 if today_has else 1)
+                row["status"] = "due" if need <= avail else "short"
+                row["detail"] += " · %d day%s left" % (avail, "" if avail == 1 else "s")
+                if need > avail and logged_days >= 3:
+                    tips.append("%s: %d of %d this week — short; start early next week" % (lab, n, lo))
+                elif need == avail and not today_has:
+                    tips.append("%s: %d of %d this week — have it today" % (lab, n, lo))
+        elif t == "max_per_day":
+            n = sweets if pre == "sweet" else 0
+            if n > r.get("max", 1):
+                row.update(status="over", detail="%d today" % n)
+            elif n == r.get("max", 1):
+                row.update(status="full", detail="done for today")
+                tips.append("Sweet: done for today")
+        rules.append(row)
+    if points < (tg.get("plants_week") or 25) and easy:
+        tips.append("Plants: %g of %d this week — easy adds: %s" % (points, tg.get("plants_week") or 25, ", ".join(easy[:4])))
+    return {"on": True, "day": day, "targets": tg, "today": today,
+            "week": {"start": monday.isoformat(), "plants": sorted(plants), "points": points,
+                     "target": tg.get("plants_week") or 25, "easy": easy},
+            "rules": rules, "tips": tips[:5]}
+
+
+@app.route("/api/plan")
+@login_required
+def api_plan():
+    day = _valid_day(request.args.get("day")) or today()
+    return jsonify(plan_view(day))
 
 
 # ------------------------------------------------------------------ PRN doses
@@ -4784,6 +4964,18 @@ color:var(--err);border-color:#E4C3BE}
 .rcsteps{margin:0;padding-left:22px;font-size:15px}.rcsteps li{margin:0 0 7px}
 .rcof{border:1.5px solid var(--teal);border-radius:12px;padding:10px 12px;margin:10px 0}
 .rcof ul{margin:6px 0 0;padding-left:20px;font-size:15px}
+/* GUTLOG_V3250_PLAN */
+#nowPlan .dwtop{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+#nowPlan .dwtop .q{margin:0}#nowPlan .fs{margin-left:auto;font-size:14px;color:var(--muted)}
+.pbar2{margin:0 0 9px}.pb2t{display:flex;justify-content:space-between;font-size:15px;margin:0 0 4px}
+.pb2t span:last-child{color:var(--muted)}
+.pb2b{height:8px;border-radius:99px;background:var(--line);overflow:hidden}
+.pb2b i{display:block;height:100%;background:var(--teal);border-radius:99px}.pb2b i.over{background:var(--amber)}
+.plantips{margin:4px 0 0;padding-left:20px;font-size:15px}.plantips li{margin:0 0 5px}
+.planrules{list-style:none;margin:8px 0;padding:0}
+.planrules li{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:15px}
+.planrules li span:last-child{color:var(--muted);text-align:right}
+.planrules li.pr-over span:last-child,.planrules li.pr-short span:last-child,.planrules li.pr-due span:last-child{color:var(--amber);font-weight:700}
 /* GUTLOG_V3230_CONTEXT */
 #nowCtx .dwtop{display:flex;align-items:center;gap:10px;margin:0 0 10px}
 #nowCtx .dwtop .q{margin:0}
@@ -5357,6 +5549,14 @@ function thmCycle(){
     <div id="mealBody"></div>
     <div id="mealToday"></div>
   </div>
+  <div class="card" id="nowPlan" style="display:none">
+    <div class="dwtop"><p class="q">Today against the plan</p><span class="fs" id="planSum"></span></div>
+    <div id="planBars"></div>
+    <div id="planTips"></div>
+    <button type="button" class="btn ghost" id="planMore" style="margin-top:8px">This week</button>
+    <div id="planWeek" style="display:none"></div>
+  </div>
+
 
   <div class="card fold" id="nowDoses">
     <button type="button" class="fold-h">
@@ -7326,9 +7526,10 @@ function mcSame(){
 }
 async function loadMeals(){
   try{MC=await jget('/api/mealcards?day='+todayISO);}catch(e){return;}
-  if(!MC.cards.length){$('#nowMeal').style.display='none';return;}
+  if(!MC.cards.length){$('#nowMeal').style.display='none';loadPlan();return;}
   if(!mcEdit){mcCur=mcAuto();mcSel=mcFresh(mcCur);}
   mcRender();
+  loadPlan();
 }
 function mcTab(label,on,fn){const b=el('button','chip'+(on?' sel':''),label);b.type='button';b.onclick=fn;return b;}
 function mcRender(){
@@ -7668,6 +7869,41 @@ async function loadCtx(){
   const labels=j.options.filter(o=>j.tags.indexOf(o.key)>=0).map(o=>o.label);
   $('#ctxSum').textContent=labels.length?labels.join(' · '):'nothing marked';
   card.classList.toggle('on',labels.length>0);
+}
+/* GUTLOG_V3250_PLAN -- today's totals against the plan, this week's plants,
+   the rotation rules and a few suggestions. Read-only; advisory. */
+function planBar(label,val,lo,hi,unit){
+  const w=el('div','pbar2');const top=el('div','pb2t');
+  top.appendChild(el('span','',label));
+  top.appendChild(el('span','',Math.round(val)+(hi&&hi!==lo?(' / '+lo+'–'+hi):(' / '+lo))+' '+unit));
+  w.appendChild(top);const bar=el('div','pb2b');const i=el('i','');
+  i.style.width=Math.min(100,Math.round(100*val/(lo||1)))+'%';if(hi&&val>hi)i.className='over';
+  bar.appendChild(i);w.appendChild(bar);return w;
+}
+async function loadPlan(){
+  const card=$('#nowPlan');if(!card)return;
+  let j;try{j=await jget('/api/plan?day='+todayISO);}catch(e){return;}
+  if(!j.on){card.style.display='none';return;}
+  card.style.display='';const t=j.today,g=j.targets;
+  $('#planSum').textContent=t.meals?(t.meals+' meal'+(t.meals===1?'':'s')+' logged'):'nothing logged yet';
+  const b=$('#planBars');b.innerHTML='';
+  b.appendChild(planBar('Protein',t.protein,g.protein,null,'g'));
+  b.appendChild(planBar('Calcium',t.calcium,(g.calcium||[1000])[0],(g.calcium||[])[1],'mg'));
+  b.appendChild(planBar('Fibre',t.fibre,(g.fibre||[30])[0],(g.fibre||[])[1],'g'));
+  b.appendChild(planBar('Energy',t.kcal,(g.kcal||[1850])[0],(g.kcal||[])[1],'kcal'));
+  const mm=t.mains.filter(m=>m.logged).map(m=>m.slot+' '+Math.round(m.protein)+' g');
+  if(mm.length)b.appendChild(el('p','hint','Protein by meal (aim '+g.protein_meal+'+ g): '+mm.join(' · ')));
+  if(t.calcium_missing.length)b.appendChild(el('p','hint','No calcium value yet for: '+t.calcium_missing.join(', ')));
+  b.appendChild(el('p','hint','This week: '+j.week.points+' of '+j.week.target+' plants'));
+  const tp=$('#planTips');tp.innerHTML='';
+  if(j.tips.length){tp.appendChild(el('p','lbl','For the next meal'));const u=el('ul','plantips');j.tips.forEach(x=>u.appendChild(el('li','',x)));tp.appendChild(u);}
+  const wk=$('#planWeek');wk.innerHTML='';
+  const ul=el('ul','planrules');
+  j.rules.forEach(r=>{const li=el('li','pr-'+r.status);li.appendChild(el('span','',r.label));
+    li.appendChild(el('span','',({ok:'on track',due:'due',short:'short',full:'at limit',over:'over'})[r.status]+(r.detail?' · '+r.detail:'')));ul.appendChild(li);});
+  wk.appendChild(ul);
+  wk.appendChild(el('p','hint','Plants this week: '+(j.week.plants.join(', ')||'none yet')));
+  $('#planMore').onclick=()=>{const o=wk.style.display==='none';wk.style.display=o?'':'none';$('#planMore').textContent=o?'Hide the week':'This week';};
 }
 /* GUTLOG_V3240_RECIPES -- the recipe book in the Meals tab. */
 let RC=null,rcGroup='',rcStage='',rcOpen=null;
