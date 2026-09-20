@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.25.0)
+# GutLog — DOSSIER (v3.26.0)
 
 Single source of truth. Update after every change.
 
@@ -377,6 +377,63 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## Food trials as periods — v3.26.0
+
+The old food test recorded **one day**: ate it, felt this. That is the wrong
+unit. A food eaten once on a good day proves nothing, and the thing he
+actually wants to know — *does this food suit me* — is a question about weeks.
+His own note on the last test said as much: *will track for a month*. The app
+had nowhere to put that intention, so it lived in his head.
+
+A **trial** is a period: food, amount, how often, a start, and a planned length
+from a week to a month. Meals whose item name contains the match text are
+**linked automatically**, so the trial costs nothing to run beyond logging
+meals he was logging anyway.
+
+### What a trial compares, and what it throws away
+
+Trial days against **the 14 days before it started**. A symptom day is a GI
+episode, a down day or daily symptoms; the average gut pain is carried
+alongside.
+
+Two kinds of day are **set aside on both sides**, and this is the part that
+makes the comparison worth reading:
+
+- **Day-context days** (v3.23.0 — exertion, poor sleep, travel, unwell,
+  stress, ate out). A bad day with an obvious other cause is not evidence
+  about a food.
+- **Days with nothing logged at all** — no meal, no dose, no episode, no day
+  row. Counting an empty day as a symptom-free day is the single most
+  flattering mistake this feature could make: it would turn every gap in the
+  diary into evidence that the food is fine. Mutation-controlled.
+
+Separately, **eaten-or-the-day-after** days are compared against the other
+logged days, because a reaction that shows up the next morning is still a
+reaction. Dropping the day after is also mutation-controlled. The forms in
+which the food was eaten are listed, since two preparations of the same thing
+are not always the same challenge.
+
+### It refuses to draw a conclusion too early
+
+Words — *no signal / possibly better / possibly worse / likely worse* — appear
+only with **at least eight counted days on each side**. Below that it says
+**"not enough days yet"** and nothing else. A verdict from three days is worse
+than no verdict, because he would act on it. Mutation-controlled: removing the
+minimum makes the suite fail.
+
+### Ending one
+
+His verdict is **Tolerated / Not tolerated / Not sure**, with a note — and it
+writes through to the rest of the app: the library status of every matching
+food is cleared or marked a trigger, and a matching recipe's stage moves to
+rotation, avoid or paused. Starting a trial of a recipe sets that recipe **On
+trial**, so the recipe book and the trial cannot disagree about what is being
+tested.
+
+Table `trials` via `SCHEMA` — no migration, no `schema_version` bump. **The old
+`foodtests` rows are untouched** and the one-day test stays below the trials on
+the Food test segment; the old record is history and history is not rewritten.
 
 ## The diet plan in the app — v3.25.0
 
@@ -1049,6 +1106,20 @@ via OLS reverse proxy.
 > pulled that file out from under the browser suite mid-run on 2026-09-15 —
 > which aborts loudly, as designed, but wastes a fifteen-minute run.
 
+- `test_trials.py` — **9/9 PASS** (2026-09-20, v3.26.0), on Windows and on the
+  server; **13 declared new assertions, 13 seen to fail** (9 by version, 4 by
+  mutation). Invented foods throughout. Asserts what a bad start is refused
+  and that only one trial per food runs at a time; that meals are linked by
+  name with the forms counted; that a context day and an empty day are set
+  aside **on both sides** of the comparison; eaten-or-day-after against other
+  logged days; that a short trial says "not enough days yet" while starting a
+  recipe trial marks the recipe On trial; that his verdict updates the food
+  map for **every** matching food and the recipe's stage; that an old one-day
+  test moves into a trial **once** and a second run creates nothing; and that
+  the segment leads with trials while the API needs a login. **Case 9 drives
+  real Chromium.** The four mutations are the flattering ones — counting
+  context days, counting empty days as symptom-free, dropping the day after,
+  and printing a verdict word on too few days.
 - `test_plan.py` — **9/9 PASS** (2026-09-20, v3.25.0), on Windows and on the
   server; **12 declared new assertions, 12 seen to fail** (9 by version, 3 by
   mutation). Invented foods and a **fixed past week**, so the result cannot
@@ -1437,6 +1508,36 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-20 v3.26.0 — food trials as periods. DEPLOYED 11:08 IST.**
+  `app.py` sha256 `37ea8d23…`, 478,041 bytes on the server, **byte-identical to
+  the repo build**; pre-flight confirmed `GUTLOG_V3250_PLAN` present, no
+  v3.26.0 marker, and sha256 equal to the repo first. `--reverse` reproduces
+  v3.25.0 byte-for-byte (`11a5090e…`). Rollback:
+  `cp /root/gutlog/app.py.bak-v3260-20260920_110825 /root/gutlog/app.py`.
+  `patch_gutlog_v3260.py`, **7 anchors**, Jinja guard. Database backed up
+  before the patch (`health3.db.pre-v3260-20260920_110802`, integrity ok, 33
+  tables) and again by the migration. **No `schema_version` bump** — `trials`
+  is `CREATE TABLE IF NOT EXISTS` in `SCHEMA`; confirmed live: present with
+  the expected columns, 3.3.4 unchanged, 33 → 34 tables, and **the 3 existing
+  `foodtests` rows still exactly 3**.
+  Server gates before the restart: **test_trials 9/9**, plan 9/9, recipes 7/7,
+  day_context 7/7, meal_cards 12/12, one_dose 5/5, a 18/18, b 16/16, c 20/20,
+  d 18/18, e 13/13, f 8/8, g 14/14, i 18/18, j 28/28, m 19/19, n 14/14,
+  o 10/10, watch_tiles 7/7, `ops/test_sso.py` **11/11**. Offline: `test_ui_now`
+  **196 PASS / 0 FAIL**, `test_ui_order` ALL PASS, negative control **13
+  declared, 13 seen**.
+  **The migration** (`migrate_trials.py`, dry run read first, its own backup)
+  moved his standing one-day test into a trial: the dry run printed the single
+  expected line, `--apply` created exactly one, and the spec was deleted from
+  the server afterwards. The trial's note cites the three original 17-Sep rows
+  and his own words verbatim, so the old record explains the new one rather
+  than being replaced by it.
+  **Live, read-only — the trial was left running** (GETs only, no verdict, no
+  end): `/api/trials` 302 anonymous and 200 logged in with 1 active trial on
+  **day 4 of 30**, 2 days eaten, two forms listed, the 14-day baseline at 8
+  counted days against 4 trial days, 0 days set aside, and the signal
+  correctly **"not enough days yet"** — the minimum is 8 a side and the trial
+  has 4, which is the refusal working on live data rather than in a fixture.
 - **2026-09-20 v3.25.0 — the diet plan in the app. DEPLOYED 10:56 IST.**
   `app.py` sha256 `11a5090e…`, 462,028 bytes on the server, **byte-identical to
   the repo build**; pre-flight confirmed `GUTLOG_V3240_RECIPES` present, no

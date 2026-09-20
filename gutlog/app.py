@@ -121,6 +121,11 @@ CREATE TABLE IF NOT EXISTS stock_order_cfg (
 CREATE TABLE IF NOT EXISTS stock_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT, month TEXT NOT NULL, status TEXT DEFAULT 'OPEN',
   created TEXT, received_at TEXT DEFAULT '', lines TEXT DEFAULT '[]', text TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS trials (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, food TEXT, match TEXT DEFAULT '', amount TEXT DEFAULT '',
+  freq TEXT DEFAULT '', start TEXT, days INTEGER DEFAULT 14, ended TEXT DEFAULT '',
+  status TEXT DEFAULT 'active', verdict TEXT DEFAULT '', verdict_note TEXT DEFAULT '',
+  note TEXT DEFAULT '', created TEXT);
 CREATE TABLE IF NOT EXISTS recipes (
   id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE, name TEXT, grp TEXT DEFAULT '',
   stage TEXT DEFAULT 'new', stage_note TEXT DEFAULT '', data TEXT DEFAULT '{}', updated TEXT);
@@ -294,7 +299,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS GUTLOG_V3230_CONTEXT GUTLOG_V3240_RECIPES GUTLOG_V3250_PLAN
+SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS GUTLOG_V3230_CONTEXT GUTLOG_V3240_RECIPES GUTLOG_V3250_PLAN GUTLOG_V3260_TRIALS
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -1322,6 +1327,185 @@ def plan_view(day):
 def api_plan():
     day = _valid_day(request.args.get("day")) or today()
     return jsonify(plan_view(day))
+
+
+# ------------------------------------------------------------------ food trials
+# GUTLOG_V3260_TRIALS -- a food trial is a PERIOD, not a one-day entry: a food,
+# how much, how often, a start and a planned length. Meals eaten in that
+# period that contain the food are linked to it by name automatically -- no
+# separate daily test entry. The comparison is deterministic and labelled:
+# the trial days against the 14 days before it, days with a Day-context mark
+# and days with nothing logged at all set aside, and a signal word only once there are 8 counted days on each
+# side. He gives the verdict; the verdict updates the food map (library
+# status) and, when the food is one of his recipes, the recipe's stage.
+TRIAL_BASELINE_DAYS = 14
+TRIAL_MIN_DAYS = 8
+TRIAL_VERDICTS = {"tolerated": ("Tolerated", "cleared", "rotation"),
+                  "not_tolerated": ("Not tolerated", "trigger", "avoid"),
+                  "unsure": ("Not sure", None, "paused")}
+
+
+def _trial_terms(t):
+    return [x.strip().lower() for x in (t["match"] or "").split("|") if x.strip()]
+
+
+def _trial_hits(items, terms):
+    return sorted(set(it.get("n") or "" for it in items
+                      if (it.get("q") or 0) > 0 and any(w in (it.get("n") or "").lower() for w in terms)))
+
+
+def _day_outcome(day):
+    gi = db().execute("SELECT MAX(COALESCE(severity,0)) AS m, COUNT(*) AS n FROM episodes "
+                      "WHERE day=? AND category='GI'", (day,)).fetchone()
+    down = db().execute("SELECT 1 FROM down_days WHERE day=?", (day,)).fetchone()
+    dd = db().execute("SELECT syms FROM days WHERE day=?", (day,)).fetchone()
+    syms = bool(dd and (dd["syms"] or "").strip())
+    # a day counts only if the app was in use that day -- an empty day is not a good day
+    used = bool(gi["n"]) or bool(down) or bool(dd) or bool(
+        db().execute("SELECT 1 FROM doses WHERE day=? LIMIT 1", (day,)).fetchone()) or bool(
+        db().execute("SELECT 1 FROM meals WHERE day=? LIMIT 1", (day,)).fetchone())
+    return {"symptom": bool(gi["n"]) or bool(down) or syms, "pain": int(gi["m"] or 0), "used": used}
+
+
+def _signal(a, b):
+    """a, b: (counted days, symptom days). Words, never a number dressed as certainty."""
+    if a[0] < TRIAL_MIN_DAYS or b[0] < TRIAL_MIN_DAYS:
+        return "not enough days yet"
+    d = 100.0 * a[1] / a[0] - 100.0 * b[1] / b[0]
+    if d >= 30:
+        return "likely worse"
+    if d >= 15:
+        return "possibly worse"
+    if d <= -15:
+        return "possibly better"
+    return "no signal"
+
+
+def trial_view(t, on_day=None):
+    on_day = on_day or today()
+    terms = _trial_terms(t)
+    start = date.fromisoformat(t["start"])
+    planned_end = start + timedelta(days=int(t["days"] or 14) - 1)
+    stop = min(planned_end, date.fromisoformat(t["ended"] or on_day), date.fromisoformat(on_day))
+    base_from = start - timedelta(days=TRIAL_BASELINE_DAYS)
+    meals = {}
+    for r in db().execute("SELECT day, items FROM meals WHERE day>=? AND day<=?",
+                          (base_from.isoformat(), stop.isoformat())).fetchall():
+        meals.setdefault(r["day"], []).extend(json.loads(r["items"] or "[]"))
+    ctx = set(r["day"] for r in db().execute(
+        "SELECT DISTINCT day FROM day_context WHERE day>=? AND day<=?",
+        (base_from.isoformat(), stop.isoformat())).fetchall())
+    days, styles = [], {}
+    d = base_from
+    while d <= stop:
+        k = d.isoformat()
+        hits = _trial_hits(meals.get(k, []), terms)
+        for h in hits:
+            if k >= t["start"]:
+                styles[h] = styles.get(h, 0) + 1
+        o = _day_outcome(k)
+        days.append({"day": k, "phase": "trial" if k >= t["start"] else "before",
+                     "ate": bool(hits), "logged": o["used"], "context": k in ctx,
+                     "symptom": o["symptom"], "pain": o["pain"]})
+        d += timedelta(days=1)
+    # "exposed" = eaten that day or the day before (the 48 h the plan names)
+    for i, x in enumerate(days):
+        x["exposed"] = x["ate"] or (i > 0 and days[i - 1]["ate"])
+
+    def side(rows):
+        rows = [x for x in rows if not x["context"] and x["logged"]]
+        n = len(rows)
+        s = sum(1 for x in rows if x["symptom"])
+        pain = round(sum(x["pain"] for x in rows) / float(n), 1) if n else None
+        return {"days": n, "symptom_days": s, "pct": round(100.0 * s / n) if n else None,
+                "avg_gi_pain": pain}
+    tr = side([x for x in days if x["phase"] == "trial"])
+    bf = side([x for x in days if x["phase"] == "before"])
+    ex = side([x for x in days if x["exposed"]])
+    nx = side([x for x in days if not x["exposed"] and x["logged"]])
+    trial_days = [x for x in days if x["phase"] == "trial"]
+    return {"id": t["id"], "food": t["food"], "match": terms, "amount": t["amount"] or "",
+            "freq": t["freq"] or "", "start": t["start"], "planned_days": int(t["days"] or 14),
+            "planned_end": planned_end.isoformat(), "status": t["status"], "ended": t["ended"] or "",
+            "verdict": t["verdict"] or "", "verdict_note": t["verdict_note"] or "", "note": t["note"] or "",
+            "day_no": (min(stop, planned_end) - start).days + 1 if stop >= start else 0,
+            "ate_days": sum(1 for x in trial_days if x["ate"]),
+            "set_aside": sum(1 for x in trial_days if x["context"]),
+            "styles": sorted(styles.items(), key=lambda kv: -kv[1]),
+            "trial": tr, "before": bf, "signal": _signal((tr["days"], tr["symptom_days"]),
+                                                         (bf["days"], bf["symptom_days"])),
+            "exposed": ex, "not_exposed": nx,
+            "exposure_signal": _signal((ex["days"], ex["symptom_days"]),
+                                       (nx["days"], nx["symptom_days"])),
+            "min_days": TRIAL_MIN_DAYS, "baseline_days": TRIAL_BASELINE_DAYS}
+
+
+@app.route("/api/trials")
+@login_required
+def api_trials():
+    rows = db().execute("SELECT * FROM trials ORDER BY status='active' DESC, start DESC").fetchall()
+    return jsonify(trials=[trial_view(r) for r in rows],
+                   verdicts=[{"key": k, "label": v[0]} for k, v in TRIAL_VERDICTS.items()])
+
+
+@app.route("/api/trials", methods=["POST"])
+@login_required
+def api_trial_start():
+    d = J()
+    food = (d.get("food") or "").strip()[:80]
+    if not food:
+        return jsonify(ok=False, err="Pick the food to trial."), 400
+    start = _valid_day(d.get("start") or today())
+    if not start:
+        return jsonify(ok=False, err="Pick a real start date, not in the future."), 400
+    try:
+        n = int(d.get("days") or 14)
+    except (TypeError, ValueError):
+        n = 14
+    if not 3 <= n <= 90:
+        return jsonify(ok=False, err="A trial runs 3 to 90 days."), 400
+    if db().execute("SELECT 1 FROM trials WHERE status='active' AND LOWER(food)=LOWER(?)",
+                    (food,)).fetchone():
+        return jsonify(ok=False, err="A trial of that food is already running."), 400
+    match = (d.get("match") or food).strip().lower()[:200]
+    insert("trials", ["food", "match", "amount", "freq", "start", "days", "ended", "status",
+                      "verdict", "verdict_note", "note"],
+           [food, match, (d.get("amount") or "")[:60], (d.get("freq") or "")[:40], start, n, "",
+            "active", "", "", note(d, "note", 300)])
+    tid = db().execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
+    try:
+        db().execute("UPDATE recipes SET stage='trial', updated=? WHERE name=?", (now_s(), food))
+        db().commit()
+    except sqlite3.OperationalError:
+        pass
+    return jsonify(ok=True, id=tid)
+
+
+@app.route("/api/trials/<int:tid>/end", methods=["POST"])
+@login_required
+def api_trial_end(tid):
+    d = J()
+    t = db().execute("SELECT * FROM trials WHERE id=?", (tid,)).fetchone()
+    if not t:
+        return jsonify(ok=False, err="No such trial."), 404
+    v = d.get("verdict")
+    if v not in TRIAL_VERDICTS:
+        return jsonify(ok=False, err="Pick a verdict."), 400
+    label, lib_status, stage = TRIAL_VERDICTS[v]
+    db().execute("UPDATE trials SET status='ended', ended=?, verdict=?, verdict_note=? WHERE id=?",
+                 (t["ended"] or today(), label, note(d, "note", 300), tid))
+    changed = []
+    if lib_status:
+        for r in db().execute("SELECT id, item FROM library").fetchall():
+            if any(w in r["item"].lower() for w in _trial_terms(t)):
+                db().execute("UPDATE library SET status=? WHERE id=?", (lib_status, r["id"]))
+                changed.append(r["item"])
+    try:
+        db().execute("UPDATE recipes SET stage=?, updated=? WHERE name=?", (stage, now_s(), t["food"]))
+    except sqlite3.OperationalError:
+        pass
+    db().commit()
+    return jsonify(ok=True, verdict=label, library=changed)
 
 
 # ------------------------------------------------------------------ PRN doses
@@ -4976,6 +5160,14 @@ color:var(--err);border-color:#E4C3BE}
 .planrules li{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:15px}
 .planrules li span:last-child{color:var(--muted);text-align:right}
 .planrules li.pr-over span:last-child,.planrules li.pr-short span:last-child,.planrules li.pr-due span:last-child{color:var(--amber);font-weight:700}
+/* GUTLOG_V3260_TRIALS */
+.trow{border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:0 0 10px}
+.trow b{font-size:16px}.trow .tsig{font-weight:700}
+.trow .tsig.warn{color:var(--amber)}.trow .tsig.ok{color:var(--teal)}
+.ttab{width:100%;border-collapse:collapse;font-size:15px;margin:8px 0}
+.ttab th,.ttab td{text-align:right;padding:6px 4px;border-top:1px solid var(--line)}
+.ttab th:first-child,.ttab td:first-child{text-align:left}
+.ttab th{font-size:13px;color:var(--muted);font-weight:700}
 /* GUTLOG_V3230_CONTEXT */
 #nowCtx .dwtop{display:flex;align-items:center;gap:10px;margin:0 0 10px}
 #nowCtx .dwtop .q{margin:0}
@@ -5785,6 +5977,15 @@ function thmCycle(){
   </div>
 
   <div class="sub" id="meals-test">
+    <div class="card" id="trialCard">
+      <p class="q">Food trials</p>
+      <p class="hint" style="margin:0 0 8px">A trial runs over days or weeks. Meals with the food are linked to it
+        automatically; days you marked in Day context are set aside; it is compared with the 14 days before.</p>
+      <div id="trialList"></div>
+      <button type="button" class="btn ghost" id="trialNewBtn">Start a trial</button>
+      <div id="trialNew" style="display:none"></div>
+    </div>
+    <p class="q" style="margin:14px 2px 6px">One-day test (the older way)</p>
     <p class="hint">Only on deliberate test days - one new food, symptom-free day, judge over 24 h. The verdict updates the library automatically.</p>
     <div class="card"><p class="q">Your food map so far</p><div class="reg" id="registry"></div></div>
     <div class="card"><p class="q">Date</p><input type="date" id="f_day"></div>
@@ -7329,6 +7530,7 @@ function setSeg(section,s){
   if(section==='meds'&&s==='salts')loadSalts();
   if(section==='files')loadRecords(s);
   if(section==='meals'&&s==='recipes')loadRecipes();
+  if(section==='meals'&&s==='test')loadTrials();
   if(section==='meds'&&s==='sched'){loadSchedMeds();loadSchedule();}
   $$(`.seg[data-seg="${section}"] button`).forEach(b=>b.classList.toggle('sel',b.dataset.s===s));
   $$(`#tab-${section} .sub`).forEach(el=>el.classList.remove('sel'));
@@ -7879,6 +8081,81 @@ function planBar(label,val,lo,hi,unit){
   w.appendChild(top);const bar=el('div','pb2b');const i=el('i','');
   i.style.width=Math.min(100,Math.round(100*val/(lo||1)))+'%';if(hi&&val>hi)i.className='over';
   bar.appendChild(i);w.appendChild(bar);return w;
+}
+/* GUTLOG_V3260_TRIALS -- food trials as periods. */
+let TR=null,trOpen=null;
+async function loadTrials(){
+  try{TR=await jget('/api/trials');}catch(e){return;}
+  const box=$('#trialList');if(!box)return;box.innerHTML='';
+  if(!TR.trials.length)box.appendChild(el('p','hint','No trial yet.'));
+  TR.trials.forEach(t=>box.appendChild(trialRow(t)));
+  $('#trialNewBtn').onclick=()=>{const n=$('#trialNew');const o=n.style.display==='none';n.style.display=o?'':'none';if(o)trialForm();};
+}
+function trSig(s){return el('span','tsig'+(/worse/.test(s)?' warn':(/better|no signal/.test(s)?' ok':'')),s);}
+function trialRow(t){
+  const w=el('div','trow');
+  w.appendChild(el('b','',t.food));
+  const act=t.status==='active';
+  w.appendChild(el('p','hint',(act?('Day '+t.day_no+' of '+t.planned_days):('Ended '+t.ended+' · '+t.verdict))+
+    ' · had it on '+t.ate_days+' day'+(t.ate_days===1?'':'s')+(t.set_aside?' · '+t.set_aside+' set aside':'')+
+    (t.amount?' · '+t.amount:'')+(t.freq?' · '+t.freq:'')));
+  const s=el('p','');s.style.margin='4px 0';s.appendChild(el('span','','Compared with before: '));s.appendChild(trSig(t.signal));w.appendChild(s);
+  const more=el('button','chip',trOpen===t.id?'Hide details':'Details');more.type='button';
+  more.onclick=()=>{trOpen=trOpen===t.id?null:t.id;loadTrials();};w.appendChild(more);
+  if(trOpen===t.id)w.appendChild(trialDetail(t));
+  return w;
+}
+function trTable(rows){
+  const tb=el('table','ttab');const h=el('tr','');['','Days','Symptom days','Avg gut pain'].forEach(x=>h.appendChild(el('th','',x)));tb.appendChild(h);
+  rows.forEach(r=>{const tr=el('tr','');tr.appendChild(el('td','',r[0]));
+    [r[1].days,r[1].days?(r[1].symptom_days+' ('+r[1].pct+'%)'):'–',r[1].avg_gi_pain==null?'–':r[1].avg_gi_pain].forEach(x=>tr.appendChild(el('td','',String(x))));tb.appendChild(tr);});
+  return tb;
+}
+function trialDetail(t){
+  const d=el('div','');d.style.marginTop='10px';
+  d.appendChild(trTable([['14 days before',t.before],['During the trial',t.trial]]));
+  d.appendChild(el('p','hint','Days with a Day-context mark are left out of both. A word appears once each side has '+t.min_days+' counted days.'));
+  const s2=el('p','');s2.appendChild(el('span','','Days it was eaten (or the day after) vs other days: '));s2.appendChild(trSig(t.exposure_signal));d.appendChild(s2);
+  d.appendChild(trTable([['Eaten / day after',t.exposed],['Other logged days',t.not_exposed]]));
+  if(t.styles.length)d.appendChild(el('p','hint','Forms eaten: '+t.styles.map(x=>x[0]+' ×'+x[1]).join(', ')));
+  if(t.note)d.appendChild(el('p','hint',t.note));
+  if(t.status==='active'){
+    d.appendChild(el('p','lbl','End the trial — your verdict'));
+    const ch=el('div','chips');let v=null;
+    TR.verdicts.forEach(x=>{const b=el('button','chip',x.label);b.type='button';b.onclick=()=>{v=x.key;ch.querySelectorAll('.chip').forEach(c=>c.classList.remove('sel'));b.classList.add('sel');};ch.appendChild(b);});
+    d.appendChild(ch);
+    const nt=document.createElement('input');nt.type='text';nt.placeholder='Note (optional)';nt.style.marginTop='8px';d.appendChild(nt);
+    const go=el('button','btn primary','End trial');go.type='button';
+    go.onclick=async()=>{if(!v){toast('Pick a verdict');return;}
+      try{const r=await post('/api/trials/'+t.id+'/end',{verdict:v,note:nt.value});
+        toast(t.food+': '+r.verdict+(r.library.length?' · food map updated':''));trOpen=null;loadTrials();
+        if(typeof renderTestFoods==='function')try{loadRegistry();}catch(e){}}
+      catch(err){toast(err.message);}};
+    d.appendChild(go);
+  }else if(t.verdict_note)d.appendChild(el('p','hint','Note: '+t.verdict_note));
+  return d;
+}
+function trialForm(){
+  const n=$('#trialNew');n.innerHTML='';const st={food:null,freq:'Daily',days:14};
+  const inp=document.createElement('input');inp.type='text';inp.placeholder='Search the food or recipe';n.appendChild(inp);
+  const res=el('div','chips');res.style.marginTop='8px';n.appendChild(res);
+  const picked=el('p','hint','');n.appendChild(picked);
+  let tm=null;const run=async()=>{let j;try{j=await jget('/api/foods/search?q='+encodeURIComponent(inp.value.trim()));}catch(e){return;}
+    res.innerHTML='';j.foods.slice(0,12).forEach(f=>{const b=el('button','chip'+(st.food===f.n?' sel':''),f.n);b.type='button';
+      b.onclick=()=>{st.food=f.n;picked.textContent='Trial of: '+f.n;run();};res.appendChild(b);});};
+  inp.oninput=()=>{clearTimeout(tm);tm=setTimeout(run,220);};run();
+  const am=document.createElement('input');am.type='text';am.placeholder='How much each time (e.g. 2 eggs)';am.style.marginTop='8px';n.appendChild(am);
+  n.appendChild(el('p','lbl','How often'));const fq=el('div','chips');
+  ['Daily','Every other day','3 times a week','Weekly'].forEach(x=>{const b=el('button','chip'+(x===st.freq?' sel':''),x);b.type='button';b.onclick=()=>{st.freq=x;fq.querySelectorAll('.chip').forEach(c=>c.classList.remove('sel'));b.classList.add('sel');};fq.appendChild(b);});
+  n.appendChild(fq);
+  n.appendChild(el('p','lbl','For how long'));const ln=el('div','chips');
+  [[7,'1 week'],[14,'2 weeks'],[21,'3 weeks'],[30,'1 month']].forEach(x=>{const b=el('button','chip'+(x[0]===st.days?' sel':''),x[1]);b.type='button';b.onclick=()=>{st.days=x[0];ln.querySelectorAll('.chip').forEach(c=>c.classList.remove('sel'));b.classList.add('sel');};ln.appendChild(b);});
+  n.appendChild(ln);
+  const go=el('button','btn primary','Start trial today');go.type='button';go.style.marginTop='10px';
+  go.onclick=async()=>{if(!st.food){toast('Pick the food');return;}
+    try{await post('/api/trials',{food:st.food,amount:am.value,freq:st.freq,days:st.days,start:todayISO});
+      toast('Trial started: '+st.food);n.style.display='none';loadTrials();}catch(err){toast(err.message);}};
+  n.appendChild(go);
 }
 async function loadPlan(){
   const card=$('#nowPlan');if(!card)return;

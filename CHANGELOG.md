@@ -3,6 +3,51 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — GutLog v3.26.0: a food test is a question about weeks
+
+The old food test recorded **one day**: ate it, felt this. That is the wrong
+unit. A food eaten once on a good day proves nothing, and the thing he
+actually wants to know — *does this food suit me* — is a question about weeks.
+His own note on the last test said exactly that: *will track for a month*. The
+app had nowhere to put that intention, so it lived in his head.
+
+A **trial** is now a period — food, amount, how often, start, planned length —
+and meals whose item name contains the match text are **linked automatically**,
+so running one costs nothing beyond logging meals he was logging anyway.
+
+**What it throws away is what makes it readable.** Trial days are compared
+against the 14 days before, and two kinds of day are set aside **on both
+sides**: days carrying a Day context mark (v3.23.0 — travel, poor sleep,
+unwell…), because a bad day with an obvious other cause is not evidence about
+a food; and **days with nothing logged at all**. That second one is the single
+most flattering mistake this feature could have made — counting an empty day
+as symptom-free would turn every gap in the diary into evidence that the food
+is fine. Mutation-controlled, as is dropping the day *after* eating, since a
+reaction that shows up next morning is still a reaction.
+
+**It refuses to conclude early.** The words — no signal / possibly better /
+possibly worse / likely worse — appear only with at least **eight counted days
+on each side**. Below that it says "not enough days yet" and nothing more. A
+verdict from three days is worse than no verdict, because he would act on it.
+On the live data this is the branch running: the migrated trial sits at day 4
+with 4 counted days against a baseline of 8, and says so.
+
+His verdict writes through to the rest of the app — the library status of every
+matching food, and a matching recipe's stage. Starting a trial of a recipe
+marks it **On trial**, so the recipe book and the trial cannot disagree about
+what is being tested.
+
+**The old record is not rewritten.** `foodtests` rows are untouched and the
+one-day test stays below; the migration's note quotes the three original rows
+and his own words, so the old entry explains the new one instead of vanishing
+into it.
+
+One table via SCHEMA, no migration step, no `schema_version` bump. Gates:
+`test_trials` **9/9** with **13 declared / 13 seen to fail** on invented foods,
+the four mutations all being the flattering ones; every GutLog suite green on
+the server plus `ops/test_sso` 11/11; `test_ui_now` 196 PASS / 0 FAIL. Detail
+in `gutlog/DOSSIER_GutLog.md`.
+
 ## 2026-09-20 — GutLog v3.25.0: a plan you can only read in the evening is not a plan
 
 The diet plan existed as a document. A document cannot tell him at four in the

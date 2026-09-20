@@ -1,0 +1,86 @@
+{
+ "_": [
+  "GutLog v3.26.0 -- food trials. v3.25.0 has no trials table, routes or card (07 fails because the migration refuses without the table), so all nine fail by version; three boundaries are also broken on purpose."
+ ],
+ "suite": "test_trials.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3260.py",
+ "assertions": [
+  {
+   "name": "01 starting a trial, and what is refused",
+   "control": "version"
+  },
+  {
+   "name": "02 meals with the food are linked by name",
+   "control": "version"
+  },
+  {
+   "name": "03 trial vs the 14 days before, context and empty days set aside",
+   "control": "version"
+  },
+  {
+   "name": "04 eaten-days vs other days",
+   "control": "version"
+  },
+  {
+   "name": "05 too few days says so; a recipe trial sets its stage",
+   "control": "version"
+  },
+  {
+   "name": "06 his verdict ends the trial and updates the food map",
+   "control": "version"
+  },
+  {
+   "name": "07 an old test moves into a trial, once",
+   "control": "version"
+  },
+  {
+   "name": "08 the Food test segment leads with trials",
+   "control": "version"
+  },
+  {
+   "name": "09 in a real browser: details and the start form",
+   "control": "version"
+  },
+  {
+   "name": "03 trial vs the 14 days before",
+   "control": "mutation",
+   "mutation": {
+    "id": "noctx",
+    "why": "Day-context days counted",
+    "find": "        rows = [x for x in rows if not x[\"context\"] and x[\"logged\"]]\n",
+    "replace": "        rows = [x for x in rows if x[\"logged\"]]\n"
+   }
+  },
+  {
+   "name": "04 eaten-days vs other days",
+   "control": "mutation",
+   "mutation": {
+    "id": "no48h",
+    "why": "the day after an exposure not counted",
+    "find": "        x[\"exposed\"] = x[\"ate\"] or (i > 0 and days[i - 1][\"ate\"])",
+    "replace": "        x[\"exposed\"] = x[\"ate\"]"
+   }
+  },
+  {
+   "name": "05 too few days says so",
+   "control": "mutation",
+   "mutation": {
+    "id": "nomin",
+    "why": "a verdict word on too few days",
+    "find": "    if a[0] < TRIAL_MIN_DAYS or b[0] < TRIAL_MIN_DAYS:\n        return \"not enough days yet\"\n",
+    "replace": "    if a[0] < 1 or b[0] < 1:\n        return \"not enough days yet\"\n"
+   }
+  },
+  {
+   "name": "03 trial vs the 14 days before",
+   "control": "mutation",
+   "mutation": {
+    "id": "emptyday",
+    "why": "a day with nothing logged counted as a symptom-free day",
+    "find": "        rows = [x for x in rows if not x[\"context\"] and x[\"logged\"]]\n",
+    "replace": "        rows = [x for x in rows if not x[\"context\"]]\n"
+   }
+  }
+ ]
+}
