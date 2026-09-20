@@ -3,6 +3,62 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — GutLog v3.21.0: one tablet is one dose, however many symptoms
+
+**His report.** *"On 18th September it only accepted multiple [entries] due to
+the design flaw. I took it once only, but wherever I entered the symptoms, it
+asked for the medicine I took for it. … The 19:18 and 19:21 entries were a
+single entry … tapped two times. So it was one dose. Fix all this."*
+
+**The defect.** Every pain tile and the down-day card ask what was taken, and
+each answer wrote a **new** dose row. Right for the Now tab, where a tap means
+a tablet; wrong everywhere else. Worse, the combination tablet he actually took
+had **no chip of its own**, so it could only be entered as its two single
+ingredients — doubling every entry again. One tablet became five rows.
+
+**Why it survived so long: nothing looked broken.** Each row was individually
+true, and a diary is supposed to fill up. The defect only becomes visible when
+something *totals* the rows — which is exactly what RxGuard's new daily ceiling
+does, reading one tablet as three times the limit. This is the recurring shape
+on this project, seen from the other side: usually the change that appears to
+succeed, here the data that appears to be fine.
+
+**The fix.** A chip on a symptom surface is a statement about *what was used
+for this symptom*, not a new event. If a dose of that medicine — or of any
+product carrying **all** its ingredients — is already logged from 6 hours
+before to 30 minutes after, the chip links to it and no row is written. Two
+boundaries, both mutation-controlled because both fail plausibly: the window is
+**6 hours, not the day** (or a genuine evening dose merges into the morning's),
+and it is **all** the ingredients, not any (or a combination is swallowed by a
+dose missing one of them).
+
+**Nothing is silently dropped.** The page says *"counted with the dose at
+HH:MM"* and offers **It was a new dose**. A rule that quietly discards an entry
+is worse than the duplication it replaces, because the owner cannot see it
+happen. The Now tab is deliberately untouched — a double-tap guard was built
+for it, broke two suites, and was **removed on purpose** rather than have the
+suites loosened around it.
+
+**A test that had been asserting the bug.** `test_phase_i` case 06 asserted
+that "a second chip a minute later writes another row" — the defect, written
+down as a requirement and passing for weeks. Rewritten, not deleted.
+
+**The 18-Sep correction** (owner-confirmed, script + gitignored spec): one
+as-needed combination tablet had been recorded as five rows across three
+symptom entries. The live rows were read out and checked against the spec
+first, every find matching exactly one row; four rows deleted, one relabelled,
+the mirror rows in the other app treated the same way. Both databases backed up
+and every old row appended in full to an append-only corrections log. **The
+following day's identical-looking pair was left exactly as recorded** — he does
+not remember that day, and a correction made from inference rather than memory
+is not a correction.
+
+No schema change. Gates: `test_one_dose` 5/5 with **4 declared / 4 seen to
+fail**; every server suite green including the two the authoring sandbox could
+not run cleanly (phase_a 18/18, phase_m 19/19, confirmed on both machines);
+`test_ui_now` 196 PASS / 0 FAIL. Patcher 11 anchors, `--reverse` byte-identical
+to v3.20.0. Detail in `gutlog/DOSSIER_GutLog.md`.
+
 ## 2026-09-20 — GutLog v3.20.0: one list was the wrong shape for two problems
 
 **What he said.** *"Populate the stock we have of all the medicines. Then two

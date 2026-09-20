@@ -1,0 +1,41 @@
+{
+ "_": [
+  "GutLog v3.21.0 -- one tablet is one dose, however many symptoms.",
+  "02 and 05 are behaviour v3.20.0 did not have (a row per chip; no strip), so the reconstructed previous build fails them.",
+  "03 and 04 guard AGAINST over-linking -- v3.20.0 never linked, so it passes them; each is broken on purpose in a copy of the current build instead.",
+  "01 is unchanged behaviour and is not declared."
+ ],
+ "suite": "test_one_dose.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3210.py",
+ "assertions": [
+  {
+   "name": "02 a chip on a second symptom links to the dose already logged",
+   "control": "version"
+  },
+  {
+   "name": "03 a chip long after the last dose is a new dose",
+   "control": "mutation",
+   "mutation": {
+    "id": "widewin",
+    "why": "link across the whole day",
+    "find": "SAME_DOSE_BEFORE_MIN = 360\n",
+    "replace": "SAME_DOSE_BEFORE_MIN = 1440\n"
+   }
+  },
+  {
+   "name": "04 a combination links only to a dose carrying all its ingredients",
+   "control": "mutation",
+   "mutation": {
+    "id": "anying",
+    "why": "link on ANY shared ingredient instead of all",
+    "find": "(bool(want) and want <= _mol_set(r[\"molecule\"]))",
+    "replace": "(bool(want & _mol_set(r[\"molecule\"])))"
+   }
+  },
+  {
+   "name": "05 the page shows which dose a chip was counted with",
+   "control": "version"
+  }
+ ]
+}

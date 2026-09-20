@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.20.0)
+# GutLog — DOSSIER (v3.21.0)
 
 Single source of truth. Update after every change.
 
@@ -337,6 +337,61 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## One tablet is one dose — v3.21.0
+
+Every pain tile and the down-day card ask what was taken for the symptom, and
+until v3.21.0 **every answer wrote a new dose row**. That is the right
+behaviour for the Now tab, where a tap means a tablet, and the wrong behaviour
+everywhere else: the same tablet, named against the evening's down day and then
+against a pain site three minutes later, became two doses. A combination tablet
+with no chip of its own had to be entered as its two single ingredients, so
+each entry became two rows again.
+
+It is worth being exact about why this went unnoticed for so long. **Nothing
+looked broken.** Each row was individually true — he really did take something
+for that symptom — and the diary is supposed to fill up. The defect only
+becomes visible when something *totals* the rows, which is what RxGuard's daily
+ceiling does: one tablet read as three times the limit.
+
+### What changes
+
+A chip on a pain tile or the down-day card is a statement about **what was used
+for this symptom**, not a new event. So if a dose of that medicine — or of any
+product carrying **all** of its ingredients — is already logged from **6 hours
+before to 30 minutes after** the entry, the chip is linked to that dose and no
+row is written. The response carries `same_dose`.
+
+Two boundaries, both mutation-controlled because both are easy to get wrong in
+a way that still looks right:
+
+- **The window is 6 hours, not the day.** Linking across the whole day merges
+  a genuine second dose taken in the evening into the morning's.
+- **All the ingredients, not any.** A combination is only absorbed into a dose
+  that carries every one of its ingredients; a dose missing one is a different
+  medicine, and the combination is a new dose.
+
+### Nothing is silently dropped
+
+The page shows a strip — *"&lt;chip&gt; — counted with the &lt;medicine&gt; dose at
+HH:MM"* — with **It was a new dose** (which logs it for real through
+`/api/now/dose`) and **OK**. A rule that quietly discards an entry is worse
+than the duplication it replaces, because the owner cannot see it happening.
+He can always overrule.
+
+**The Now tab is deliberately unchanged**: each tap there is still one tablet,
+and two taps can be two tablets on purpose. A double-tap guard was built for it,
+broke `test_phase_c` and `test_phase_o`, and was **removed on purpose** rather
+than have the suites loosened around it.
+
+### The combination chip is config, not code
+
+`patch_gutlog_v3210.py` names no medicine. A combination tablet gets its own
+chip by adding `[label, molecule]` to `pain_analgesics` in the gitignored
+`regimen.local.json` on the server; `_pain_med()` resolves it **by exact
+molecule** to the `prnmeds` row. `PAIN_ANALGESICS` is read at import, so the
+service must be restarted after the edit — a config change that appears to do
+nothing until the restart is its own trap.
 
 ## Two stock pipelines — v3.20.0
 
@@ -757,6 +812,21 @@ via OLS reverse proxy.
 > pulled that file out from under the browser suite mid-run on 2026-09-15 —
 > which aborts loudly, as designed, but wastes a fifteen-minute run.
 
+- `test_one_dose.py` — **5/5 PASS** (2026-09-20, v3.21.0), on Windows and on the
+  server under Python 3.9; **4 declared new assertions, 4 seen to fail** — two
+  against the reconstructed v3.20.0, and two by deliberate mutation because
+  they guard *boundaries* rather than a feature, and v3.20.0 would have failed
+  them for the wrong reason. The mutations widen the link window to the whole
+  day, and relax "all the ingredients" to "any shared ingredient". The suite
+  uses **invented molecules**, not his, so it names nothing. Asserts that a
+  chip still writes a dose when none is logged; that a chip on a second symptom
+  links to the dose already there and writes no row; that 7.5 hours later is a
+  new dose; that a combination is *not* absorbed into a dose missing one of its
+  ingredients; and that the page carries the strip, wired to both the pain tile
+  and the down-day card.
+  `test_phase_i.py` case 06 was **moved to yesterday** in the same release: its
+  old premise — "a second chip a minute later writes another row" — is exactly
+  the defect, so it had been asserting the bug. Rewritten, not deleted.
 - `test_phase_o.py` — **10/10 PASS** (2026-09-20, v3.20.0), on Windows and on
   the server under Python 3.9; **10 declared new assertions, 10 seen to fail**,
   three by deliberate mutation of the current build. Asserts that seven
@@ -1075,6 +1145,41 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-20 v3.21.0 — one tablet is one dose, and the 18-Sep correction.
+  DEPLOYED 08:22 IST.** `app.py` sha256 `37fec194…`, 402,687 bytes on the
+  server, **byte-identical to the repo build**; pre-flight confirmed
+  `GUTLOG_V3200_PIPES` present, no v3.21.0 marker, and sha256 equal to the repo
+  before anything was copied. `--reverse` reproduces v3.20.0 byte-for-byte
+  (`7d801765…`). Rollback:
+  `cp /root/gutlog/app.py.bak-v3210-20260920_082205 /root/gutlog/app.py`.
+  `patch_gutlog_v3210.py`, **11 anchors**, no schema change at all.
+  Database backed up before the patch (`health3.db.pre-v3210-20260920_082147`,
+  `integrity_check` ok, 29 tables, 82 dose rows) and again by the correction.
+  Server gates before the restart: **test_one_dose 5/5**, a 18/18, b 16/16,
+  c 20/20, d 18/18, e 13/13, f 8/8, g 14/14, i 18/18, m 19/19, n 14/14,
+  o 10/10, watch_tiles 7/7, j 28/28. On the PC: the same, plus
+  `test_ui_now` **196 PASS / 0 FAIL** and `test_ui_order` ALL PASS. **The two
+  suites the authoring sandbox could not run cleanly — phase_a and phase_m —
+  are 18/18 and 19/19 here and on the server**, which is what the brief asked
+  be confirmed rather than assumed. Negative control **4 declared, 4 seen to
+  fail**, two by mutation.
+  **Config, not code:** the combination chip was added to `pain_analgesics` in
+  the server's gitignored `regimen.local.json` (read-modify-write, `.bak`
+  first, every other key verified unchanged) and in the PC copy, then the
+  service restarted a second time because `PAIN_ANALGESICS` is read at import.
+  Verified live: all three chips resolve to real `prnmeds` rows by exact
+  molecule — including the combination, which had **no chip at all** before
+  and was therefore being entered as its two single ingredients.
+  **The 18-Sep correction** (owner-confirmed, `correct_doses.py` + a gitignored
+  spec): one as-needed combination tablet had been recorded as **five rows
+  across three symptom entries**. The live rows were read out first and matched
+  the spec exactly, every find resolving to exactly one row; then 4 dose rows
+  deleted and 1 relabelled, with the 5 FitLog mirror rows treated the same way.
+  Both databases backed up by the script, every old row appended in full to
+  `/root/gutlog/corrections.log` (10 lines). Confirmed in `/export/doses.csv`:
+  18 Sep now carries **one** as-needed row. The following day's identical-looking
+  pair is **left exactly as recorded** — he does not remember that day, and a
+  correction made from inference rather than memory is not a correction.
 - **2026-09-20 v3.20.0 — two stock pipelines, the strength links, full stock.
   DEPLOYED 07:29 IST.** `app.py` sha256 `7d801765…`, 398,442 bytes on the
   server, **byte-identical to the repo build**; the pre-patch file was

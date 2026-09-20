@@ -282,7 +282,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES
+SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -2446,18 +2446,69 @@ DOWN_PROTOCOL = ("Third day of this run; your flare protocol asks for "
                  "calprotectin and ESR/CRP within 48 hours.")
 
 
+# GUTLOG_V3210_ONEDOSE -- a chip on a symptom says what was USED for it.
+# One tablet entered against three symptoms is one dose, so a chip whose
+# medicine (or a product carrying all its ingredients) was logged shortly
+# before is linked to that dose instead of writing another row.
+SAME_DOSE_BEFORE_MIN = 360
+SAME_DOSE_AFTER_MIN = 30
+
+
+def _mol_set(mol):
+    return set(p.strip().lower() for p in re.split(r"[+,]", mol or "") if p.strip())
+
+
+def _hm_min(hm):
+    try:
+        h, m = (hm or "")[:5].split(":")
+        return int(h) * 60 + int(m)
+    except ValueError:
+        return None
+
+
+def _recent_same_dose(mol, mid, name, day, hm):
+    """The latest dose on `day` from SAME_DOSE_BEFORE_MIN before `hm` to
+    SAME_DOSE_AFTER_MIN after it, of the same medicine or of a product whose
+    ingredients include every ingredient of this one. None if there is none."""
+    want = _mol_set(mol)
+    at = _hm_min(hm)
+    if at is None:
+        return None
+    best = None
+    for r in db().execute(
+            "SELECT d.id, d.dtime, d.medicine, d.med_id, COALESCE(p.molecule,'') AS molecule "
+            "FROM doses d LEFT JOIN prnmeds p ON p.id=d.med_id WHERE d.day=? "
+            "AND COALESCE(d.status,'')<>'SKIPPED' ORDER BY d.dtime, d.id", (day,)).fetchall():
+        t = _hm_min(r["dtime"])
+        if t is None or not (at - SAME_DOSE_BEFORE_MIN <= t <= at + SAME_DOSE_AFTER_MIN):
+            continue
+        same = (mid is not None and r["med_id"] == mid) or \
+            (r["med_id"] is None and (r["medicine"] or "") == name) or \
+            (bool(want) and want <= _mol_set(r["molecule"]))
+        if same and (best is None or (r["dtime"] or "") >= (best["dtime"] or "")):
+            best = r
+    return best
+
+
 def _log_analgesics(labels, day, hm, reason, score, ref):
     """Write one doses row per analgesic chip and mirror each to FitLog with
     the score attached. Shared by the pain tiles and the down-day card, so a
     medicine is recorded the same way whichever surface it was tapped on.
-    Returns (doses, mirrored, not_mirrored, linked)."""
-    doses, mirrored, missed = [], [], []
+    GUTLOG_V3210_ONEDOSE: a chip already covered by a recent dose is linked,
+    not written. Returns (doses, mirrored, not_mirrored, linked, same_dose)."""
+    doses, mirrored, missed, same_dose = [], [], [], []
     linked = _links_enabled()
     for t in labels:
         if t not in PAIN_ANALGESICS:
             continue
         mol, fallback = PAIN_ANALGESICS[t]
         mid, name = _pain_med(mol, fallback)
+        prior = _recent_same_dose(mol, mid, name, day, hm)
+        if prior is not None:
+            same_dose.append({"label": t, "med_id": mid, "name": name,
+                              "dose_id": prior["id"], "dose_name": prior["medicine"],
+                              "time": prior["dtime"] or "", "reason": reason})
+            continue
         db().execute(
             "INSERT INTO doses(day,dtime,medicine,reason,effect,notes,created,"
             "status,med_id,sched_id,dose_text) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -2472,7 +2523,7 @@ def _log_analgesics(labels, day, hm, reason, score, ref):
                           "notes": "GutLog: " + reason, "source": "gutlog",
                           "ref": ref + "-" + t.lower().replace(" ", "-")})
         (mirrored if (ans or {}).get("ok") else missed).append(name)
-    return doses, mirrored, missed, linked
+    return doses, mirrored, missed, linked, same_dose
 
 
 def _down_runs(days):
@@ -2620,10 +2671,11 @@ def api_pain():
             "|".join(treats), radiates])
     eid = db().execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
 
-    doses, mirrored, missed, linked = _log_analgesics(
+    doses, mirrored, missed, linked, same = _log_analgesics(
         treats, day, etime, meta[1], score, "gutlog-episode-" + str(eid))
     return jsonify(ok=True, id=eid, site=meta[1], side=meta[2], radiates=radiates,
-                   doses=doses, mirrored=mirrored, not_mirrored=missed, linked=linked)
+                   doses=doses, mirrored=mirrored, not_mirrored=missed, linked=linked,
+                   same_dose=same)
 
 
 # ------------------------------------------------------------------ down days
@@ -2683,7 +2735,7 @@ def api_downday_set():
     # record the same tablet twice.
     new_meds = [c for c in coped if c in PAIN_ANALGESICS and c not in before["coped"]]
     hm = now_hm() if day == today() else "12:00"
-    doses, mirrored, missed, linked = _log_analgesics(
+    doses, mirrored, missed, linked, same = _log_analgesics(
         new_meds, day, hm, "Down day", None, "gutlog-down-" + day)
 
     # Temperature is a vitals row, never a column here.
@@ -2701,7 +2753,7 @@ def api_downday_set():
             temp_saved = tv
     st = _down_state(day)
     st.update(ok=True, doses=doses, mirrored=mirrored, not_mirrored=missed,
-              linked=linked, temp_saved=temp_saved)
+              linked=linked, temp_saved=temp_saved, same_dose=same)
     return jsonify(**st)
 
 
@@ -4279,6 +4331,11 @@ svg.chart{width:100%;height:auto;display:block}
 .toast{position:fixed;top:calc(10px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;
 padding:10px 20px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .25s;z-index:9;pointer-events:none}
 .toast.show{opacity:1}
+.samedose{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));width:min(92vw,440px);z-index:9;background:var(--card);color:var(--ink);border:1.5px solid var(--amber);border-radius:13px;padding:10px 12px;font-size:15px;display:none;box-shadow:0 4px 18px rgba(0,0,0,.18)}
+.samedose.show{display:block}
+.samedose .sdrow{display:flex;gap:8px;align-items:center;justify-content:space-between;margin:4px 0}
+.samedose button{font-size:14px;min-height:40px;padding:6px 12px;border-radius:999px;border:1.5px solid var(--teal);background:transparent;color:var(--teal);white-space:nowrap}
+.samedose .sdx{border-color:var(--line);color:var(--muted)}
 .course{border:1.5px solid var(--amber);background:var(--amber-bg);border-radius:13px;padding:10px 12px;margin:0 0 10px;
 display:flex;align-items:center;gap:10px;font-size:14px}
 .course b{color:var(--amber)}
@@ -4729,6 +4786,7 @@ function thmCycle(){
 <span class="day"><span id="hdrDay"></span><br><span class="streak" id="hdrStreak"></span></span>
 <a href="/account">Account</a><a href="/logout">Lock</a></header>
 <div class="toast" id="toast" role="status"></div>
+<div class="samedose" id="samedose" role="status"></div>
 <main>
 
 <!-- ============ LOG ============ -->
@@ -5213,6 +5271,33 @@ const FMCOL={L:'var(--fmL)','L-M':'var(--fmLM)',M:'var(--fmM)','M-H':'var(--fmMH
 let tab='now'; const seg={log:'day',meals:'meal',meds:'prn',files:'summary'};
 let LIB=[], PRN=[], basket=[], libFilter='all', dayProtein=0;
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1700);}
+// GUTLOG_V3210_ONEDOSE -- a chip linked to a dose already logged says so,
+// and one tap overrules it when it really was a second tablet.
+function showSame(list){
+  const box=$('#samedose');
+  if(!box||!list||!list.length)return;
+  box.innerHTML='';
+  list.forEach(s=>{
+    const row=document.createElement('div');row.className='sdrow';
+    const t=document.createElement('span');
+    t.textContent=s.label+' \u2014 counted with the '+s.dose_name+' dose at '+s.time;
+    const b=document.createElement('button');b.textContent='It was a new dose';
+    b.onclick=async()=>{
+      try{
+        await post('/api/now/dose',{med_id:s.med_id,medicine:s.name,status:'EXTRA',
+          reason:s.reason,day:todayISO});
+        toast(s.name+' recorded as a new dose');row.remove();
+        if(!box.querySelector('.sdrow'))box.classList.remove('show');
+        loadNow();
+      }catch(err){toast(err.message);}
+    };
+    row.appendChild(t);row.appendChild(b);box.appendChild(row);
+  });
+  const x=document.createElement('button');x.className='sdx';x.textContent='OK';
+  x.onclick=()=>box.classList.remove('show');
+  box.appendChild(x);
+  box.classList.add('show');
+}
 async function jget(u){const r=await fetch(u);return r.json();}
 async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
   if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.err||'Save failed');}return r.json();}
@@ -6761,6 +6846,7 @@ function buildPainTiles(sites,treats){
         let msg=label+' '+st.score+'/10 logged';
         if(r.doses&&r.doses.length)msg+=' \u00b7 '+r.doses.join(' + ')+' recorded';
         toast(msg);
+        showSame(r.same_dose);
         if(r.not_mirrored&&r.not_mirrored.length)
           toast('FitLog did not take '+r.not_mirrored.join(', '));
         st.score=null;st.treats=[];st.rad=0;
@@ -6865,6 +6951,7 @@ function downChips(box,all,sel,key){
         const r=await post('/api/downday',body);
         if(r.doses&&r.doses.length)toast(r.doses.join(' + ')+' recorded');
         if(r.not_mirrored&&r.not_mirrored.length)toast('FitLog did not take '+r.not_mirrored.join(', '));
+        showSame(r.same_dose);
         await loadDown();
       }catch(err){ toast(err.message); }
       b.dataset.busy='';

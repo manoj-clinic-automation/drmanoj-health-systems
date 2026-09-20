@@ -244,9 +244,14 @@ def main():
     def t06_unknown_medicine_still_recorded():
         q("UPDATE prnmeds SET active=0 WHERE molecule='testamol'")
         before = q("SELECT COUNT(*) FROM doses")[0][0]
+        # v3.21.0 (GUTLOG_V3210_ONEDOSE): a chip within 6 h of a dose of the
+        # same molecule is linked to it, not written -- and t05 logged one a
+        # minute ago. Yesterday at noon has no prior dose, so this still tests
+        # what it always tested: no matching medicine, still recorded.
+        y = (date.today() - timedelta(days=1)).isoformat()
         c.post("/api/pain", json={"site": "low_back", "score": 3,
                                   "treatments": ["Testamol 500"],
-                                  "day": TODAY, "etime": ago(5)})
+                                  "day": y, "etime": "12:00"})
         rows = q("SELECT medicine, med_id FROM doses ORDER BY id DESC LIMIT 1")
         assert q("SELECT COUNT(*) FROM doses")[0][0] == before + 1, "dose lost"
         assert rows[0][0] == "Testamol 500" and rows[0][1] is None, str(rows)

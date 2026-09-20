@@ -202,19 +202,27 @@ def main():
         assert "Both hips" in (notes or ""), "the site did not travel: " + repr(notes)
         return "pain_at_time=7, matched " + nm[0] + ", site carried in the note"
 
+    # GutLog v3.21.0 (GUTLOG_V3210_ONEDOSE): a chip within 6 h of a dose of
+    # the same molecule is linked to that dose, not written again -- and t01
+    # logged one 90 minutes ago. t03 and t06 therefore enter their pain on
+    # past days at noon, where no earlier dose exists, so each still tests
+    # what it always tested.
+    D3 = (date.today() - timedelta(days=5)).isoformat()
+    D6 = (date.today() - timedelta(days=6)).isoformat()
+
     def t03_two_chips_two_records_one_score():
         before_g = gq("SELECT COUNT(*) FROM doses")[0][0]
         before_f = fq("SELECT COUNT(*) FROM analgesic_log")[0][0]
         j = gc.post("/api/pain", json={"site": "glute_r", "score": 5,
                                        "treatments": ["Testamol 500", "Testcoxib 60"],
-                                       "day": TODAY, "etime": NOWHM}).get_json()
+                                       "day": D3, "etime": "12:00"}).get_json()
         assert len(j["mirrored"]) == 2 and not j["not_mirrored"], str(j)
         assert gq("SELECT COUNT(*) FROM doses")[0][0] - before_g == 2
         assert fq("SELECT COUNT(*) FROM analgesic_log")[0][0] - before_f == 2
         rows = fq("SELECT pain_at_time FROM analgesic_log ORDER BY id DESC LIMIT 2")
         assert [r[0] for r in rows] == [5, 5], str(rows)
         gens = fq("SELECT DISTINCT m.generic FROM analgesic_log l JOIN med_stack m "
-                  "ON m.id=l.med_id WHERE l.dt=?", (TODAY + "T" + NOWHM,))
+                  "ON m.id=l.med_id WHERE l.dt=?", (D3 + "T12:00",))
         assert len(gens) == 2, "both chips matched the same stack row: " + str(gens)
         return "2 chips -> 2 + 2 rows, each carrying the same score"
 
@@ -256,7 +264,7 @@ def main():
         before = gq("SELECT COUNT(*) FROM doses")[0][0]
         j = gc.post("/api/pain", json={"site": "low_back", "score": 3,
                                        "treatments": ["Testamol 500"],
-                                       "day": TODAY, "etime": ago(3)}).get_json()
+                                       "day": D6, "etime": "12:00"}).get_json()
         assert j.get("not_mirrored"), "GutLog claimed a mirror that did not happen: " + str(j)
         assert not j["mirrored"], str(j)
         # a delta, not a count keyed on the time: in the first 90 minutes after

@@ -13,7 +13,7 @@ Clinic automation lives separately in `drmanoj-clinic-automation` — do not mix
 ## Apps & ports
 | App | Subdomain | Port | DB (live path) |
 |---|---|---|---|
-| GutLog v3.20.0 | health.dr-manoj.in | 8020 | /root/gutlog/health3.db |
+| GutLog v3.21.0 | health.dr-manoj.in | 8020 | /root/gutlog/health3.db |
 | RxGuard v1.7.0 | rx.dr-manoj.in | 8031 | /root/rxguard/ |
 | FitLog v1.6.0 | fit.dr-manoj.in | 8040 | /root/fitlog/fitlog.db (verified on server 2026-09-10) |
 
