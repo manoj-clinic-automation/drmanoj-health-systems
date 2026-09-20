@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-RxGuard v1.8.0 -- Daily dose, the total per ingredient (RXGUARD_V180_DOSE).
+RxGuard v1.8.1 -- Daily dose, label maxima (RXGUARD_V180_DOSE + RXGUARD_V181_LABELMAX).
 
 Runs a REAL GutLog (../gutlog/app.py, or GUTLOG_APP) on a free loopback port
 and points a scratch RxGuard at it, through the same bearer feed as
@@ -67,7 +67,9 @@ RULES = {
     "_meta": {"version": "test-rules"},
     "ingredients": {
         "alphacet": {"label": "Alphacet", "ceiling": 3000, "unit": "mg", "window_h": 24},
-        "betacox": {"label": "Betacox", "ceiling": 60, "unit": "mg", "window_h": 20},
+        "betacox": {"label": "Betacox", "ceiling": 60, "unit": "mg", "window_h": 20,
+                    "source": "Test label section 4.2: 60 mg once daily.",
+                    "course_above": 50, "course_days": 2, "course_note": "Short course only."},
         "zetadol": {"label": "Zetadol", "ceiling": 100, "unit": "mg", "window_h": 24},
         "epsilotide": {"label": "Epsilotide", "ceiling": 290, "unit": "mcg", "window_h": 20},
         "gammazol": {"label": "Gammazol", "ceiling": 3, "unit": "mg", "window_h": 20},
@@ -156,6 +158,8 @@ def main():
     dose("Test Alpha 500", 3)
     dose("Test Combo", 5)
     dose("Test Combo", 1)                   # betacox 120 in 20 h -> RED
+    for back in (24, 48, 72):               # a run of daily betacox before today (DC010)
+        dose("Test Combo", back)
     dose("Test Zeta 50", 4)
     dose("Test Zeta Spray", 2, "2")         # 2 x 10 by the rules override
     dose("Test Epsi", 2, "20 + 10", "TAKEN")
@@ -280,17 +284,19 @@ def main():
     def t10():
         h = rc.get("/dose").get_data(as_text=True)
         assert "Traceback" not in h and "<h1>Daily dose</h1>" in h, "the page did not render"
-        assert "Betacox" in h and "Confirm" in h, "table or ceiling editor missing"
+        assert "Betacox" in h and "Change" in h, "table or ceiling editor missing"
         rc.post("/dose", data={"ing": "betacox", "ceiling": "150"})
         v = view()
         r = row(v, "Betacox")
-        assert r["ceiling"] == 150 and r["confirmed"], "ceiling %s confirmed %r" % (
-            r["ceiling"], r["confirmed"])
+        assert r["ceiling"] == 150 and r["confirmed"], "ceiling %s own %r" % (r["ceiling"], r["confirmed"])
         assert not [f for f in by_rule(v, "DC001") if "Betacox" in f["title"]], \
             "still RED after the ceiling was raised to 150"
-        rc.post("/dose", data={"ing": "betacox", "ceiling": "60"})
-        return "a ceiling set on the page overrides the file and is marked confirmed"
-    check("10 a ceiling set on /dose overrides the file and is confirmed", t10)
+        assert "your limit" in rc.get("/dose").get_data(as_text=True)
+        rc.post("/dose", data={"ing": "betacox", "ceiling": ""})
+        r = row(view(), "Betacox")
+        assert r["ceiling"] == 60 and not r["confirmed"], "clearing did not return to the label: %s" % r
+        return "his own limit wins and shows as 'your limit'; clearing returns to the label maximum"
+    check("10 his own limit overrides; clearing returns to the label maximum", t10)
 
     def t11():
         h = rc.get("/astaken").get_data(as_text=True)
@@ -299,6 +305,25 @@ def main():
         assert "Daily dose</a>" in h, "no nav link"
         return "the card sits above the findings, and the nav links the page"
     check("11 /astaken carries the Daily dose card and the nav link", t11)
+
+    def t14():
+        h = rc.get("/dose").get_data(as_text=True)
+        assert "Test label section 4.2" in h, "the ceiling's source is not shown"
+        assert "Confirm" not in h and 'class="chip">default' not in h, "the page still asks to confirm"
+        v = view()
+        txt = " ".join((f.get("action") or "") + (f.get("source") or "") for f in v["findings"])
+        assert "confirm" not in txt.lower(), "a finding still asks him to confirm: " + txt[:200]
+        red = [f for f in by_rule(v, "DC001") if "Betacox" in f["title"]][0]
+        assert "Test label section 4.2" in red["source"], red["source"]
+        return "label maximum with its source; nothing asks to be confirmed"
+    check("14 a ceiling is the label maximum, with its source, never 'confirm'", t14)
+
+    def t15():
+        f = by_rule(view(), "DC010")
+        assert f and f[0]["flag"] == "AMBER" and "Betacox" in f[0]["title"], [x["title"] for x in view()["findings"]]
+        assert "days running" in f[0]["title"] and "2 days at most" in f[0]["title"], f[0]["title"]
+        return f[0]["title"]
+    check("15 a short-course dose taken day after day is named", t15)
 
     def t12():
         rx.DOSE_RULES_PATH = os.path.join(work, "absent.local.json")
@@ -320,9 +345,10 @@ def main():
         return "GutLog down is a message on /dose"
     check("13 GutLog being down is a message on /dose, not an exception", t13)
 
+
     ok = all(r[0] for r in RESULTS)
     print("=" * 72)
-    print("RxGuard v1.8.0 -- Daily dose, the total per ingredient")
+    print("RxGuard v1.8.1 -- Daily dose, label maxima")
     print("=" * 72)
     for good, name, msg in RESULTS:
         print(("[PASS] " if good else "[FAIL] ") + name + ("  -- " + msg if msg else ""))

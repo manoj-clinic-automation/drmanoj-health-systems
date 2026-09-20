@@ -3,6 +3,54 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — RxGuard v1.8.1: a ceiling that cries wolf stops being read
+
+**His words, the day after v1.8.0 shipped.** The confirm-each-ceiling page
+taxes him: the maximum daily doses are in verified sources, so fetch them. And
+one ingredient at twice its 60 mg tablet in a day is an **accepted dose** —
+don't flag it.
+
+Both criticisms were right, and they are the same criticism twice.
+
+**Confirming was a tax, not a safeguard.** Asking a doctor to confirm a maximum
+daily dose printed in the label is asking him to retype a fact — and worse, an
+unconfirmed ceiling reads as *provisional*, so the one number the page exists to
+be trusted on arrived hedged. Every ceiling is now the **label maximum carrying
+its source text**; the "default" chip and the Confirm button are gone. His own
+limit still wins, behind a collapsed *Change*, and shows as *your limit*.
+
+**Clearing that box now returns to the label maximum**, where before it
+returned to "no ceiling" — the old behaviour turned a correction into a silent
+removal of the guard, which is the worst kind of change: it looks like tidying.
+
+**And the flag itself was wrong.** A ceiling set below what the label allows
+does not make him safer, it makes the page cry wolf — and a page that cries
+wolf stops being read, which costs more than the false alarm did. That
+ingredient now sits at its licensed maximum with a **course limit** instead:
+above the lower-indication dose for more than a short run of days is what
+actually matters there. New rule **DC010**.
+
+**Two ceilings say they are not yet primary-checked**, in their own source
+text. A sourced number that names its own weakness is honest; an unsourced one
+dressed like the rest is not.
+
+The dose feed widens from 4 days to 10, because a course limit is invisible in
+a 4-day window — mutation-controlled by shortening the feed until no run can be
+seen and requiring the new assertion to catch it. DC010's run comparison lives
+in the sidecar engine, which the negative-control harness still cannot mutate,
+so it was broken by hand and **case 15 alone caught it**, engine restored
+hash-checked. That harness gap is now two releases old and is worth closing.
+
+Gates: `test_dose_ceiling` **15/15**, negative control 3 declared / 3 seen;
+`astaken_honest` 16/16, `astaken` 15/15, `reconcile` 18/18, `conditions`
+10/10, `kb` 32/32, `smoke` 49/49, `validate` 50/50, `ops/test_sso` 11/11.
+`--reverse` byte-identical to v1.8.0.
+
+**On his real corrected log the page now raises nothing at all**, where v1.8.0
+raised one amber — and driving the engine at the moment that amber used to fire
+shows the ingredient **at its ceiling, not over**, which is precisely the
+distinction he asked for. Detail in `rxguard/README.md`.
+
 ## 2026-09-20 — GutLog v3.26.0: a food test is a question about weeks
 
 The old food test recorded **one day**: ate it, felt this. That is the wrong

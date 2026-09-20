@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-dose_ceiling.py -- RxGuard v1.8.0, RXGUARD_V180_DOSE
+dose_ceiling.py -- RxGuard v1.8.1, RXGUARD_V180_DOSE + RXGUARD_V181_LABELMAX
 
 CUMULATIVE DAILY DOSE PER INGREDIENT, not duplicate detection.
 
@@ -27,6 +27,13 @@ and the rules and renders what comes back. Every finding names its rule:
   DC008  UNKNOWN the same product logged twice within 10 minutes -- counted,
                  because the safer claim is the higher total, but named
   DC009  UNKNOWN a dose of a ruled ingredient whose amount cannot be read
+  DC010  AMBER   a daily total above a course limit on more days running than
+                 the label allows (e.g. a dose licensed only for a short course)
+
+v1.8.1: ceilings are the LABEL MAXIMUM daily doses from cited sources (the
+rules file carries each one's source); nothing waits for the owner to
+confirm. A limit he sets on /dose is his own and wins; clearing it returns
+to the label maximum.
 
 The rules file names the owner's medicines, so it is knowledge/
 dose_rules.local.json -- gitignored, on the server only (CLAUDE.md 5d).
@@ -348,9 +355,12 @@ def evaluate(intakes, unreadable, rules, now, finding, display=None):
     src = "Dose ceilings, %s." % (rules["meta"].get("version") or "local rules")
 
     def unconfirmed(r):
-        return "" if r.get("confirmed") else (
-            " This ceiling is a default, not yet confirmed by you -- confirm or change it on "
-            "the Daily dose page.")
+        return ""
+
+    def src_of(r):
+        if r.get("confirmed"):
+            return "Your own limit, set %s." % r["confirmed"]
+        return r.get("source") or src
 
     doubles = _double_entries(intakes, now, 24 * HISTORY_DAYS)
     doubled = set(a["ing"] for a, _b, _g in doubles)
@@ -386,7 +396,7 @@ def evaluate(intakes, unreadable, rules, now, finding, display=None):
                     "Dose-dependent adverse effects rise above this ceiling.",
                     action="No more %s until %s, when the total falls back to the ceiling.%s"
                            % (display(k), row["frees"] or "the window clears", unconfirmed(r)),
-                    source=src, reviewed=r.get("confirmed") or "", rule_id="DC001"))
+                    source=src_of(r), reviewed=r.get("confirmed") or "", rule_id="DC001"))
             elif abs(t - r["ceiling"]) < 1e-9 and cur:
                 row["state"] = "at"
                 row["frees"] = _hm(cur[0]["when"] + timedelta(hours=h), now)
@@ -408,7 +418,7 @@ def evaluate(intakes, unreadable, rules, now, finding, display=None):
                                  "GutLog and this clears." if k in doubled else
                                  "Nothing to do now; this is the record of it.")
                                 + unconfirmed(r)),
-                        source=src, reviewed=r.get("confirmed") or "", rule_id="DC002"))
+                        source=src_of(r), reviewed=r.get("confirmed") or "", rule_id="DC002"))
         elif cur:
             row["state"] = "noceiling"
             out.append(finding(
@@ -426,7 +436,28 @@ def evaluate(intakes, unreadable, rules, now, finding, display=None):
                 mechanism="Counted by unit (%s): %s." % (", ".join(row["products"]), _doses_text(cur)),
                 consequence=r.get("consequence") or "More units than the limit you set.",
                 action="Check nothing was applied twice." + unconfirmed(r),
-                source=src, rule_id="DC004"))
+                source=src_of(r), rule_id="DC004"))
+        above, run_max = r.get("course_above"), r.get("course_days")
+        if above is not None and run_max:
+            per_day = {}
+            for i in intakes:
+                if i["ing"] == k and i["when"] <= now:
+                    dk = i["when"].date()
+                    per_day[dk] = per_day.get(dk, 0.0) + (i["amount"] or 0.0)
+            run, d = 0, now.date()
+            while per_day.get(d, 0.0) > float(above) + 1e-9:
+                run += 1
+                d -= timedelta(days=1)
+            row["course_run"] = run
+            if run > int(run_max):
+                out.append(finding(
+                    "AMBER", "Daily dose",
+                    "%s above %s %s a day for %d days running (label: %d days at most)"
+                    % (display(k), _fmt(float(above)), unit, run, int(run_max)),
+                    mechanism=r.get("course_note") or "",
+                    consequence=r.get("consequence") or "",
+                    action="Step down to the long-term dose, or ask the prescriber.",
+                    source=r.get("source") or src, rule_id="DC010"))
         rows.append(row)
 
     for c in rules["classes"]:

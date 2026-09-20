@@ -1,4 +1,4 @@
-# RxGuard v1.8.0
+# RxGuard v1.8.1
 
 `rx.dr-manoj.in` · service `rxguard` · port 8031 · `/root/rxguard`
 
@@ -71,6 +71,63 @@ token, RxGuard on a scratch database; covers reconciliation both ways, the
 named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
 days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
 GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
+
+## Ceilings are label maxima — v1.8.1 (DEPLOYED 2026-09-20 11:18 IST)
+
+v1.8.0 shipped every ceiling as a **default awaiting his confirmation**, with a
+Confirm button on each row. Two things were wrong with that, and he said both
+on the day:
+
+**The confirming was a tax, not a safeguard.** Asking a doctor to confirm a
+maximum daily dose that is printed in the label is asking him to retype a fact.
+Worse, an unconfirmed ceiling reads as provisional — so the one number the page
+exists to be trusted on arrived hedged. Every ceiling is now **the label
+maximum, carrying its source text**; the "default" chip and the Confirm button
+are gone. He can still set his own limit, behind a collapsed *Change*, and it
+shows as *your limit*. **Clearing that box now returns to the label maximum**
+rather than to "no ceiling" — the old behaviour turned a correction into a
+silent removal of the guard.
+
+**And the first version flagged an accepted dose.** A ceiling set below what
+the label allows does not make him safer; it makes the page cry wolf, and a
+page that cries wolf stops being read. The one ingredient this bit on is now
+at its licensed maximum, with a **course limit** instead: above the
+lower-indication dose for more than a short run of days is what actually
+matters there, and that is the new rule **DC010**.
+
+Two ceilings are marked *not yet primary-checked* in the rules file and say so
+in their own source text. That is deliberate: a sourced number that names its
+own weakness is honest, an unsourced one that looks like the rest is not.
+
+The dose feed now looks back **10 days** rather than 4, because a course limit
+cannot be seen in a 4-day window — mutation-controlled, by shortening the feed
+until no run can be observed and requiring the DC010 assertion to catch it.
+
+Everything else is unchanged: the pools, the 20 h / 24 h windows, DC001–DC009,
+the sidecar engine with no network or database, the rules file server-only at
+mode 600.
+
+### Evidence
+
+`test_dose_ceiling.py` **15/15** (was 13; case 10 rewritten, 14 and 15 new) on
+the workstation and on the server. Negative control **3 declared, 3 seen to
+fail** — 10 and 14 by version, 15 by mutation of the feed length.
+
+DC010's own run comparison lives in the sidecar, which
+`tools/NEGATIVE_CONTROL.py` cannot mutate, so it was broken by hand in the
+current engine — requiring the run to exceed the allowance by a hundred days —
+and **case 15 alone caught it**, with the engine restored hash-checked
+afterwards. The same gap as v1.8.0: teaching the harness to mutate a named
+module is still the fix, and still not done.
+
+Server gates: `test_astaken_honest` 16/16, `test_astaken` 15/15,
+`test_reconcile` 18/18, `test_conditions` 10/10, `test_kb` 32/32,
+`smoke_test` 49/49, `validate` 50/50, `ops/test_sso` 11/11. `--reverse`
+byte-identical to v1.8.0. `/healthz` reports `ok 1.8.1`.
+
+**On the real record the page now raises nothing at all**, where v1.8.0 raised
+one amber — and the ingredient it used to flag reads **at its ceiling, not
+over**, which is exactly the distinction he asked for.
 
 ## One sign-in across the three apps — HEALTH_SSO_V1 (2026-09-20 09:14 IST)
 

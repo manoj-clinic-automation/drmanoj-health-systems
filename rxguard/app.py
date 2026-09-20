@@ -28,7 +28,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # HEALTH_SSO_V1
 import health_sso  # noqa: E402
 
-APP_VERSION = "1.8.0"   # RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST RXGUARD_V180_DOSE
+APP_VERSION = "1.8.1"   # RXGUARD_V181_LABELMAX RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST RXGUARD_V180_DOSE
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KNOWLEDGE_DIR = os.path.join(BASE_DIR, "knowledge")
 DEFAULT_DB = os.path.join(BASE_DIR, "rxguard.db")
@@ -950,7 +950,7 @@ import dose_ceiling  # noqa: E402
 
 DOSE_RULES_PATH = os.environ.get("RXGUARD_DOSE_RULES",
                                  os.path.join(KNOWLEDGE_DIR, dose_ceiling.RULES_FILE))
-DOSE_FEED_DAYS = 4
+DOSE_FEED_DAYS = 10
 
 
 def dose_now():
@@ -2937,7 +2937,7 @@ def create_app(db_path=None, secret=None):
         {% for r in rows %}<tr>
         <td>{{ r.name }}{% if r.products|length > 1 %}<br><span class="muted">{{ r.products|join(' + ') }}</span>{% endif %}</td>
         <td class="num">{{ '%g'|format(r.total) }} {{ r.unit }}<br><span class="muted">{{ r.window_h|int }} h</span></td>
-        <td class="num">{% if r.ceiling is not none %}{{ '%g'|format(r.ceiling) }} {{ r.unit }}{% if not r.confirmed %}<br><span class="chip">default</span>{% endif %}{% else %}<span class="flag UNKNOWN">not set</span>{% endif %}</td>
+        <td class="num">{% if r.ceiling is not none %}{{ '%g'|format(r.ceiling) }} {{ r.unit }}{% if r.confirmed %}<br><span class="chip">your limit</span>{% endif %}{% else %}<span class="flag UNKNOWN">not set</span>{% endif %}</td>
         <td class="num">{% if r.room is not none %}{% if r.room >= 0 %}{{ '%g'|format(r.room) }} {{ r.unit }}{% else %}<span class="flag RED">over {{ '%g'|format(-r.room) }}</span>{% endif %}{% endif %}</td>
         <td class="muted">{% if r.state == 'over' %}under the ceiling at {{ r.frees }}{% elif r.state == 'at' %}at the ceiling until {{ r.frees }}{% endif %}</td>
         </tr>{% endfor %}</table>
@@ -3232,7 +3232,7 @@ def create_app(db_path=None, secret=None):
             try:
                 val = float(raw) if raw else None
             except ValueError:
-                flash("A ceiling must be a number, or blank for none.")
+                flash("A ceiling must be a number, or blank for the label maximum.")
                 return redirect(url_for("dose_page"))
             if val is not None and val <= 0:
                 flash("A ceiling must be above zero, or blank for none.")
@@ -3243,15 +3243,20 @@ def create_app(db_path=None, secret=None):
                 return redirect(url_for("dose_page"))
             now_s = dose_now().strftime("%Y-%m-%d %H:%M")
             db = get_db()
+            label = rules["ingredients"][ing]["label"]
+            if val is None:
+                # RXGUARD_V181_LABELMAX -- a cleared box goes back to the label maximum
+                db.execute("DELETE FROM dose_ceilings WHERE ing=?", (ing,))
+                db.commit()
+                flash("%s: back to the label maximum." % label)
+                return redirect(url_for("dose_page"))
             db.execute("INSERT INTO dose_ceilings (ing, ceiling, confirmed, updated) "
                        "VALUES (?, ?, ?, ?) ON CONFLICT(ing) DO UPDATE SET "
                        "ceiling=excluded.ceiling, confirmed=excluded.confirmed, "
                        "updated=excluded.updated", (ing, val, now_s[:10], now_s))
             db.commit()
-            flash("Saved and confirmed: %s %s." % (
-                rules["ingredients"][ing]["label"],
-                ("%g %s" % (val, rules["ingredients"][ing]["unit"])) if val is not None
-                else "no ceiling"))
+            flash("Saved: your own limit for %s, %g %s." % (
+                label, val, rules["ingredients"][ing]["unit"]))
             return redirect(url_for("dose_page"))
         stack, err = gutlog_stack(14)
         dv = dose_view(stack) if stack else {"on": False, "err": err or "", "rows": [],
@@ -3276,32 +3281,34 @@ def create_app(db_path=None, secret=None):
         {% for r in rows %}<tr>
         <td>{{ r.name }}{% if r.products|length > 1 %}<br><span class="muted">{{ r.products|join(' + ') }}</span>{% endif %}</td>
         <td class="num">{{ '%g'|format(r.total) }} {{ r.unit }}<br><span class="muted">{{ r.window_h|int }} h</span></td>
-        <td class="num">{% if r.ceiling is not none %}{{ '%g'|format(r.ceiling) }} {{ r.unit }}{% if not r.confirmed %}<br><span class="chip">default</span>{% endif %}{% else %}<span class="flag UNKNOWN">not set</span>{% endif %}</td>
+        <td class="num">{% if r.ceiling is not none %}{{ '%g'|format(r.ceiling) }} {{ r.unit }}{% if r.confirmed %}<br><span class="chip">your limit</span>{% endif %}{% else %}<span class="flag UNKNOWN">not set</span>{% endif %}</td>
         <td class="num">{% if r.room is not none %}{% if r.room >= 0 %}{{ '%g'|format(r.room) }} {{ r.unit }}{% else %}<span class="flag RED">over {{ '%g'|format(-r.room) }}</span>{% endif %}{% endif %}</td>
         <td class="muted">{% if r.state == 'over' %}under the ceiling at {{ r.frees }}{% elif r.state == 'at' %}at the ceiling until {{ r.frees }}{% endif %}</td>
         </tr>{% endfor %}</table>{% endif %}
         {% for f in dv.findings %}{% set findings = [f] %}""" + ASTAKEN_FINDING_BLOCK + """{% endfor %}
         <h2>Ceilings</h2>
-        <p class="muted">A ceiling marked <span class="chip">default</span> came from the rules
-        file and has not been confirmed by you. Saving a row confirms it. Leave the box blank
-        for no ceiling.</p>
-        <table><tr><th>Ingredient</th><th>Window</th><th>Ceiling</th><th></th></tr>
+        <p class="muted">Each ceiling is the label maximum daily dose, taken from the source shown.
+        Nothing here needs your confirmation. Change one only if your doctor has set you a
+        different limit; clear the box to go back to the label maximum.</p>
+        <table><tr><th>Ingredient</th><th>Ceiling</th><th>Source</th></tr>
         {% for k, r in dv.rules.ingredients|dictsort %}{% if not r.class_only %}<tr>
         <td>{{ r.label }}{% if r.consequence %}<br><span class="muted">{{ r.consequence }}</span>{% endif %}</td>
-        <td class="num">{{ r.window_h|int }} h{% if r.max_units is not none %}<br><span class="muted">max {{ '%g'|format(r.max_units) }} unit</span>{% endif %}</td>
-        <td><form method="post" style="display:flex;gap:6px;align-items:center">
+        <td class="num">{% if r.ceiling is not none %}{{ '%g'|format(r.ceiling) }} {{ r.unit }}{% else %}<span class="flag UNKNOWN">not set</span>{% endif %}
+          <br><span class="muted">{{ r.window_h|int }} h{% if r.max_units is not none %} &middot; max {{ '%g'|format(r.max_units) }} unit{% endif %}{% if r.course_above is defined and r.course_above %} &middot; over {{ '%g'|format(r.course_above) }} {{ r.unit }}: {{ r.course_days }} days at most{% endif %}</span>
+          {% if r.confirmed %}<br><span class="chip">your limit</span>{% endif %}
+          <details><summary class="muted">Change</summary><form method="post" style="display:flex;gap:6px;align-items:center;margin-top:6px">
           <input type="hidden" name="ing" value="{{ k }}">
           <input name="ceiling" inputmode="decimal" style="width:6em"
-            value="{{ '%g'|format(r.ceiling) if r.ceiling is not none else '' }}"> {{ r.unit }}
-          <button>{{ 'Save' if r.confirmed else 'Confirm' }}</button></form></td>
-        <td class="muted">{% if r.confirmed %}confirmed {{ r.confirmed }}{% else %}<span class="chip">default</span>{% endif %}</td>
+            value="{{ '%g'|format(r.ceiling) if r.confirmed and r.ceiling is not none else '' }}" placeholder="label"> {{ r.unit }}
+          <button>Save</button></form></details></td>
+        <td class="muted">{% if r.confirmed %}Your own limit, set {{ r.confirmed }}.{% else %}{{ r.source or 'Not recorded' }}{% endif %}</td>
         </tr>{% endif %}{% endfor %}</table>
         <h2>Class rules</h2>
         {% for c in dv.rules.classes %}<div class="card"><strong>{{ c.label }}</strong>
         &middot; {{ c.members|map('replace', '_', ' ')|join(', ') }} &middot; {{ c.window_h|int }} h
         {% if c.consequence %}<p class="muted" style="margin:6px 0 0">{{ c.consequence }}</p>{% endif %}</div>
         {% endfor %}
-        <p class="muted">Rules {{ dv.version }} &middot; DC001&ndash;DC009 &middot; the window
+        <p class="muted">Rules {{ dv.version }} &middot; DC001&ndash;DC010 &middot; the window
         is 20 hours for once-a-day ingredients so a dose taken a little earlier than yesterday's
         is not read as two.</p>
         {% endif %}

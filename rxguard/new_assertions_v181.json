@@ -1,0 +1,28 @@
+{
+ "_": [
+  "RxGuard v1.8.1 -- label maxima, no confirming. 10 and 14 fail on v1.8.0 (Confirm button, 'default' chip, a cleared box meant 'no ceiling'). DC010 lives in the dose_ceiling.py sidecar, which NEGATIVE_CONTROL cannot mutate, so 15 is shown failing by breaking what app.py contributes to it: the 10-day feed. The sidecar's own DC010 logic was mutation-checked by hand (run count forced to 0 -> 15 fails)."
+ ],
+ "suite": "test_dose_ceiling.py",
+ "app": "app.py",
+ "patcher": "patch_rxguard_v181.py",
+ "assertions": [
+  {
+   "name": "10 his own limit overrides; clearing returns to the label maximum",
+   "control": "version"
+  },
+  {
+   "name": "14 a ceiling is the label maximum, with its source, never 'confirm'",
+   "control": "version"
+  },
+  {
+   "name": "15 a short-course dose taken day after day is named",
+   "control": "mutation",
+   "mutation": {
+    "id": "shortfeed",
+    "why": "the dose feed looks back no further than today, so no run can be seen",
+    "find": "DOSE_FEED_DAYS = 10\n",
+    "replace": "DOSE_FEED_DAYS = 0\n"
+   }
+  }
+ ]
+}
