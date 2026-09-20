@@ -1,0 +1,15 @@
+{
+ "_": ["FitLog v1.7.1 -- /health tells the truth. 01, 02 and 03 fail on v1.7.0, which answered a literal 1.3.1. 04 guards what v1.7.0 already did right, so it is shown failing by making the body report a figure."],
+ "suite": "test_health_version.py",
+ "app": "app.py",
+ "patcher": "patch_fitlog_v171_version.py",
+ "assertions": [
+  {"name": "01 /health reports the running version", "control": "version"},
+  {"name": "02 the stale version literal is gone", "control": "version"},
+  {"name": "03 the version lives in one place", "control": "version"},
+  {"name": "04 /health carries nothing but app, version and ok", "control": "mutation",
+   "mutation": {"id": "leakcount", "why": "the health check starts reporting a figure from the record",
+    "find": "    return {\"app\": \"fitlog\", \"version\": APP_VERSION, \"ok\": True}\n",
+    "replace": "    n = db().execute(\"SELECT COUNT(*) c FROM health_metrics\").fetchone()[\"c\"]\n    return {\"app\": \"fitlog\", \"version\": APP_VERSION, \"ok\": True, \"metrics\": n}\n"}}
+ ]
+}
