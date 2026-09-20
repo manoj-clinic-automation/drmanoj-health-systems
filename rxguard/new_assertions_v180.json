@@ -1,0 +1,27 @@
+{
+  "_": [
+    "RxGuard v1.8.0 -- Daily dose, the total per ingredient.",
+    "Every assertion is about behaviour v1.7.0 did not have: it has no",
+    "dose_view, no /dose page, no Daily dose card and no DC rule, so the",
+    "reconstructed previous build fails each one. The fixture's molecules are",
+    "invented, so no assertion can pass by accident on a real record."
+  ],
+  "suite": "test_dose_ceiling.py",
+  "app": "app.py",
+  "patcher": "patch_rxguard_v180.py",
+  "assertions": [
+    {"name": "01 an ingredient inside a combination counts into the standalone pool", "control": "version"},
+    {"name": "02 over the ceiling is RED, with the time it frees", "control": "version"},
+    {"name": "03 the dose RED is counted in the page headline and GutLog's banner", "control": "version"},
+    {"name": "04 one generic by two routes is one pool", "control": "version"},
+    {"name": "05 a varying-strength dose is read from the strengths picked", "control": "version"},
+    {"name": "06 a once-a-day ingredient is not doubled by an earlier dose time", "control": "version"},
+    {"name": "07 an addition on top of the nightly regular raises the class load", "control": "version"},
+    {"name": "08 the same product logged twice minutes apart is named, not hidden", "control": "version"},
+    {"name": "09 a dose whose amount cannot be read is reported, not silently zero", "control": "version"},
+    {"name": "10 a ceiling set on /dose overrides the file and is confirmed", "control": "version"},
+    {"name": "11 /astaken carries the Daily dose card and the nav link", "control": "version"},
+    {"name": "12 without a rules file the feature is off and says so", "control": "version"},
+    {"name": "13 GutLog being down is a message on /dose, not an exception", "control": "version"}
+  ]
+}
