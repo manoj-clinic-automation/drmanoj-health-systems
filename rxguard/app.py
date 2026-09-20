@@ -28,7 +28,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # HEALTH_SSO_V1
 import health_sso  # noqa: E402
 
-APP_VERSION = "1.8.1"   # RXGUARD_V181_LABELMAX RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST RXGUARD_V180_DOSE
+APP_VERSION = "1.8.2"   # RXGUARD_V182_SECRETFILE RXGUARD_V181_LABELMAX RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST RXGUARD_V180_DOSE
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KNOWLEDGE_DIR = os.path.join(BASE_DIR, "knowledge")
 DEFAULT_DB = os.path.join(BASE_DIR, "rxguard.db")
@@ -2067,11 +2067,63 @@ ASTAKEN_FINDING_BLOCK = """
 # App
 # --------------------------------------------------------------------------
 
+def _secret_from_file(db_path):
+    """RXGUARD_V182_SECRETFILE -- the session key when RXGUARD_SECRET is unset.
+
+    A random key per process meant each gunicorn worker signed sessions with
+    a key of its own: a request that landed on the other worker looked logged
+    out, and every restart logged everyone out. The key now lives beside the
+    database, as GutLog's does: created once, mode 600, shared by every
+    worker. Two workers starting together cannot both create it -- the file
+    appears by an atomic link, and the loser reads the winner's key.
+
+    A key file that cannot be read never stops the app: it falls back to a
+    temporary key and says so in the error log.
+    """
+    path = db_path + ".secret"
+    for _attempt in range(2):
+        try:
+            with open(path, "r", encoding="ascii") as fh:
+                key = fh.read().strip()
+            if len(key) >= 32:
+                return key
+            sys.stderr.write("rxguard: %s is too short to be a key; "
+                             "using a temporary one\n" % path)
+            return secrets.token_hex(32)
+        except FileNotFoundError:
+            pass
+        except (OSError, UnicodeDecodeError) as exc:
+            sys.stderr.write("rxguard: cannot read %s (%s); "
+                             "using a temporary key\n" % (path, exc))
+            return secrets.token_hex(32)
+        key = secrets.token_hex(32)
+        tmp = "%s.%d.tmp" % (path, os.getpid())
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="ascii") as fh:
+                fh.write(key + "\n")
+            try:
+                os.link(tmp, path)
+                return key
+            except FileExistsError:
+                continue
+        except OSError as exc:
+            sys.stderr.write("rxguard: cannot write %s (%s); "
+                             "using a temporary key\n" % (path, exc))
+            return key
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    return secrets.token_hex(32)
+
+
 def create_app(db_path=None, secret=None):
     app = Flask(__name__)
     app.config["DB_PATH"] = db_path or os.environ.get("RXGUARD_DB", DEFAULT_DB)
     app.secret_key = (secret or os.environ.get("RXGUARD_SECRET")
-                      or secrets.token_hex(32))
+                      or _secret_from_file(app.config["DB_PATH"]))
     init_db(app.config["DB_PATH"])
 
     @app.before_request

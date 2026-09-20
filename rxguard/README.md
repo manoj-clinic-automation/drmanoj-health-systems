@@ -1,4 +1,4 @@
-# RxGuard v1.8.1
+# RxGuard v1.8.2
 
 `rx.dr-manoj.in` · service `rxguard` · port 8031 · `/root/rxguard`
 
@@ -71,6 +71,45 @@ token, RxGuard on a scratch database; covers reconciliation both ways, the
 named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
 days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
 GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
+
+## One session key for every worker — v1.8.2 (DEPLOYED 2026-09-20 12:46 IST)
+
+With `RXGUARD_SECRET` unset, each gunicorn worker minted **its own random
+session key**. Two consequences, both of which read as bugs in something else:
+a request that landed on the other worker looked **logged out**, seemingly at
+random; and **every restart logged him out**, because the keys were new again.
+
+v1.8.2 falls back to a key file, `<db>.secret`, mode 600, created **once**
+through an atomic link — so four workers starting in the same instant agree on
+one key rather than racing to overwrite each other. An environment key still
+wins, and when one is set **no file is written at all**. A broken or truncated
+key file neither stops the app nor gets silently overwritten.
+
+**On this server nothing changed for him**: `RXGUARD_SECRET` is set in
+`rxguard.env`, so the fallback is inert and no key file was created. The fix
+matters for the case where that variable is ever removed, and for any clone.
+
+### Evidence
+
+`test_secret_file.py` **5/5 on the server**. Negative control **6 declared, 6
+seen to fail** — 01, 02 and 05 by version; 03, 04 and 05 by mutation, one of
+them the **non-atomic create**, which is the failure that only appears under a
+real race and would otherwise ship unnoticed.
+
+On the Windows workstation case 02 fails on `mode is 666` — the POSIX chmod
+artefact (gap 11). Worth noting precisely: that assertion checks the mode
+**first**, so on Windows the rest of case 02 — 64-hex key, reuse after a
+restart, no temporary file left behind — is never reached. The server run is
+the only one that tests them.
+
+Regression on the server: `dose_ceiling` 15/15, `astaken_honest` 16/16,
+`astaken` 15/15, `reconcile` 18/18, `conditions` 10/10, `kb` 32/32,
+`smoke` 49/49, `validate` 50/50, `ops/test_sso` 11/11. `--reverse`
+byte-identical to v1.8.1. `/healthz` reports `ok 1.8.2`.
+
+**Not verified:** that a real login survives a restart. That needs his
+password, which is his to type — the suite proves the mechanism, and the
+env-key path means nothing changed for him in any case.
 
 ## Ceilings are label maxima — v1.8.1 (DEPLOYED 2026-09-20 11:18 IST)
 

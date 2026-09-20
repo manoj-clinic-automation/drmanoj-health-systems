@@ -19,7 +19,8 @@ Matching is by name fragment, so it survives renaming and does not depend
 on ids staying put. Anything not named keeps its current sort and is
 reported, rather than being silently pushed to the end.
 
-DRY RUN BY DEFAULT.
+DRY RUN BY DEFAULT. --apply takes a sqlite3.backup() of the database first,
+like every other script in this set, and writes nothing if that fails.
 
   python3 tidy_extras.py
   python3 tidy_extras.py --apply
@@ -28,6 +29,7 @@ Python 3.9 compatible.
 """
 
 import argparse
+import datetime
 import json
 import os
 import sqlite3
@@ -140,6 +142,19 @@ def main():
         print("DRY RUN - nothing written. Re-run with --apply.")
         con.close()
         return 0
+
+    bak = args.db + ".bak-tidy-" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    try:
+        out = sqlite3.connect(bak)
+        with out:
+            con.backup(out)
+        out.close()
+    except Exception as exc:
+        con.close()
+        print("FATAL: backup failed, nothing written: " + str(exc))
+        return 2
+    print("")
+    print("backup : " + bak)
 
     try:
         con.execute("BEGIN")

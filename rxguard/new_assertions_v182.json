@@ -1,0 +1,21 @@
+{
+ "_": ["RxGuard v1.8.2 -- one session key for every worker. 01, 02 and 05 fail on v1.8.1 (a random key per process). 03 and 04 guard behaviour v1.8.1 already had, so each is shown failing by breaking it on purpose; 05 is also shown failing when the key file is created by a plain overwrite instead of an atomic link."],
+ "suite": "test_secret_file.py",
+ "app": "app.py",
+ "patcher": "patch_rxguard_v182.py",
+ "assertions": [
+  {"name": "01 two workers share one key without RXGUARD_SECRET", "control": "version"},
+  {"name": "02 the key file is private and survives a restart", "control": "version"},
+  {"name": "05 workers starting together agree", "control": "version"},
+  {"name": "03 an environment key still wins", "control": "mutation",
+   "mutation": {"id": "envignored", "why": "the environment key is ignored",
+    "find": "app.secret_key = (secret or os.environ.get(\"RXGUARD_SECRET\")",
+    "replace": "app.secret_key = (secret or None"}},
+  {"name": "04 a broken key file does not stop the app", "control": "mutation",
+   "mutation": {"id": "shortkey", "why": "any non-empty file is taken as the key",
+    "find": "            if len(key) >= 32:\n", "replace": "            if len(key) >= 1:\n"}},
+  {"name": "05 workers starting together agree", "control": "mutation",
+   "mutation": {"id": "nonatomic", "why": "the key file is created by overwrite, not an atomic link",
+    "find": "                os.link(tmp, path)\n", "replace": "                os.replace(tmp, path)\n"}}
+ ]
+}

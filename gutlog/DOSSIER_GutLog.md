@@ -14,11 +14,18 @@ Single source of truth. Update after every change.
 > This repository is public. The concrete values live in
 > `gutlog/INFRA_GutLog.local.md`, which is gitignored.
 
-The app directory also holds **two dead database files** from earlier versions.
-`app.py:19` reads the `GUTLOG_DB` environment variable, defaulting to the
-current database under the app directory. Confirm which file is live before
-pointing any script at "the database" — this is the GutLog half of the
-CLAUDE.md §4 lesson.
+The app directory used to hold **two dead database files** from earlier
+versions, plus a dead signing key. They were **archived on 2026-09-20** — moved,
+not deleted, after proving no running worker held them open, no `GUTLOG_DB`
+pointed at them, and no cron entry or script named them. Only the live database
+and its key remain beside `app.py`. The archive location is in
+`INFRA_GutLog.local.md`.
+
+`app.py:19` still reads the `GUTLOG_DB` environment variable, defaulting to the
+current database under the app directory. **Confirm which file is live before
+pointing any script at "the database"** — that is the GutLog half of the
+CLAUDE.md §4 lesson, and it stays written down even though the confusing files
+are gone, because the lesson is about the habit, not the files.
 
 ## Architecture
 - Single-file Flask (`app.py`, ~3,900 lines incl. embedded HTML/CSS/JS) + SQLite
@@ -1424,10 +1431,11 @@ rediscovered the expensive way.
    therefore does **not** migrate — the first request after the restart does.
    Never conclude a migration ran because the service came back up.
 
-3. **`tidy_extras.py` writes UPDATEs without taking its own backup.** Unlike the
-   `app.py` patchers, it has no `.bak` step. Take a `sqlite3.backup()` copy of
-   the live database before running it with `--apply`. It is dry-run by
-   default, which is the only guard it has.
+3. ~~**`tidy_extras.py` writes UPDATEs without taking its own backup.**~~ —
+   **CLOSED 2026-09-20.** It now takes a `sqlite3.backup()` of the database
+   before `--apply` and **writes nothing if that backup fails**, which is the
+   part that matters: a backup step that can fail silently is not a backup
+   step. Still dry-run by default.
 
 4. **`test_phase_a.py` test 12 checks the Bristol column exists, not that a
    value round-trips.** It would have passed 18/18 against the v3.3.0–v3.4.0

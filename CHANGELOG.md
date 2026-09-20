@@ -3,6 +3,60 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — server clean-ups, and the Watch was never silent
+
+**The Watch question, answered by looking rather than assuming.** The premise
+was that the Apple Watch had sent nothing since 13 Sep. It is **not what the
+data says**. Every POST to the ingest endpoint since 11 Sep returned **200** —
+nothing refused, nothing unsaved — and Apple Watch bodies arrived on **every
+single day**, including today. What actually happened is a **decline, not a
+stop**: 15 bodies on 14 Sep, then 9, 3, 2, 1, 1, 1. The phone is still sending;
+it is sending roughly once a day instead of through the day. So it is the
+phone's side, but "it stopped" would have sent him looking for the wrong
+thing — and a server-side fix would have been a fix to nothing.
+
+Two things found while looking, neither asked for:
+
+- **The Health Connect token is written in cleartext into the web-server
+  access log on every request**, because that feed carries its key in the URL
+  (it cannot send headers — CLAUDE.md §5a accepts this, under narrow scoping).
+  The scoping still holds; what was not previously written down is that the log
+  is a second place the token lives, with a different retention and different
+  readers.
+- **The nightly files tarball carries about twenty copies of the diary.**
+  `backup.sh` tars the app folder with `--exclude='*.db'`, which misses the
+  timestamped snapshots — `…db.bak-v340-20260910_105612` does not *end* in
+  `.db`. The tarball is 91 MB and holds 22 matching entries. Not changed here:
+  it is a working backup script and the call is his. One character fixes it.
+
+**Two dead databases archived, not deleted**, after proving them dead three
+ways — no worker held them open, no `GUTLOG_DB` pointed at them, no cron or
+script named them. Each was copied with `sqlite3.backup()` and
+integrity-checked before moving. The name grep threw three matches and each was
+read: two were **comments citing this very lesson**, the third an old copy of
+the app that nothing runs.
+
+**Both units now launch gunicorn the portable way** (CLAUDE.md §3 — RxGuard was
+already there; GutLog's venv path is gap 6, now closed). Only the interpreter
+changed. Checked first that every module resolves under the system Python and
+that `--check-config` exits 0; the app answered one second after the restart.
+
+**`tidy_extras.py` takes its own backup** and writes nothing if that backup
+fails — closing a gap that had stood since it was written, and the important
+half is the second clause: a backup step that can fail quietly is not one.
+
+**RxGuard v1.8.2** — with no `RXGUARD_SECRET`, each worker minted its own
+session key, so a request landing on the other worker looked logged out and
+every restart logged him out. It now falls back to a key file created **once**
+through an atomic link. On this server the variable **is** set, so nothing
+changed for him and no file was written; the fix is for the case where it is
+ever removed. `test_secret_file` 5/5 on the server, 6 declared / 6 seen —
+including a mutation of the **non-atomic create**, the failure that only shows
+under a real race.
+
+**New dose limits file** (label maxima, two sources now primary-checked, one
+window widened to 24 h). `/dose` still reports **0 findings** on his log.
+
 ## 2026-09-20 — RxGuard v1.8.1: a ceiling that cries wolf stops being read
 
 **His words, the day after v1.8.0 shipped.** The confirm-each-ceiling page
