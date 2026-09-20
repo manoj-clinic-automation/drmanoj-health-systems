@@ -121,6 +121,9 @@ CREATE TABLE IF NOT EXISTS stock_order_cfg (
 CREATE TABLE IF NOT EXISTS stock_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT, month TEXT NOT NULL, status TEXT DEFAULT 'OPEN',
   created TEXT, received_at TEXT DEFAULT '', lines TEXT DEFAULT '[]', text TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS recipes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE, name TEXT, grp TEXT DEFAULT '',
+  stage TEXT DEFAULT 'new', stage_note TEXT DEFAULT '', data TEXT DEFAULT '{}', updated TEXT);
 CREATE TABLE IF NOT EXISTS day_context (
   day TEXT NOT NULL, tag TEXT NOT NULL, created TEXT, PRIMARY KEY (day, tag));
 CREATE TABLE IF NOT EXISTS day_context_note (day TEXT PRIMARY KEY, note TEXT DEFAULT '');
@@ -291,7 +294,7 @@ PRN_SEED = _local_seed("prn_seed")
 
 DOCTOR_SEED = _local_seed("doctor_seed")
 
-SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS GUTLOG_V3230_CONTEXT
+SCHEMA_VERSION = "3.3.4"   # GUTLOG_V330_PHASE_A GUTLOG_V332_VARIANTS GUTLOG_V333_ROWACT GUTLOG_V340_READABILITY GUTLOG_V341_PICKER GUTLOG_V342_PAINSITE GUTLOG_V350_PHASE_B GUTLOG_V360_PHASE_C GUTLOG_V370_SALTS_ACTIVITY GUTLOG_V380_RECORDS GUTLOG_V390_SCAN GUTLOG_V3100_AUTOREAD GUTLOG_V3110_SCANQ GUTLOG_V3120_PAIN GUTLOG_V3130_WATCH GUTLOG_V3140_FALLBACK GUTLOG_V3150_READ GUTLOG_V3160_DARK GUTLOG_V3170_DOWN GUTLOG_V3180_HONEST GUTLOG_V3190_ORDER GUTLOG_V3200_PIPES GUTLOG_V3210_ONEDOSE GUTLOG_V3220_MEALS GUTLOG_V3230_CONTEXT GUTLOG_V3240_RECIPES
 
 # slot -> (label, default clock time). Times are display hints only; the
 # schedule is not time-enforced.
@@ -1039,6 +1042,106 @@ def api_foods_new():
 @login_required
 def api_foods_guess():
     return jsonify(kind=_guess_kind(request.args.get("name") or ""))
+
+
+# ------------------------------------------------------------------ recipes
+# GUTLOG_V3240_RECIPES -- his recipe cards, browsable in the Meals tab: the
+# ingredients, method, per-serving estimate, plant points, gut flags and the
+# onion-free version beside the original; a stage he sets (not tried, on
+# trial, in rotation, paused, avoid); one tap to log a serving; a clean copy
+# to send the cook. The cards live in the database (table recipes), loaded
+# by seed_recipes.py from his gitignored card file -- nothing here names a
+# dish. A logged serving is an ordinary meal whose item is the recipe, so
+# its ingredients stay one join away for the food-symptom comparison.
+RECIPE_STAGES = [("new", "Not tried"), ("trial", "On trial"), ("rotation", "In rotation"),
+                 ("paused", "Paused"), ("avoid", "Avoid")]
+RECIPE_STAGE_KEYS = dict(RECIPE_STAGES)
+RECIPE_GROUPS = {"A": "Fits now", "B": "Has an onion-free version", "C": "Occasional"}
+
+
+def _recipe_row(r, full=False):
+    d = json.loads(r["data"] or "{}")
+    ps = d.get("per_serving") or {}
+    fl = d.get("flags") or {}
+    out = {"slug": r["slug"], "name": r["name"], "group": r["grp"],
+           "group_label": RECIPE_GROUPS.get(r["grp"], r["grp"]), "stage": r["stage"],
+           "stage_label": RECIPE_STAGE_KEYS.get(r["stage"], r["stage"]),
+           "stage_note": r["stage_note"] or "", "serving": d.get("serving") or "",
+           "kcal": ps.get("kcal"), "protein": ps.get("protein"), "fibre": ps.get("fibre"),
+           "fat": ps.get("fat"), "plant_points": d.get("plant_points"),
+           "onion": bool(fl.get("onion")), "garlic": bool(fl.get("garlic")),
+           "high_fodmap": fl.get("high_fodmap") or [], "has_onion_free": bool(d.get("onion_free"))}
+    if full:
+        out.update(serves=d.get("serves"), ing=d.get("ing") or [], method=d.get("method") or [],
+                   notes=d.get("notes") or [], onion_free=d.get("onion_free") or [],
+                   plants=d.get("plants") or [], source=d.get("source") or "",
+                   yield_est=bool(d.get("yield_est")))
+    return out
+
+
+@app.route("/api/recipes")
+@login_required
+def api_recipes():
+    rows = [_recipe_row(r) for r in db().execute(
+        "SELECT * FROM recipes ORDER BY grp, name").fetchall()]
+    return jsonify(recipes=rows, stages=[{"key": k, "label": l} for k, l in RECIPE_STAGES],
+                   groups=[{"key": k, "label": v} for k, v in sorted(RECIPE_GROUPS.items())])
+
+
+@app.route("/api/recipes/<slug>")
+@login_required
+def api_recipe(slug):
+    r = db().execute("SELECT * FROM recipes WHERE slug=?", (slug,)).fetchone()
+    if not r:
+        return jsonify(ok=False, err="No such recipe."), 404
+    out = _recipe_row(r, full=True)
+    out["logged"] = [dict(x) for x in db().execute(
+        "SELECT day, mtime FROM meals WHERE items LIKE ? ORDER BY day DESC, mtime DESC LIMIT 5",
+        ('%"n": ' + json.dumps(r["name"]) + '%',)).fetchall()]
+    return jsonify(ok=True, recipe=out)
+
+
+@app.route("/api/recipes/<slug>/stage", methods=["POST"])
+@login_required
+def api_recipe_stage(slug):
+    d = J()
+    st = d.get("stage")
+    if st not in RECIPE_STAGE_KEYS:
+        return jsonify(ok=False, err="Unknown stage."), 400
+    cur = db().execute("SELECT stage FROM recipes WHERE slug=?", (slug,)).fetchone()
+    if not cur:
+        return jsonify(ok=False, err="No such recipe."), 404
+    db().execute("UPDATE recipes SET stage=?, stage_note=?, updated=? WHERE slug=?",
+                 (st, note(d, "note", 200), now_s(), slug))
+    db().commit()
+    return jsonify(ok=True, stage=st)
+
+
+@app.route("/api/recipes/<slug>/log", methods=["POST"])
+@login_required
+def api_recipe_log(slug):
+    """One serving (or ½, 2) of a recipe as a meal, now. The library item
+    carries its per-serving estimate; it is created from the card if absent."""
+    r = db().execute("SELECT * FROM recipes WHERE slug=?", (slug,)).fetchone()
+    if not r:
+        return jsonify(ok=False, err="No such recipe."), 404
+    d = J()
+    try:
+        q = float(d.get("q") or 1)
+    except (TypeError, ValueError):
+        q = 1.0
+    if not db().execute("SELECT 1 FROM library WHERE item=?", (r["name"],)).fetchone():
+        x = _recipe_row(r)
+        fm = "H" if (x["onion"] or x["garlic"]) else ("M-H" if x["high_fodmap"] else "L-M")
+        insert("library", ["cat", "item", "portion", "protein", "kcal", "fibre", "fodmap", "status",
+                           "fav", "tags", "note"],
+               ["H", r["name"][:80], (x["serving"] or "1 serving")[:60], x["protein"] or 0,
+                x["kcal"] or 0, x["fibre"] or 0, fm, "", 0, "recipe estimated",
+                "From your recipe card, per serving; values estimated."])
+    body, code = _log_meal({"card": "", "slot": (d.get("slot") or "Meal")[:30],
+                            "day": d.get("day") or today(), "mtime": d.get("mtime") or now_hm(),
+                            "extra": [{"n": r["name"], "q": q}]})
+    return jsonify(**body), code
 
 
 # ------------------------------------------------------------------ PRN doses
@@ -4664,6 +4767,23 @@ color:var(--err);border-color:#E4C3BE}
 .macts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex:none;max-width:50%}
 .macts .chip{padding:7px 11px;font-size:14px}
 .mnew{margin-top:10px;padding:10px;border:1.5px dashed var(--line);border-radius:12px}
+/* GUTLOG_V3240_RECIPES */
+.rcrow{display:block;width:100%;text-align:left;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:0 0 8px;font-size:16px}
+.rcrow b{display:block;font-size:16px}
+.rcrow small{display:block;color:var(--muted);font-size:14px;margin-top:3px}
+.rctag{display:inline-block;font-size:13px;font-weight:700;border-radius:999px;padding:2px 9px;margin:6px 6px 0 0;border:1.5px solid var(--line);color:var(--muted)}
+.rctag.warn{border-color:var(--amber);color:var(--amber)}
+.rctag.ok{border-color:var(--teal);color:var(--teal)}
+.rcnum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:10px 0}
+.rcnum div{border:1px solid var(--line);border-radius:12px;padding:8px 4px;text-align:center}
+.rcnum b{display:block;font-size:18px}.rcnum span{font-size:13px;color:var(--muted)}
+.rcing{margin:0;padding:0;list-style:none}
+.rcing li{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid var(--line);font-size:15px}
+.rcing li span:last-child{color:var(--muted);text-align:right}
+.rcing li.hi span:first-child{color:var(--amber);font-weight:700}
+.rcsteps{margin:0;padding-left:22px;font-size:15px}.rcsteps li{margin:0 0 7px}
+.rcof{border:1.5px solid var(--teal);border-radius:12px;padding:10px 12px;margin:10px 0}
+.rcof ul{margin:6px 0 0;padding-left:20px;font-size:15px}
 /* GUTLOG_V3230_CONTEXT */
 #nowCtx .dwtop{display:flex;align-items:center;gap:10px;margin:0 0 10px}
 #nowCtx .dwtop .q{margin:0}
@@ -5406,7 +5526,7 @@ function thmCycle(){
 <!-- ============ MEALS ============ -->
 <section class="tab" id="tab-meals">
   <div class="seg" data-seg="meals">
-    <button data-s="meal" class="sel">Meal</button><button data-s="test">Food test</button>
+    <button data-s="meal" class="sel">Meal</button><button data-s="test">Food test</button><button data-s="recipes">Recipes</button>
   </div>
 
   <div class="sub sel" id="meals-meal">
@@ -5452,6 +5572,16 @@ function thmCycle(){
     <div class="card" id="lib_list"></div>
     <div class="card" id="lib_edit" style="display:none"></div>
     <button type="button" class="addbtn" id="lib_addnew">&#10133; Add a new food</button>
+  </div>
+
+  <div class="sub" id="meals-recipes">
+    <div id="rcList">
+      <input type="text" id="rc_q" placeholder="Search your recipes" autocomplete="off">
+      <div class="chips" id="rc_groups" style="margin-top:8px"></div>
+      <div class="chips" id="rc_stages" style="margin-top:8px"></div>
+      <div id="rc_rows" style="margin-top:10px"></div>
+    </div>
+    <div id="rcOne" style="display:none"></div>
   </div>
 
   <div class="sub" id="meals-test">
@@ -6968,7 +7098,7 @@ $('#saveBtn').onclick=async()=>{
 
 /* ---------- tab + segment switching ---------- */
 function saveBtnVisible(){
-  const hide=(tab==='review')||(tab==='meals'&&seg.meals==='foods')||
+  const hide=(tab==='review')||(tab==='meals'&&(seg.meals==='foods'||seg.meals==='recipes'))||
     (tab==='files'&&seg.files!=='consults')||(tab==='meds'&&(seg.meds==='stock'||seg.meds==='salts'));
   $('.save').style.display=hide?'none':'flex';
   const L={'log:day':'Save day','log:episode':'Save episode','log:vitals':'Save vitals',
@@ -6998,6 +7128,7 @@ function setSeg(section,s){
   if(section==='meds'&&s==='stock')loadStock();
   if(section==='meds'&&s==='salts')loadSalts();
   if(section==='files')loadRecords(s);
+  if(section==='meals'&&s==='recipes')loadRecipes();
   if(section==='meds'&&s==='sched'){loadSchedMeds();loadSchedule();}
   $$(`.seg[data-seg="${section}"] button`).forEach(b=>b.classList.toggle('sel',b.dataset.s===s));
   $$(`#tab-${section} .sub`).forEach(el=>el.classList.remove('sel'));
@@ -7537,6 +7668,94 @@ async function loadCtx(){
   const labels=j.options.filter(o=>j.tags.indexOf(o.key)>=0).map(o=>o.label);
   $('#ctxSum').textContent=labels.length?labels.join(' · '):'nothing marked';
   card.classList.toggle('on',labels.length>0);
+}
+/* GUTLOG_V3240_RECIPES -- the recipe book in the Meals tab. */
+let RC=null,rcGroup='',rcStage='',rcOpen=null;
+async function loadRecipes(){
+  try{RC=await jget('/api/recipes');}catch(e){return;}
+  $('#rc_q').oninput=rcList;
+  if(rcOpen){openRecipe(rcOpen);return;}
+  rcList();
+}
+function rcChips(box,items,cur,set){
+  box.innerHTML='';
+  [{key:'',label:'All'}].concat(items).forEach(o=>{
+    const b=el('button','chip'+(cur===o.key?' sel':''),o.label);b.type='button';
+    b.onclick=()=>{set(o.key);rcList();};box.appendChild(b);});
+}
+function rcList(){
+  $('#rcOne').style.display='none';$('#rcList').style.display='';
+  rcChips($('#rc_groups'),RC.groups,rcGroup,v=>rcGroup=v);
+  rcChips($('#rc_stages'),RC.stages,rcStage,v=>rcStage=v);
+  const q=($('#rc_q').value||'').trim().toLowerCase();
+  const box=$('#rc_rows');box.innerHTML='';
+  const rows=RC.recipes.filter(r=>(!rcGroup||r.group===rcGroup)&&(!rcStage||r.stage===rcStage)&&
+    (!q||q.split(/\s+/).every(w=>r.name.toLowerCase().indexOf(w)>=0)));
+  if(!rows.length){box.appendChild(el('p','hint',RC.recipes.length?'No recipe matches.':'No recipes loaded yet.'));return;}
+  rows.forEach(r=>{
+    const b=el('button','rcrow');b.type='button';
+    b.appendChild(el('b','',r.name));
+    b.appendChild(el('small','',[r.serving,r.protein!=null?Math.round(r.protein)+' g protein':'',r.kcal!=null?Math.round(r.kcal)+' kcal':''].filter(Boolean).join(' · ')));
+    const t=el('div','');t.appendChild(el('span','rctag'+(r.stage==='rotation'?' ok':(r.stage==='avoid'?' warn':'')),r.stage_label));
+    if(r.onion||r.garlic)t.appendChild(el('span','rctag warn',r.has_onion_free?'onion/garlic · onion-free version':'onion/garlic'));
+    b.appendChild(t);b.onclick=()=>openRecipe(r.slug);box.appendChild(b);});
+}
+function rcShareText(r){
+  const L=[r.name,'For '+(r.serves||'?')+' · serving: '+r.serving,'','Ingredients:'];
+  r.ing.forEach(i=>L.push('- '+i[0]+(i[2]?' — '+i[2]:(i[1]?' — '+i[1]+' g':''))));
+  if(r.onion_free.length){L.push('','Without onion/garlic:');r.onion_free.forEach(s=>L.push('- '+s));}
+  L.push('','Method:');r.method.forEach((s,i)=>L.push((i+1)+'. '+s));
+  return L.join('\n');
+}
+async function openRecipe(slug){
+  let j;try{j=await jget('/api/recipes/'+encodeURIComponent(slug));}catch(e){toast('Could not open');return;}
+  if(!j.ok){toast(j.err||'Could not open');return;}
+  const r=j.recipe;rcOpen=slug;
+  $('#rcList').style.display='none';const box=$('#rcOne');box.style.display='';box.innerHTML='';
+  const back=el('button','btn ghost','← All recipes');back.type='button';
+  back.onclick=()=>{rcOpen=null;rcList();};box.appendChild(back);
+  const c=el('div','card');c.style.marginTop='10px';box.appendChild(c);
+  c.appendChild(el('p','q',r.name));
+  c.appendChild(el('p','hint','Serves '+(r.serves||'?')+' · one serving: '+r.serving+' · '+r.group_label+(r.yield_est?' · yield estimated':'')));
+  const n=el('div','rcnum');
+  [['kcal',r.kcal,''],['protein',r.protein,' g'],['fibre',r.fibre,' g'],['fat',r.fat,' g']].forEach(x=>{
+    const d=el('div','');d.appendChild(el('b','',x[1]==null?'–':(Math.round(x[1]*10)/10)+x[2]));d.appendChild(el('span','',x[0]));n.appendChild(d);});
+  c.appendChild(n);
+  c.appendChild(el('p','hint','Per serving, estimated from Indian food tables. '+(r.plant_points||0)+' plant points.'));
+  if(r.onion||r.garlic||r.high_fodmap.length)c.appendChild(el('span','rctag warn','High-FODMAP: '+(r.high_fodmap.join(', ')||'onion/garlic')));
+  else c.appendChild(el('span','rctag ok','No onion or garlic'));
+  if(r.onion_free.length){const o=el('div','rcof');o.appendChild(el('b','','Onion-free version'));
+    const u=el('ul','');r.onion_free.forEach(s=>u.appendChild(el('li','',s)));o.appendChild(u);c.appendChild(o);}
+  const st=el('div','card');box.appendChild(st);st.appendChild(el('p','lbl','Where it stands'));
+  const sc=el('div','chips');RC.stages.forEach(s=>{const b=el('button','chip'+(r.stage===s.key?' sel':''),s.label);b.type='button';
+    b.onclick=async()=>{try{await post('/api/recipes/'+encodeURIComponent(slug)+'/stage',{stage:s.key});toast(r.name+': '+s.label);
+      const x=RC.recipes.find(y=>y.slug===slug);if(x){x.stage=s.key;x.stage_label=s.label;}openRecipe(slug);}catch(err){toast(err.message);}};
+    sc.appendChild(b);});st.appendChild(sc);
+  const lg=el('div','card');box.appendChild(lg);lg.appendChild(el('p','lbl','Had it? Log it now'));
+  let q=1;const qc=el('div','chips');
+  [[0.5,'½ serving'],[1,'1 serving'],[1.5,'1½'],[2,'2 servings']].forEach(x=>{const b=el('button','chip'+(x[0]===q?' sel':''),x[1]);b.type='button';
+    b.onclick=()=>{q=x[0];qc.querySelectorAll('.chip').forEach(y=>y.classList.remove('sel'));b.classList.add('sel');};qc.appendChild(b);});
+  lg.appendChild(qc);
+  const go=el('button','btn primary','Log it');go.type='button';go.style.marginTop='10px';
+  go.onclick=async()=>{if(go.dataset.busy)return;go.dataset.busy=1;
+    try{const h=Number(mcNowHM().slice(0,2));const slot=h<11?'Breakfast':h<16?'Lunch':h<19?'Snack':'Dinner';
+      await post('/api/recipes/'+encodeURIComponent(slug)+'/log',{q:q,slot:slot,day:todayISO,mtime:mcNowHM()});
+      toast(r.name+' logged as '+slot.toLowerCase());openRecipe(slug);}
+    catch(err){go.dataset.busy='';toast(err.message);}};
+  lg.appendChild(go);
+  if(j.recipe.logged&&j.recipe.logged.length)lg.appendChild(el('p','hint','Last had: '+j.recipe.logged.map(x=>x.day+' '+x.mtime).join(', ')));
+  const ic=el('div','card');box.appendChild(ic);ic.appendChild(el('p','lbl','Ingredients (whole pot)'));
+  const ul=el('ul','rcing');const hi=r.high_fodmap.map(x=>x.toLowerCase());
+  r.ing.forEach(i=>{const li=el('li',hi.indexOf(String(i[0]).toLowerCase())>=0?'hi':'');
+    li.appendChild(el('span','',i[0]));li.appendChild(el('span','',i[2]||(i[1]?i[1]+' g':'')));ul.appendChild(li);});
+  ic.appendChild(ul);
+  const mc=el('div','card');box.appendChild(mc);mc.appendChild(el('p','lbl','Method'));
+  const ol=el('ol','rcsteps');r.method.forEach(s=>ol.appendChild(el('li','',s)));mc.appendChild(ol);
+  if(r.notes.length){mc.appendChild(el('p','lbl','Notes'));const nl=el('ul','rcsteps');r.notes.forEach(s=>nl.appendChild(el('li','',s)));mc.appendChild(nl);}
+  const sh=el('button','btn ghost','Send to the cook on WhatsApp');sh.type='button';sh.style.marginTop='6px';
+  sh.onclick=()=>{window.open('https://wa.me/?text='+encodeURIComponent(rcShareText(r)),'_blank');};
+  box.appendChild(sh);
+  window.scrollTo(0,0);
 }
 async function loadDown(){
   const card=$('#nowDown');

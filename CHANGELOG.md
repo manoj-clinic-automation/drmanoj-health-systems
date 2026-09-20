@@ -3,6 +3,48 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-20 — GutLog v3.24.0: the cooking, not just the calories
+
+v3.22.0 put his recipe collection into the food library so the meal cards
+could reach it — 52 dishes, but only as **names with numbers attached**. What
+actually goes in the pot, how it is made, and which version leaves the onion
+out were still in a file on a laptop: nowhere useful at the moment anyone is
+deciding what to cook.
+
+**Recipes** is a third segment on the Meals tab. Search, filter by group and
+stage; a card carries the per-serving figures (**estimated, and labelled so**),
+plant points, a high-FODMAP flag, the whole-pot ingredients with the
+high-FODMAP ones highlighted, the method, the notes — and where one exists,
+the **onion-free version beside the original** rather than replacing it,
+because which he wants depends on the day.
+
+**The stage is the only part that is his.** Five chips — Not tried, On trial,
+In rotation, Paused, Avoid — and that one field is judgement rather than
+imported content; everything else can be re-imported at will. So the seeder
+**refreshes a card's content and leaves the stage exactly as it found it**,
+asserted directly and mutation-controlled. A re-seed that silently reset
+"Avoid" to "Not tried" would look like a successful import while losing the
+one thing that took real experience to learn — which is this project's
+recurring failure shape again: the change that appears to succeed.
+
+**Log it** (½, 1, 1½, 2 servings) writes an **ordinary meal row through the
+same helper the meal cards use**, so totals, the Meals tab and the review
+export carry recipe meals without knowing they came from a recipe. The Meals
+Save bar is **hidden** on this segment: it belongs to the meal editor, does
+nothing here, and a Save button sitting over a recipe book invites a tap that
+cannot do what it looks like it does. Also mutation-controlled, because
+leaving it there passes every functional test.
+
+One table via SCHEMA, no migration, no `schema_version` bump, `library` and
+`meals` untouched. The seed dry run printed *52 cards, 52 new, 0 refreshed;
+library items to add: **0*** — that zero being the evidence that v3.22.0 had
+already put every dish in the library, so this release adds the cooking and
+not a second copy of the food. Gates: `test_recipes` **7/7** with **9 declared
+/ 9 seen to fail**, on invented cards and running the **real seeder** rather
+than a stand-in; every GutLog suite green on the server plus `ops/test_sso`
+11/11; `test_ui_now` 196 PASS / 0 FAIL. Verified live with GETs only — no meal
+logged, no stage changed. Detail in `gutlog/DOSSIER_GutLog.md`.
+
 ## 2026-09-20 — GutLog v3.23.0: the day around the trial
 
 **A food trial cannot be read honestly without knowing what else the day

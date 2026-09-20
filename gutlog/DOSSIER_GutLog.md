@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.23.0)
+# GutLog — DOSSIER (v3.24.0)
 
 Single source of truth. Update after every change.
 
@@ -377,6 +377,59 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## Recipes — v3.24.0
+
+v3.22.0 put his recipe collection into the `library` table so the meal cards
+could reach it: 52 dishes, but only as **names with numbers attached**. The
+cooking — what goes in, how it is made, which version leaves the onion out —
+was still in a file on a laptop, which is to say nowhere useful at the moment
+anyone is actually deciding what to cook.
+
+**Recipes** is a third segment on the Meals tab. Search; filter by group
+(*Fits now* / *Has an onion-free version* / *Occasional*) and by stage. A card
+carries per-serving kcal, protein, fibre and fat (**estimated, and labelled
+so**), plant points, a high-FODMAP flag, the whole-pot ingredients with the
+high-FODMAP ones highlighted, the method, the notes — and, where it exists,
+the **onion-free version set beside the original** rather than replacing it,
+because which one he wants depends on the day.
+
+### The stage is his, and the seed must never touch it
+
+Five stage chips: Not tried, On trial, In rotation, Paused, Avoid. That single
+field is the only part of a recipe card that is *his judgement* rather than
+imported content — everything else can be re-imported from the source file at
+any time.
+
+So `seed_recipes.py` **refreshes the content of a card it already has and
+leaves the stage exactly as it found it**. This is asserted directly: set a
+stage, re-seed, and the card's text must be updated while the stage survives.
+The mutation control removes that protection and requires the assertion to
+catch it, because a re-seed that silently reset "Avoid" to "Not tried" would
+look like a successful import and quietly lose the one judgement that took
+real experience to make.
+
+### Logging from the book
+
+**Log it** takes ½, 1, 1½ or 2 servings, stamps now, picks the slot from the
+clock, and writes an **ordinary meal row through the same `_log_meal`** the
+meal cards use. Nothing about the `meals` table changes, so totals, the Meals
+tab and the review export carry recipe meals without knowing they came from a
+recipe. **Send to the cook on WhatsApp** opens `wa.me` with the text.
+
+One interface detail with a reason: the Meals **Save bar is hidden on this
+segment**. It belongs to the meal editor and does nothing here, and a Save
+button sitting over a recipe book invites a tap that cannot do what it looks
+like it does. Mutation-controlled, because leaving it there is exactly the
+sort of thing that passes every functional test.
+
+One table, `recipes` (id, slug, name, grp, stage, stage_note, data, updated),
+created by `SCHEMA` — no migration step, no `schema_version` bump. The cards
+themselves are his diet, so the source file is uploaded for the seed and
+**deleted from the server afterwards**; the content lives in the database.
+
+**Not in this build**, deliberately: adding recipes by paste, photo or voice;
+versions; micronutrients; linking a recipe to a food trial.
 
 ## Day context — v3.23.0
 
@@ -947,6 +1000,20 @@ via OLS reverse proxy.
 > pulled that file out from under the browser suite mid-run on 2026-09-15 —
 > which aborts loudly, as designed, but wastes a fifteen-minute run.
 
+- `test_recipes.py` — **7/7 PASS** (2026-09-20, v3.24.0), on Windows and on the
+  server; **9 declared new assertions, 9 seen to fail** (7 by version, 2 by
+  mutation). The fixture uses **invented cards** and runs the **real seeder**,
+  not a stand-in for it, so the import path under test is the one that ships.
+  Asserts that the dry run writes nothing and `--apply` loads the cards and
+  their library items; that the list carries group, flags and stage; that a
+  card opens in full with ingredients, method and the onion-free version;
+  that **his stage survives a re-seed** while the card's content is refreshed;
+  that a serving logs as an ordinary meal (half a serving → a Snack at the
+  right protein); and that the segment exists while the API needs a login.
+  **Case 7 drives real Chromium**: search, open, onion-free version, method,
+  share, no page errors. The two mutations are the ones that would still look
+  right — the Meals Save bar left sitting over the recipe book, and any stage
+  string being accepted.
 - `test_day_context.py` — **7/7 PASS** (2026-09-20, v3.23.0), on Windows and on
   the server; **9 declared new assertions, 9 seen to fail** (7 by version, 2 by
   mutation). Asserts that the card offers the six circumstances and a fresh day
@@ -1307,6 +1374,35 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-20 v3.24.0 — Recipes. DEPLOYED 10:42 IST.** `app.py` sha256
+  `f8ec9dbf…`, 449,765 bytes on the server, **byte-identical to the repo
+  build**; pre-flight confirmed `GUTLOG_V3230_CONTEXT` present, no v3.24.0
+  marker, and sha256 equal to the repo before anything was copied. `--reverse`
+  reproduces v3.23.0 byte-for-byte (`9e17fe3f…`). Rollback:
+  `cp /root/gutlog/app.py.bak-v3240-20260920_104204 /root/gutlog/app.py`.
+  `patch_gutlog_v3240.py`, **9 anchors**, Jinja guard. Database backed up
+  before the patch (`health3.db.pre-v3240-20260920_104137`, integrity ok, 32
+  tables) and again by the seeder. **No `schema_version` bump** — `recipes` is
+  `CREATE TABLE IF NOT EXISTS` in `SCHEMA`; confirmed live: present with the
+  expected columns, 3.3.4 unchanged, 32 → 33 tables, and **`library` (160) and
+  `meals` (9) untouched**.
+  Server gates before the restart: **test_recipes 7/7**, day_context 7/7,
+  meal_cards 12/12, one_dose 5/5, a 18/18, b 16/16, c 20/20, d 18/18, e 13/13,
+  f 8/8, g 14/14, i 18/18, j 28/28, m 19/19, n 14/14, o 10/10, watch_tiles
+  7/7, `ops/test_sso.py` **11/11**. Offline: `test_ui_now` **196 PASS / 0
+  FAIL**, `test_ui_order` ALL PASS, negative control **9 declared, 9 seen**.
+  **The seed** (`seed_recipes.py`, dry run read first, its own backup) printed
+  exactly what was predicted — *52 cards, 52 new, 0 refreshed, 0 unchanged;
+  library items to add: 0* — the zero being the evidence that v3.22.0's
+  `seed_meals` had already put every one of them in the library, so this
+  release adds the cooking and not a second copy of the food. Applied: 52
+  added, 0 refreshed, library +0. The source file was deleted from the server
+  afterwards.
+  **Live, read-only — no meal logged and no stage changed** (GETs only):
+  `/api/recipes` 302 anonymous and 200 logged in with **52 recipes, groups
+  A 33 / B 12 / C 7, every stage `new`**; one card opens by slug in full
+  (10 ingredients, 4 method steps, 2 notes, per-serving figures, plant points,
+  the onion flags); the served page carries `meals-recipes`; no traceback.
 - **2026-09-20 v3.23.0 — Day context. DEPLOYED 10:31 IST.** `app.py` sha256
   `9e17fe3f…`, 436,209 bytes on the server, **byte-identical to the repo
   build**; pre-flight confirmed `GUTLOG_V3220_MEALS` present, no v3.23.0
