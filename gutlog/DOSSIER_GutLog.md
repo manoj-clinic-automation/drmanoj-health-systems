@@ -1849,6 +1849,28 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-22 record data, no code change.** Three owner-authorised data
+  changes, applied by `ops/apply_changes_20260922.py` (dry run by default,
+  idempotent, `sqlite3.backup()` taken first ->
+  `/root/backups/gutlog/health3-prechange-20260922_151209.db`). (1) The open
+  MORNING row of a legacy cardiac medicine closed at 2026-09-21; its EVENING
+  row had already been closed at 2026-09-11. (2) A bedtime medicine already in
+  the catalogue but never scheduled was given an open NIGHT row from
+  2026-09-20; the older lower-strength PRN entry was left untouched as
+  history. Both writes mirror `api_schedule_close` / `api_schedule_post`
+  exactly -- rows are closed, never edited in place, and `med_epoch` was
+  bumped once (6 -> 7). (3) The report of 2026-09-11, held at
+  `status='check'` with its values withheld because `patient_ok()` did not
+  recognise the name printed on it, was released: 15 values transcribed from
+  the printed report into `rec_labs` under the **existing** test names, units
+  and sections so the trend series join up rather than starting a parallel
+  one; `rec_docs` set to `filed` with a worker-style finding; and
+  `patient_match` added to the gitignored `records_profile.local.json` so the
+  same spelling is not held back again. Flags set from the ranges printed
+  beside each value, nothing rounded or reclassified. No tracked file changed
+  except this one. Suites re-run green after the writes (11/11, 8/8, 4/4,
+  5/5) and `/healthz` still reads `ok 3.30.0`. Mirror re-run: labs 340 -> 355,
+  medicine events 14 -> 16, `meds_now` still 6.
 - **2026-09-20 v3.26.0 — food trials as periods. DEPLOYED 11:08 IST.**
   `app.py` sha256 `37ea8d23…`, 478,041 bytes on the server, **byte-identical to
   the repo build**; pre-flight confirmed `GUTLOG_V3250_PLAN` present, no
