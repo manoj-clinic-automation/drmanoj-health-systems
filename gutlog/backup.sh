@@ -36,5 +36,19 @@ tar czf "$DEST/gutlog-files-$STAMP.tar.gz" \
   --exclude='backup_*' -C /root gutlog
 echo "files -> $DEST/gutlog-files-$STAMP.tar.gz"
 
+# GUTLOG_V3280_PLANS. The plan documents live in $APP/plans_files, which is
+# inside the folder the tar above already walks -- so they are carried without
+# a new rule, and no exclusion matches them. But "it is already carried" is
+# exactly what was believed about the database that turned out not to be
+# backed up at all (CLAUDE.md rule 4). So count them and SAY so, and refuse
+# quietly succeeding if any are missing.
+PLANS_IN=$(tar tzf "$DEST/gutlog-files-$STAMP.tar.gz" | grep -c '^gutlog/plans_files/..*' || true)
+PLANS_ON=$(find "$APP/plans_files" -type f 2>/dev/null | wc -l)
+echo "plans -> $PLANS_IN of $PLANS_ON plan document(s) in the tarball"
+if [ "$PLANS_ON" -gt 0 ] && [ "$PLANS_IN" -lt "$PLANS_ON" ]; then
+  echo "BACKUP INCOMPLETE: plan documents are missing from the tarball" >&2
+  exit 1
+fi
+
 find "$DEST" -name '*-20*.db' -mtime +30 -delete
 find "$DEST" -name 'gutlog-files-*.tar.gz' -mtime +30 -delete

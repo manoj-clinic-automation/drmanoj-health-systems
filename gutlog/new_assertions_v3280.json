@@ -1,0 +1,41 @@
+{
+ "_": ["GutLog v3.28.0 -- the Plans page. Every assertion fails on v3.27.2 simply because /plans does not exist there, so a version control is available for all eight and proves almost nothing about five of them. Only 01, 02 and 05 are left on it -- they are about a page and a response that genuinely did not exist. The five that guard a PROPERTY (PDF by magic bytes, the login gate, the status whitelist, archive keeping the file, the hashed stored name) are each broken on purpose in the current build instead, because that is the only way to show the assertion responds to the thing it claims to measure. 07 is declared twice: hiding and keeping are two different promises."],
+ "suite": "test_v3280_plans.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3280_plans.py",
+ "assertions": [
+  {"name": "01 a plan is added and the page shows it", "control": "version"},
+  {"name": "02 the row carries the date text and both buttons", "control": "version"},
+  {"name": "05 the file is served inline and never cached", "control": "version"},
+
+  {"name": "03 a non-PDF is refused however it is named", "control": "mutation",
+   "mutation": {"id": "extonly", "why": "the upload trusts the .pdf extension instead of the magic bytes",
+    "find": "    return head == b\"%PDF-\"",
+    "replace": "    return str(fs.filename or \"\").lower().endswith(\".pdf\")"}},
+
+  {"name": "04 the file is refused when logged out", "control": "mutation",
+   "mutation": {"id": "nologin", "why": "the plan document is served without a session",
+    "find": "@app.route(\"/plan/<int:pid>/file\")\n@login_required\ndef plan_file(pid):",
+    "replace": "@app.route(\"/plan/<int:pid>/file\")\ndef plan_file(pid):"}},
+
+  {"name": "06 status can be changed, to a known status only", "control": "mutation",
+   "mutation": {"id": "anystatus", "why": "any string is accepted as a status",
+    "find": "    if status not in PLAN_STATUSES:\n        return jsonify(ok=False, err=\"Unknown status.\"), 400\n    arch = r[\"archived\"]",
+    "replace": "    arch = r[\"archived\"]"}},
+
+  {"name": "07 archive hides the plan and keeps the file", "control": "mutation",
+   "mutation": {"id": "hidenot", "why": "an archived plan stays in the list",
+    "find": "    if not include_archived:\n        sql += \"WHERE p.archived = 0 \"",
+    "replace": "    if False:\n        sql += \"WHERE p.archived = 0 \""}},
+
+  {"name": "07 archive hides the plan and keeps the file", "control": "mutation",
+   "mutation": {"id": "archdel", "why": "archiving deletes the document instead of keeping it",
+    "find": "    db().execute(\"UPDATE plans SET title=?, status=?, archived=? WHERE id=?\",\n                 (title[:200], status, arch, pid))",
+    "replace": "    if arch:\n        for _r in db().execute(\"SELECT stored_name FROM plan_files WHERE plan_id=?\", (pid,)).fetchall():\n            try:\n                os.remove(os.path.join(PLANS_DIR, _r[\"stored_name\"]))\n            except OSError:\n                pass\n    db().execute(\"UPDATE plans SET title=?, status=?, archived=? WHERE id=?\",\n                 (title[:200], status, arch, pid))"}},
+
+  {"name": "08 the stored name is the hash, the uploaded name is kept", "control": "mutation",
+   "mutation": {"id": "uploadname", "why": "the document is stored under the name it was uploaded with",
+    "find": "    stored = sha + \".pdf\"",
+    "replace": "    stored = secure_filename(fs.filename) or (sha + \".pdf\")"}}
+ ]
+}

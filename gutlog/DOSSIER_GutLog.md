@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.27.2)
+# GutLog — DOSSIER (v3.28.0)
 
 Single source of truth. Update after every change.
 
@@ -384,6 +384,96 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## Plans — v3.28.0 (`GUTLOG_V3280_PLANS`, 2026-09-22)
+
+`/plans`, linked from the header. A dated plan document he can open on the
+phone and put into the system share sheet. First version holds and shares
+PDFs; the tables are shaped for what comes next.
+
+**Titles name medicines.** They live in the database and the PDF only —
+never in tracked code, fixtures, docstrings or commit messages. The suite
+uses "Plan A"; `seed_plan.py` takes the title as an argument for the same
+reason. See CLAUDE.md §5d.
+
+### What it does
+- **List**: newest first by first-considered date, each row with the title,
+  "First considered: DD-Mon-YYYY", a status badge (Draft / Active / Closed)
+  and **Open** / **Share**.
+- **Open**: the PDF inline, `login_required`, `Cache-Control: no-store`,
+  `X-Content-Type-Options: nosniff`, `Content-Disposition: inline`.
+  `?dl=1` gives the same file as an attachment.
+- **Share**: `navigator.share({files:[File]})` behind `navigator.canShare`,
+  so WhatsApp and mail appear in the sheet. **There is no public link and no
+  unauthenticated route** — Share hands over the BYTES, so there is nothing
+  to leak and nothing to revoke. Where file sharing is unsupported the
+  fallback is a plain download of the same bytes, never a URL.
+- **Add / rename / change status / archive.** No delete: archiving hides the
+  row and keeps the file, and the file stays openable.
+
+### How the file is handled
+Stored in **`/root/gutlog/plans_files/`**, beside the live database, under a
+**sha256 name**; the uploaded name is kept only as the download filename.
+PDF is enforced by the **`%PDF-` magic bytes, not the extension** — a
+non-PDF called `.pdf` is refused, and refused *before* the plan row is
+written, so nothing is left behind. 20 MB cap. Writes go through a `.part`
+file and `os.replace`.
+
+### Three deliberate departures from the brief
+1. **Tables in SCHEMA, not `_migrate()`.** `db()` runs
+   `executescript(SCHEMA)` on every connection, so `CREATE TABLE IF NOT
+   EXISTS` there always applies. `_migrate()` returns early whenever
+   `schema_version` is current, so a table added there appears only if the
+   version constant is bumped too — one more thing to get right, for no gain.
+2. **The date field is three lists (day / month / year), not
+   `input[type=date]`.** v3.27.0's MutationObserver converts
+   `input[type=time]` *only*. Widening it to dates would change every date
+   box in the app — a page-wide regression for one new form. Three lists
+   honour the Fold rule without touching anything else.
+3. **The list is rendered server-side**, and the JS only acts on it. The
+   first draft built the list in the browser from `/api/plans` and the suite
+   caught it at once: fetching `/plans` returned a shell with no title and no
+   buttons. That is the v3.4.0 lesson in miniature — a list only JS can draw
+   is a list no server suite can see, and a page that shows nothing if the
+   script fails.
+
+### The header had no room for a third link
+Adding **Plans** beside Account and Lock pushed the main page to **327 px
+against a 300 px viewport**, and `test_v3270` assertion 07 failed on the
+sideways scroll — which is exactly what that assertion is for. The bar now
+wraps at that width. *Note for the next person: there are two near-identical
+header blocks in `app.py`, and the first belongs to `ACCOUNT_PAGE`. Patching
+that one changed the Account page and left the fault untouched — and the
+suite reported **the same 327 px**, which is what gave it away. `APP_PAGE`'s
+block is the one with `z-index:5` and 10 px padding.*
+
+### Backup
+`plans_files/` is inside the folder `backup.sh` already tars, so it is
+carried with no new rule and no exclusion matches it. But "it is already
+carried" is what was believed about the database that turned out not to be
+backed up at all, so `backup.sh` now **counts** the documents in the finished
+tarball against the ones on disk, prints `plans -> N of N`, and exits non-zero
+if any are missing. Verified by hand on 2026-09-22: extracted from the
+tarball, the document's sha256 equals its own filename and it still begins
+`%PDF-`. Rollback `backup.sh.bak-plans-20260922_084642`.
+
+### Evidence
+`test_v3280_plans.py` 8/8, negative control **9/9 seen to fail** — 01, 02 and
+05 by version, and five properties broken on purpose in the current build
+because a version control proves nothing about them when the whole page is
+new: `extonly` (trust the extension), `nologin` (serve without a session),
+`anystatus` (accept any status), `hidenot` and `archdel` (archive stops
+hiding / starts deleting), `uploadname` (store under the uploaded name).
+Assertion 07 is declared twice: hiding and keeping are two promises.
+23 suites green on the server before the restart. Deployed 08:44 IST,
+`app.py` sha256 `0dd109b8…`, rollback `app.py.bak-v3280-20260922_084418`,
+DB backup `health3.db.pre-v3280-20260922_084418`.
+
+### Later, not now
+`plans.started_on` and `plans.notes` exist and are unused; `plan_files` is a
+table rather than columns so revised versions can stack, newest first, which
+is what `ix_plan_files_plan` is for. Next: dated regimen steps tied to a
+plan, and checkpoints on the Now tab.
 
 ## A health endpoint that exists — v3.27.2 (`GUTLOG_V3272_HEALTHZ`, 2026-09-20)
 

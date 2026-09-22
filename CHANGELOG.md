@@ -3,6 +3,64 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-22 — GutLog v3.28.0, a Plans page that holds and shares a document
+
+A dated plan document now lives in the app at `/plans`, so it opens on the
+phone and goes straight into the system share sheet. First version holds and
+shares PDFs; the tables are shaped for the tracking this is the start of.
+
+**Share hands over the bytes, not a link.** `navigator.share` with the file
+itself, and where that is unsupported the fallback is a plain download of the
+same bytes. There is deliberately no public URL and no unauthenticated route
+to a plan document, so there is nothing to leak and nothing to revoke. The
+file is served inline behind the login with `no-store`, stored under a
+**sha256 name** in a directory beside the live database, and accepted only if
+it really begins `%PDF-` — a non-PDF named `.pdf` is refused, and refused
+before the row is written, so nothing is left behind. Archiving hides a plan
+and keeps the file; there is no delete.
+
+**Something worth flagging before the feature itself.** The plan PDF arrived
+in the working folder **neither tracked nor ignored**, so `git add -A` in the
+publish would have staged it — and its *filename alone* named a medicine.
+NO_SECRETS refused it, measured rather than assumed. But note which check
+did: **D**, the tracked-binary rule. The two clinical checks both reported
+clean, because they read text and a PDF is bytes, and neither has ever looked
+at a filename. `*.pdf` is now gitignored, which is the remedy; D stays the
+backstop.
+
+Three departures from the brief, each recorded in the dossier with its
+reason: the tables go in SCHEMA rather than `_migrate()` (which returns early
+whenever the schema version is current); the date field is three lists rather
+than a native picker, because the existing observer converts time boxes only
+and widening it would touch every date box in the app; and the list is
+rendered on the server rather than by the browser.
+
+That last one was not a judgement call — the suite made it. The first draft
+built the list in JavaScript, and fetching the page returned a shell with no
+title and no buttons in it. Same shape as the v3.4.0 lesson: a list only the
+browser can draw is a list no server test can see, and a page that shows
+nothing if the script fails.
+
+The header then had no room for a third link: adding **Plans** pushed the
+page to 327 px against a 300 px screen and the folded-width assertion failed,
+which is what it is there for. Fixing it took two goes, because there are two
+near-identical header blocks in the file and the first belongs to the Account
+page. The tell was that the suite reported *the same* 327 px after the first
+fix — an unchanged number is not a stubborn bug, it is the wrong file.
+
+Negative control 9/9 seen to fail, with five of them broken on purpose in the
+current build rather than left to a version control: when the whole page is
+new, "it fails without the patch" says nothing about whether the assertion
+measures what it claims. 23 suites green on the server before the restart.
+`/healthz` reads `ok 3.28.0`.
+
+The backup carries the documents without a new rule, since they sit inside
+the folder already being tarred — but "already carried" is what was believed
+about the database that turned out not to be backed up at all, so the script
+now counts them in the finished tarball, says `plans -> N of N`, and fails if
+any are missing. Checked by extracting one: its sha256 still equals its own
+filename.
+
 ## 2026-09-20 — FitLog v1.7.1, the health check stops lying
 
 `/health` had reported **version 1.3.1 through four releases** — v1.4.0,

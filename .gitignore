@@ -86,3 +86,20 @@ gutlog/*.png
 Claude outputs/
 fitlog-ingest/files.zip
 
+# ---------------------------------------------------------------------------
+# 2026-09-22. PLAN AND REPORT DOCUMENTS.
+#
+# A plan PDF for GutLog's /plans page arrived in fitlog-ingest/ and was
+# NEITHER tracked NOR ignored, so `git add -A` in PUBLISH_HEALTH.bat would
+# have staged it. Its FILENAME alone named a medicine.
+#
+# It would have been refused - NO_SECRETS check D blocks any tracked binary
+# outside the two-icon allowlist, and it was measured doing exactly that
+# before this line was written. But note WHICH check caught it: the clinical
+# checks B and C both reported clean, because they read text and a PDF is
+# bytes. They never look at a filename. D was the only thing standing there.
+#
+# Per CLAUDE.md 5d the documents live on the server (/root/gutlog/plans_files/)
+# and in the owner's PC folder. Never here.
+*.pdf
+
