@@ -3,6 +3,59 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-22 — GutLog v3.29.0, the nutrition history he could not find
+
+He said he had logged food for two or three days and could not navigate to
+where the previous days were. The brief asked to establish the facts before
+building anything, and the facts were not "missing feature".
+
+**The control was there and did nothing.** The Meals tab had a date box
+beside the day totals — and that box had no change listener anywhere in the
+file. It was never a day chooser; it was only the date a *new* meal would be
+filed under. The totals themselves were summed in the browser from a
+server call that already accepted any day, and the meal list with Edit,
+Again and Delete lived on the Now tab hardcoded to today. So a past day
+could be computed but never seen, and the one thing that looked like it
+should show you one silently refreshed nothing. He was not failing to find
+the feature. He was using the thing that looked like it.
+
+**`/nutrition`** is the history: newest first, fourteen days with a link for
+thirty, and per day the kcal, the protein against his plan's target, the
+fibre against 30 g and the meal count. A day with nothing logged says **not
+logged** rather than 0 kcal — those are different facts and only one of them
+is true. A day with fewer meals than usual is marked **partial**, so a small
+total is not read as a small day. Tapping a row opens that day on the Meals
+tab, which now has a stepper: previous and next either side of the date,
+next disabled on today, and the date itself opening three lists rather than
+the phone's own picker. The card, the meal list and every meal's actions
+follow the chosen day.
+
+**The totals moved to the server**, to one function that the card, the
+history and both APIs all read. The rule was that the two can never
+disagree; the way to keep that is to leave only one calculation in
+existence, not two that are checked against each other. Fourteen days
+compared on his real data afterwards: no mismatches.
+
+His actual history, once it could be seen: four days logged, not two or
+three — and **18 Sep is 110 kcal over two meals**, which is exactly the day
+the "partial" label exists for.
+
+Two faults the suite caught rather than a reviewer. The first version
+defined every stepper function and **bound none of them**, so the arrows
+drew and did nothing — the same fault as the date box the release exists to
+fix. Then a bold date in the log form pushed the folded screen to 316 px,
+because a `1fr 1fr` grid will not shrink below its content and the time
+picker underneath has a hard minimum; the form's date cell is gone entirely
+now, since the stepper above already states the day.
+
+Negative control 13/13 seen to fail, seven by mutation — an unlogged day
+printed as zero, a thin day left unlabelled, the history working the totals
+out a second way, the card rounding its own way, the card stuck on today,
+past meals losing their actions. 24 suites green on the server before the
+restart. `/healthz` reads `ok 3.29.0`.
+
+A second plan document was loaded through the same seed path as the first.
+
 ## 2026-09-22 — GutLog v3.28.0, a Plans page that holds and shares a document
 
 A dated plan document now lives in the app at `/plans`, so it opens on the

@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.28.0)
+# GutLog — DOSSIER (v3.29.0)
 
 Single source of truth. Update after every change.
 
@@ -384,6 +384,97 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## Nutrition history — v3.29.0 (`GUTLOG_V3290_NUTRITION`, 2026-09-22)
+
+**`https://health.dr-manoj.in/nutrition`**, and a Meals tab that answers to
+a date.
+
+### What was actually wrong — worth reading before changing any of it
+He said he could not find where to see previous days. The brief asked to
+establish the facts before building, and the facts were not what "missing
+feature" suggests:
+
+- The day totals card on the Meals tab read `/api/meals/today/<day>` and
+  **summed it in JavaScript**.
+- Beside it sat `#ml_day`, an `input[type=date]` — with **no change listener
+  anywhere in the file.** It was never a day chooser. It was only the date a
+  *new* meal would be filed under, and changing it refreshed nothing at all.
+- The meal list with Edit / Again / Delete lives on the **Now** tab and was
+  hardcoded to `todayISO`.
+- There was no history view of any kind.
+
+So a past day could be **computed** but never **seen**, and the one control
+that looked like it should show you one silently did nothing. He was not
+failing to find the feature; he was using the thing that looked like it.
+
+### What it does now
+- **Totals moved to the server**, `nut_day()`. The day card, the history
+  page and both APIs read that one function, so they cannot disagree —
+  there is no second calculation left to drift. The `meals` table already
+  stores per-meal protein/kcal/fibre computed on the server at insert, so a
+  day is a plain `SUM`; nothing is worked out a second way.
+- **Day stepper** on the Meals tab: previous / next either side of the date,
+  **next disabled on today**, and the date itself opens three lists
+  (day / month / year) — not a native picker, because the Fold cover screen
+  hides that dialog's own button. `#ml_day` stays in the DOM, hidden, as the
+  value `saveMeal()` reads, exactly as v3.27.0 does with time boxes.
+- **The card and a per-day meal list follow the chosen day**, and every meal
+  keeps Edit / Again / Delete on any day. Editing a past meal opens the same
+  card editor the Now tab uses, loaded for *that* day; tapping **Now** in the
+  nav always resets the card day to today, so stepping back to look at
+  Sunday cannot leave tomorrow's breakfast filed under it.
+- **`/nutrition`**: server-rendered, newest first, 14 days with a link for
+  30. Per row the date, kcal, protein against the plan's target, fibre
+  against 30 g, and the meal count. A day with nothing logged says **"not
+  logged"** and never 0 kcal; a day with fewer meals than usual is marked
+  **"partial"**, so a low total is not read as a low-intake day. Tapping a
+  row opens that day in the stepper (`/?open=meals&day=…`).
+
+Targets come from his own plan (`_protein_target()`, and `targets.fibre`
+with 30 g as the fallback). "Usual meals" is the plan's `main_meals` count,
+else 3 — used **only** to label a thin day, never to score one. Values stay
+marked estimated.
+
+### Live read-back, 2026-09-22
+Four days have meals, not the two or three he remembered: 21 Sep 2049 kcal /
+80.6 g protein / 34.0 g fibre over 6 meals, 20 Sep 2099 / 94.7 / 32.5 over
+6, 17 Sep 1025 / 55.7 / 16.5 over 3, and **18 Sep 110 kcal over 2 meals,
+labelled partial** — which is exactly the case the label exists for. The
+other ten days in the window say "not logged". All 14 days compared between
+the card and the history: **0 mismatches**.
+
+### Two things the suite caught
+1. **The first version wired nothing.** Every stepper function was defined
+   and not one control was bound, so the arrows drew and did nothing — the
+   same fault as the date box this release exists to fix. They are bound in
+   one IIFE at the end of the block, after the markup is parsed.
+2. **A bold date in the form broke the folded screen** (316 px against 300).
+   `.row2` is `1fr 1fr` and grid items will not shrink below their content,
+   so the text pushed the Time cell's two 72 px-minimum selects off the
+   edge. The form's Date cell is gone entirely instead — the stepper above
+   already states the day — which restores the original geometry rather than
+   fighting it.
+
+### Evidence
+`test_v3290_nutrition.py` **11/11** — the history page by plain fetch, the
+stepper driven in Chromium at 300 px, because a server fetch of a
+JS-rendered tab proves nothing about it. Negative control **13/13 seen to
+fail**, seven of them by mutation: `zeroday`, `nopartial`, `twosums`,
+`cardsum`, `stucktoday`, `noactions`, `cardzero`. Assertions 04 and 08 are
+each declared twice — agreeing with the card and reading the same function
+are two promises, and so are following the day and keeping the actions.
+24 suites green on the server before the restart. Deployed 09:58 IST,
+`app.py` sha256 `1461cba7…`, rollback `app.py.bak-v3290-20260922_095851`,
+DB backup `health3.db.pre-v3290-20260922_095851`.
+
+### Plan #2
+A second plan document, first considered 22-Sep-2026, status Active, loaded
+through `seed_plan.py` (the upload route, not hand-written rows) as plan
+id 2. The title stays in the database and the PDF, per §5d — it is not
+repeated here even though this one names no medicine, because "check each
+title before writing it down" is a rule nobody applies reliably. Backup
+re-run afterwards: `plans -> 2 of 2`.
 
 ## Plans — v3.28.0 (`GUTLOG_V3280_PLANS`, 2026-09-22)
 

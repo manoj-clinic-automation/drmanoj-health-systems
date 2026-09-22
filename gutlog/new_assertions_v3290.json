@@ -1,0 +1,49 @@
+{
+ "_": ["GutLog v3.29.0 -- nutrition history and a Meals tab that answers to a date. Everything here fails on v3.28.0 because /nutrition and the stepper are not there at all, so a version control is available for all eleven and says almost nothing about the ones that guard a PROPERTY. Version is kept only where the thing itself is new: the page, its window, its order, the stepper, the deep link and the folded width. The four that carry a promise -- one shared total, an unlogged day that is not zero, a thin day labelled, and a past day's list with its actions -- are broken on purpose in the current build instead. 04 is declared twice: agreeing with the card is one promise, and reading the SAME function rather than a second copy is the other."],
+ "suite": "test_v3290_nutrition.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3290_nutrition.py",
+ "assertions": [
+  {"name": "01 history shows a logged day's kcal, protein and fibre", "control": "version"},
+  {"name": "05 fourteen days by default, thirty on request, login required", "control": "version"},
+  {"name": "06 the history is newest first", "control": "version"},
+  {"name": "07 the Meals tab opens on today with the next arrow disabled", "control": "version"},
+  {"name": "10 History is reachable and a day link opens that day", "control": "version"},
+  {"name": "11 the stepper fits 300 px", "control": "version"},
+
+  {"name": "02 a day with no meals reads 'not logged', never zero", "control": "mutation",
+   "mutation": {"id": "zeroday", "why": "a day with nothing logged is printed as a day of zero intake",
+    "find": "        if not d[\"logged\"]:\n            out.append('<span class=\"nv off\">not logged</span>')\n        else:",
+    "replace": "        if False:\n            out.append('<span class=\"nv off\">not logged</span>')\n        else:"}},
+
+  {"name": "03 a thin day is labelled partial, a full day is not", "control": "mutation",
+   "mutation": {"id": "nopartial", "why": "a day with fewer meals than usual is not marked, so a low total reads as low intake",
+    "find": "            \"logged\": n > 0, \"partial\": 0 < n < usual, \"usual_meals\": usual}",
+    "replace": "            \"logged\": n > 0, \"partial\": False, \"usual_meals\": usual}"}},
+
+  {"name": "04 the history total equals the day card total, day for day", "control": "mutation",
+   "mutation": {"id": "twosums", "why": "the history stops reading the day function and works the totals out a second way",
+    "find": "    return [nut_day((end - timedelta(days=i)).isoformat()) for i in range(days)]",
+    "replace": "    out = []\n    for i in range(days):\n        d = nut_day((end - timedelta(days=i)).isoformat())\n        d[\"kcal\"] = int(d[\"kcal\"] * 0.9)\n        out.append(d)\n    return out"}},
+
+  {"name": "04 the history total equals the day card total, day for day", "control": "mutation",
+   "mutation": {"id": "cardsum", "why": "the day card rounds its own way instead of serving what the shared function returned",
+    "find": "def api_nut_day(day):\n    t = nut_day(day)",
+    "replace": "def api_nut_day(day):\n    t = nut_day(day)\n    t[\"protein\"] = round(t[\"protein\"] + 0.5, 1)"}},
+
+  {"name": "08 stepping back shows that day's totals and its meals", "control": "mutation",
+   "mutation": {"id": "stucktoday", "why": "the card reads today whatever day the stepper is on -- the fault this release exists to fix",
+    "find": "async function loadMealTotals(){\n  const d=mlDay();\n  const j=await jget('/api/nutrition/day/'+d);",
+    "replace": "async function loadMealTotals(){\n  const d=todayISO;\n  const j=await jget('/api/nutrition/day/'+d);"}},
+
+  {"name": "08 stepping back shows that day's totals and its meals", "control": "mutation",
+   "mutation": {"id": "noactions", "why": "a meal on a past day loses Edit, Again and Delete",
+    "find": "    acts.appendChild(ed);acts.appendChild(ag);acts.appendChild(de);\n    line.appendChild(acts);",
+    "replace": "    if(d===todayISO){acts.appendChild(ed);acts.appendChild(ag);acts.appendChild(de);}\n    line.appendChild(acts);"}},
+
+  {"name": "09 an empty day is not shown as zero intake on the card", "control": "mutation",
+   "mutation": {"id": "cardzero", "why": "the card prints 0.0 g protein for a day nothing was logged on",
+    "find": "  if(!j.logged){\n    $('#dayTotals').innerHTML=`${when}: <b>not logged</b>`;",
+    "replace": "  if(false){\n    $('#dayTotals').innerHTML=`${when}: <b>not logged</b>`;"}}
+ ]
+}

@@ -13,7 +13,7 @@ Clinic automation lives separately in `drmanoj-clinic-automation` — do not mix
 ## Apps & ports
 | App | Subdomain | Port | DB (live path) | Health check |
 |---|---|---|---|---|
-| GutLog v3.28.0 | health.dr-manoj.in | 8020 | /root/gutlog/health3.db, plan PDFs in /root/gutlog/plans_files/ | `/healthz` → `ok 3.28.0` (text/plain) |
+| GutLog v3.29.0 | health.dr-manoj.in | 8020 | /root/gutlog/health3.db, plan PDFs in /root/gutlog/plans_files/ | `/healthz` → `ok 3.29.0` (text/plain) |
 | RxGuard v1.8.2 | rx.dr-manoj.in | 8031 | /root/rxguard/ | `/healthz` → `ok 1.8.2` (text/plain) |
 | FitLog v1.7.1 | fit.dr-manoj.in | 8040 | /root/fitlog/fitlog.db (verified on server 2026-09-10) | `/health` → `{"app","version","ok"}`. Note the spelling: **`/health`, not `/healthz`** |
 
