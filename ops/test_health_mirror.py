@@ -21,6 +21,9 @@ from datetime import date, timedelta
 
 RESULTS = []
 
+# What the server calls a stored document: a hash, not a name anyone reads.
+STORED_DOC = "0487aa13be0a4c2eb65269040b20f208.pdf"
+
 
 def check(name, fn):
     try:
@@ -44,6 +47,12 @@ def main():
     os.makedirs(plans_dir)
     plan_pdf = os.path.join(plans_dir, "a" * 64 + ".pdf")
     open(plan_pdf, "wb").write(b"%PDF-1.4\ntrailer<<>>\n%%EOF\n")
+
+    # the uploads vault: a report stored under a hashed name, as on the server
+    uploads = os.path.join(w, "uploads")
+    os.makedirs(uploads)
+    open(os.path.join(uploads, STORED_DOC), "wb").write(
+        b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF\n")
 
     plan_cfg = os.path.join(w, "plan.json")
     json.dump({"targets": {"protein": 100, "fibre": 30},
@@ -114,6 +123,10 @@ def main():
               "VALUES(?,3,'Left',4,2,'Test symptom','x')", (D(2),))
     g.execute("INSERT INTO rec_labs(day,test,section,value,num,unit,ref,lab,created) "
               "VALUES('2026-09-07','Test analyte','Biochemistry','5.4',5.4,'mmol/L','3.5-6.0','Test lab','x')")
+    # a report already on the server: stored under a hash, readable name in `orig`
+    g.execute("INSERT INTO rec_docs(day,kind,title,source,finding,stored,orig,sha,"
+              "status,created) VALUES('2026-09-07','Blood','Test report','Test lab',"
+              "'nothing to note',?,'scan001.pdf','deadbeef','filed','x')", (STORED_DOC,))
     g.execute("INSERT INTO plans(title,first_considered,status,archived,created_at) "
               "VALUES('Plan A',?,'Active',0,'x')", (D(0),))
     g.execute("INSERT INTO plan_files(plan_id,stored_name,original_name,bytes,sha256,uploaded_at) "
@@ -147,7 +160,8 @@ def main():
 
     # --- run the mirror ----------------------------------------------------
     os.environ.update(MIRROR_GUTLOG_DB=gdb, MIRROR_FITLOG_DB=fdb,
-                      MIRROR_PLANS_DIR=plans_dir, MIRROR_PLAN_FILE=plan_cfg)
+                      MIRROR_PLANS_DIR=plans_dir, MIRROR_PLAN_FILE=plan_cfg,
+                      MIRROR_UPLOAD_DIR=uploads)
     # MIRROR_TOOL lets NC_MIRROR.py point this suite at a deliberately broken
     # copy. Without it the suite would always test the real file and a
     # mutation control could prove nothing.
@@ -163,13 +177,14 @@ def main():
 
     # ---------------------------------------------------------------- 01
     def t01():
-        for h in ("# Health record snapshot", "## Medicines now",
-                  "## Sleep, last 30 nights", "## Vitals, last 30 days",
-                  "## Gut, last 30 days", "## Meals, last 30 days",
-                  "## Labs, every result on record", "## Plans"):
+        want = ("# Health record snapshot", "## Medicines now",
+                "## Sleep, last 30 nights", "## Vitals, last 30 days",
+                "## Gut, last 30 days", "## Meals, last 30 days",
+                "## Labs, every result on record", "## Plans", "## Documents")
+        for h in want:
             assert h in MD, "the snapshot has no %r section" % h
         assert "IST" in MD.split("\n")[2], "no generation time at the top"
-        return "all eight sections present, generated time at the top"
+        return "all %d sections present, generated time at the top" % len(want)
     check("01 every section the brief asks for is in the snapshot", t01)
 
     # ---------------------------------------------------------------- 02
@@ -331,10 +346,30 @@ def main():
         # first version of this assertion spelled seven of them out, in the
         # file whose whole job is to prove the tool spells none. NO_SECRETS
         # check C refused the commit and was right to.
+        #
+        # NOT APPLICABLE is not the same as DID NOT RUN, and the difference
+        # matters here. This assertion guards a property of the REPOSITORY --
+        # that a tracked file names no medicine. On the server there is no
+        # repository and nothing is tracked, so there is nothing to guard and
+        # saying so is honest. But if a checkout IS here and the list is
+        # missing, the check could not run, and a check that did not run is
+        # not a check that passed. The server suite was red on this until the
+        # two cases were told apart.
+        # "A repository is here" means the GATE is here -- .git, or the very
+        # script this assertion backs up. Not merely a directory called
+        # tools/: the server has one of those for other reasons, which made
+        # the first attempt at this claim a checkout that was not there and
+        # left the server suite red.
         terms_path = os.path.join(repo, "tools", "clinical_terms.local.txt")
+        in_repo = (os.path.isdir(os.path.join(repo, ".git"))
+                   or os.path.exists(os.path.join(repo, "tools", "NO_SECRETS.py")))
+        if not in_repo:
+            return ("NOT APPLICABLE: no repository here, so nothing is tracked "
+                    "and there is no repository property to guard")
         assert os.path.exists(terms_path), (
-            "the clinical terms list is not here, so this check DID NOT RUN. "
-            "A check that did not run is not a check that passed.")
+            "a checkout is here but the clinical terms list is not, so this "
+            "check DID NOT RUN. A check that did not run is not a check that "
+            "passed.")
         terms = [t.strip().lower() for t in open(terms_path, encoding="utf-8")
                  if t.strip() and not t.strip().startswith("#")]
         assert len(terms) > 20, "the terms list looks empty: %d entries" % len(terms)
@@ -348,6 +383,40 @@ def main():
         return ("checked against %d terms; the tool names none, and the night "
                 "window is a clock rule" % len(terms))
     check("12 no molecule name lives in the tracked tool", t12)
+
+    # ---------------------------------------------------------------- 13
+    def t13():
+        block = MD.split("## Documents")[1]
+        assert "Test report" in block, "the document is not listed"
+        assert "07-Sep-2026" in block, "the document's date is not DD-Mon-YYYY"
+        copied = os.listdir(os.path.join(snap, "documents"))
+        assert len(copied) == 1, "expected 1 document, got %r" % copied
+        name = copied[0]
+        assert name.startswith("2026-09-07"), \
+            "the copy is not named by its date: %r" % name
+        assert "Test report" in name, "the copy is not named by its title: %r" % name
+        assert STORED_DOC not in name, \
+            "the copy kept the hashed storage name: %r" % name
+        assert open(os.path.join(snap, "documents", name), "rb").read(5) == b"%PDF-", \
+            "the copied document is not the PDF"
+        idx = csv_text("documents.csv")
+        assert "Test report" in idx and name in idx, "the index does not name the copy"
+        return "copied as %r and indexed" % name
+    check("13 the server's own reports are copied under readable names", t13)
+
+    # ---------------------------------------------------------------- 14
+    def t14():
+        before = os.path.getmtime(os.path.join(
+            snap, "documents", os.listdir(os.path.join(snap, "documents"))[0]))
+        counts2, _ = hm.generate(out, days=30)
+        after_name = os.listdir(os.path.join(snap, "documents"))[0]
+        after = os.path.getmtime(os.path.join(snap, "documents", after_name))
+        assert counts2["documents_unchanged"] >= 1, \
+            "an unchanged document was copied again: %r" % counts2
+        assert counts2["documents_copied"] == 0, counts2
+        assert before == after, "the file was rewritten although nothing changed"
+        return "unchanged documents are left alone on a second run"
+    check("14 an unchanged report is not recopied every night", t14)
 
     print("")
     for ok, name, detail in RESULTS:

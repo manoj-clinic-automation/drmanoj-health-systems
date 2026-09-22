@@ -27,6 +27,12 @@
     "find": "    if not os.path.exists(conf):\n        return False, \"rclone has no configuration yet (the one sign-in is still to do)\"",
     "replace": "    if not os.path.exists(conf):\n        return True, \"uploaded\""}},
 
+  {"name": "13 the server's own reports are copied under readable names",
+   "mutation": {"id": "hashname",
+    "why": "the reports are copied to Drive under their storage hash, so he cannot tell one from another",
+    "find": "        name = label.rstrip(\" -\") + ext",
+    "replace": "        name = d[\"stored\"]"}},
+
   {"name": "12 no molecule name lives in the tracked tool",
    "mutation": {"id": "hardcoded",
     "why": "the night window is replaced by a hardcoded list of medicine names in tracked code",

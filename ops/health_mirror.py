@@ -62,6 +62,7 @@ import sys
 GUTLOG_DB = os.environ.get("MIRROR_GUTLOG_DB", "/root/gutlog/health3.db")
 FITLOG_DB = os.environ.get("MIRROR_FITLOG_DB", "/root/fitlog/fitlog.db")
 PLANS_DIR = os.environ.get("MIRROR_PLANS_DIR", "/root/gutlog/plans_files")
+UPLOAD_DIR = os.environ.get("MIRROR_UPLOAD_DIR", "/root/gutlog/uploads")
 RCLONE_REMOTE = os.environ.get("MIRROR_REMOTE", "healthmirror")
 RCLONE_PATH = os.environ.get("MIRROR_REMOTE_PATH", "Health Mirror (for Claude)")
 
@@ -273,6 +274,63 @@ def meals_recent(g, since):
     return out
 
 
+def documents_all(g):
+    """The report PDFs already on the server: rec_docs is the record's own
+    index of them, and `files` is the older upload vault. Both point into
+    UPLOAD_DIR by a stored (hashed) name; the readable one is `orig`."""
+    out = []
+    for r in rows(g, "SELECT id, day, kind, title, source, finding, stored, orig, "
+                     "status FROM rec_docs WHERE stored IS NOT NULL AND stored <> '' "
+                     "ORDER BY day DESC, id DESC"):
+        r["from"] = "rec_docs"
+        out.append(r)
+    seen = set(d["stored"] for d in out)
+    for r in rows(g, "SELECT id, day, ftype AS kind, label AS title, stored, orig "
+                     "FROM files WHERE stored IS NOT NULL AND stored <> '' "
+                     "ORDER BY day DESC, id DESC"):
+        if r["stored"] in seen:
+            continue
+        r["from"] = "files"
+        r["source"] = ""
+        r["finding"] = ""
+        r["status"] = ""
+        out.append(r)
+    out.sort(key=lambda d: (d.get("day") or "", d.get("id") or 0), reverse=True)
+    return out
+
+
+def copy_documents(docs, dest):
+    """Copy each document under a name a reader recognises. Skipped when the
+    destination already matches by size -- 87 MB of unchanged PDFs should not
+    be rewritten every night for the sake of a nightly job."""
+    if not os.path.isdir(dest):
+        os.makedirs(dest, mode=0o700)
+    copied = skipped = missing = 0
+    index = []
+    for d in docs:
+        src = os.path.join(UPLOAD_DIR, d["stored"])
+        if not os.path.exists(src):
+            missing += 1
+            continue
+        ext = os.path.splitext(d.get("orig") or d["stored"])[1].lower() or ".pdf"
+        label = safe_name("%s %s - %s" % (d.get("day") or "undated",
+                                          d.get("kind") or "Document",
+                                          d.get("title") or ""), "document")
+        name = label.rstrip(" -") + ext
+        dst = os.path.join(dest, name)
+        try:
+            if os.path.exists(dst) and os.path.getsize(dst) == os.path.getsize(src):
+                skipped += 1
+            else:
+                shutil.copy2(src, dst)
+                copied += 1
+        except OSError:
+            missing += 1
+            continue
+        index.append(dict(d, mirror_name=name))
+    return index, {"copied": copied, "unchanged": skipped, "missing": missing}
+
+
 def plans_all(g):
     out = []
     for p in rows(g, "SELECT id, title, first_considered, status, archived FROM plans "
@@ -395,6 +453,18 @@ def build_markdown(data, generated):
                  (p["file"] or {}).get("original_name") or "no document"]
                 for p in data["plans"] if not p.get("archived")]))
     A("")
+
+    A("## Documents")
+    A("")
+    A("The reports themselves, copied into `documents/` beside this file under")
+    A("names a reader can recognise. The findings column is what was recorded")
+    A("about a report, not a re-reading of it.")
+    A("")
+    A(md_table(["Date", "Kind", "Title", "Source", "File"],
+               [[dmy(d["day"]), d.get("kind") or "", d.get("title") or "",
+                 d.get("source") or "", d.get("mirror_name") or ""]
+                for d in data["documents"]]))
+    A("")
     A("---")
     A("")
     A("Nothing in this file is a clinical judgement. It is what was recorded,")
@@ -438,6 +508,7 @@ def collect(days):
         "meals": meals_recent(g, since30),
         "labs": labs_all(g),
         "plans": plans_all(g),
+        "documents": documents_all(g),
     }
     g.close()
     if f:
@@ -448,26 +519,41 @@ def collect(days):
 def generate(out_dir, days=30, dry_run=False):
     data = collect(days)
     generated = datetime.datetime.now().strftime("%d-%b-%Y %H:%M")
-    md = build_markdown(data, generated)
 
     snap = os.path.join(out_dir, "snapshot")
     csvd = os.path.join(snap, "csv")
     pland = os.path.join(snap, "plans")
-    counts = {"sections": 8, "meds_now": len(data["meds_now"]),
+    docd = os.path.join(snap, "documents")
+
+    # The documents are copied BEFORE the markdown is built, because the
+    # Documents table names the file each row landed in. A dry run does not
+    # copy, so it works the names out without writing anything.
+    if dry_run:
+        data["documents"] = [dict(d, mirror_name="(dry run)") for d in data["documents"]]
+        doc_stats = {"copied": 0, "unchanged": 0, "missing": 0}
+    else:
+        for d in (out_dir, snap, csvd, pland, docd):
+            if not os.path.isdir(d):
+                os.makedirs(d, mode=0o700)
+        try:
+            os.chmod(out_dir, 0o700)
+        except OSError:
+            pass
+        data["documents"], doc_stats = copy_documents(data["documents"], docd)
+
+    md = build_markdown(data, generated)
+
+    counts = {"sections": 9, "meds_now": len(data["meds_now"]),
               "med_events": len(data["med_events"]), "sleep_nights": len(data["sleep"]),
               "vitals": len(data["vitals"]), "episodes": len(data["episodes"]),
               "meal_days": len(data["meals"]), "labs": len(data["labs"]),
-              "plans": len(data["plans"]), "markdown_bytes": len(md.encode("utf-8"))}
+              "plans": len(data["plans"]), "documents": len(data["documents"]),
+              "documents_copied": doc_stats["copied"],
+              "documents_unchanged": doc_stats["unchanged"],
+              "documents_missing": doc_stats["missing"],
+              "markdown_bytes": len(md.encode("utf-8"))}
     if dry_run:
         return counts, md
-
-    for d in (out_dir, snap, csvd, pland):
-        if not os.path.isdir(d):
-            os.makedirs(d, mode=0o700)
-    try:
-        os.chmod(out_dir, 0o700)
-    except OSError:
-        pass
 
     latest = os.path.join(snap, "health_snapshot_latest.md")
     fh = open(latest, "w", encoding="utf-8")
@@ -514,6 +600,12 @@ def generate(out_dir, days=30, dry_run=False):
               ["day", "logged", "partial", "kcal", "protein", "fibre", "meals"],
               [[m.get(k) for k in ("day", "logged", "partial", "kcal", "protein",
                                    "fibre", "meals")] for m in data["meals"]])
+    write_csv(os.path.join(csvd, "documents.csv"),
+              ["day", "kind", "title", "source", "finding", "status", "from",
+               "original_name", "mirror_name"],
+              [[d.get(k) for k in ("day", "kind", "title", "source", "finding",
+                                   "status", "from", "orig", "mirror_name")]
+               for d in data["documents"]])
     write_csv(os.path.join(csvd, "plans.csv"),
               ["first_considered", "status", "title", "document", "archived"],
               [[p.get("first_considered"), p.get("status"), p.get("title"),

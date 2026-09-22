@@ -62,14 +62,23 @@ if (-not (Test-Path $conf)) {
   exit 2
 }
 
-$args = @('copy', $Source, ("{0}:{1}" -f $Remote, $RemotePath),
-          '--drive-use-trash=false', '--transfers', '2', '--checkers', '4',
-          '--stats', '0', '--log-level', 'NOTICE')
-if ($WhatIf) { $args += '--dry-run' }
+# rclone writes its NOTICE lines to stderr, and in Windows PowerShell 5.1
+# `2>&1` on a NATIVE exe wraps every stderr line in a NativeCommandError --
+# which, under $ErrorActionPreference='Stop', kills the script on rclone's
+# routine "shared client_id" notice and reports a failure that did not happen.
+# So rclone writes its own log and nothing of its stderr goes through the
+# PowerShell pipeline. The exit code is the only thing consulted.
+$rcArgs = @('copy', $Source, ("{0}:{1}" -f $Remote, $RemotePath),
+            '--drive-use-trash=false', '--transfers', '2', '--checkers', '4',
+            '--stats', '0', '--log-level', 'NOTICE', '--log-file', $log)
+if ($WhatIf) { $rcArgs += '--dry-run' }
 
 Say ("rclone copy -> {0}:{1}{2}" -f $Remote, $RemotePath, $(if ($WhatIf) { '  (dry run)' } else { '' }))
-& $rclone @args 2>&1 | ForEach-Object { Say "  $_" }
+$prev = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+& $rclone @rcArgs
 $code = $LASTEXITCODE
+$ErrorActionPreference = $prev
 
 if ($code -ne 0) {
   Say "FAILED: rclone exited $code. The mirror is NOT current."

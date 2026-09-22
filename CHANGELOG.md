@@ -3,6 +3,38 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-22 (later) — the mirror is live, and carries the reports too
+
+Signed in, both halves uploading, and the snapshot now carries **the reports
+themselves**: the 50 report PDFs already on the VPS, copied under
+`YYYY-MM-DD Kind - Title.pdf` rather than the storage hash nobody can read,
+indexed in `documents.csv`, and left alone on the next run when nothing has
+changed — 87 MB should not be rewritten every night for a nightly job.
+
+First server upload 13:39 IST: 65 objects, 86.2 MiB. GutLog's warning went
+from "has never finished" to "Mirror updated 22 Sep, 13:39" the moment it
+landed, which is the whole mechanism working end to end.
+
+**A dated warning worth keeping.** rclone says its shared Google client_id
+is being retired and will stop working during 2026. When it does, uploads
+start failing — and because success is marked only on a real upload, the Now
+tab will say so within 36 hours instead of letting Claude answer from a
+frozen copy. That is the failure this design was built for, with a date on
+it. The fix will be his own OAuth client_id, not a code change.
+
+Three mistakes of mine, all caught by something rather than by luck. The
+PC script died on rclone's routine notice, because in PowerShell 5.1 `2>&1`
+on a native executable wraps stderr in an error record and reports a failure
+that did not happen — a trap written in this repo's own environment notes,
+which I then walked into. rclone now writes its own log and only the exit
+code is consulted. The clinical-terms assertion failed on the server, where
+there is no repository and so no repository property to guard; it now tells
+"not applicable" apart from "did not run", and still fails hard in a
+checkout with the list missing — proved by hiding the list and watching it
+go red. And the first version of that distinction looked for a directory
+called `tools/`, which the server has for other reasons; it now looks for
+the gate itself.
+
 ## 2026-09-22 — the Health Mirror, and GutLog v3.30.0 to say when it stops
 
 He talks to Claude from his phone, where it cannot reach GutLog, FitLog,
