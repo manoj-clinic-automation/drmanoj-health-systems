@@ -1,0 +1,36 @@
+{
+ "_": ["Health Mirror. Every assertion here is mutation-controlled: health_mirror.py is a new standalone tool, never patched into existence, so there is no previous build to contrast it with and the version stage cannot apply. See NC_MIRROR.py. Mutation is the stronger control anyway -- it shows the assertion responds to the thing it claims to measure, not to a version change that moved several things at once. The five chosen are the promises the mirror actually makes: a missing stop date is stated rather than guessed, an unlogged meal day is not a zero, the sleep section never scores a night, a failed upload never marks the mirror fresh, and no molecule name reaches the tracked tool."],
+ "suite": "test_health_mirror.py",
+ "tool": "health_mirror.py",
+ "assertions": [
+  {"name": "03 a missing stop date is said, never invented",
+   "mutation": {"id": "guessstop",
+    "why": "a medicine with no recorded stop date is given today's date instead of being marked unknown",
+    "find": "            out.append({\"date\": \"\", \"event\": \"no stop date recorded\", \"name\": r[\"name\"],",
+    "replace": "            out.append({\"date\": today(), \"event\": \"stopped\", \"name\": r[\"name\"],"}},
+
+  {"name": "06 meal days are 'not logged' or 'partial', never a false zero",
+   "mutation": {"id": "zeroday",
+    "why": "a day with nothing logged is written out as a day of zero intake",
+    "find": "            out.append({\"day\": iso, \"logged\": False, \"partial\": False,\n                        \"kcal\": \"\", \"protein\": \"\", \"fibre\": \"\", \"meals\": 0})",
+    "replace": "            out.append({\"day\": iso, \"logged\": True, \"partial\": False,\n                        \"kcal\": 0, \"protein\": 0, \"fibre\": 0, \"meals\": 0})"}},
+
+  {"name": "05 the sleep section never scores a night",
+   "mutation": {"id": "scorenight",
+    "why": "the sleep section starts grading the nights",
+    "find": "    A(\"apart. **No score, grade or good/poor label is given, here or anywhere.**\")",
+    "replace": "    A(\"apart. Each night is given a sleep quality rating of good or poor.\")"}},
+
+  {"name": "11 a failed upload never marks the mirror fresh",
+   "mutation": {"id": "falsefresh",
+    "why": "the upload reports success when rclone was never configured, so a stale mirror looks current",
+    "find": "    if not os.path.exists(conf):\n        return False, \"rclone has no configuration yet (the one sign-in is still to do)\"",
+    "replace": "    if not os.path.exists(conf):\n        return True, \"uploaded\""}},
+
+  {"name": "12 no molecule name lives in the tracked tool",
+   "mutation": {"id": "hardcoded",
+    "why": "the night window is replaced by a hardcoded list of medicine names in tracked code",
+    "find": "NIGHT_FROM = \"18:00\"",
+    "replace": "HYPNOTICS = (\"__TERM__\",)\nNIGHT_FROM = \"18:00\""}}
+ ]
+}

@@ -34,6 +34,12 @@
 
 # --- Windows-only launchers: keep CRLF -------------------------------------
 *.bat         text eol=crlf
+# 2026-09-22. ops/mirror_records.ps1 runs from a Windows scheduled task and is
+# never deployed to the server, so it belongs with the launchers rather than
+# with the LF files above. Undeclared, `* text=auto` would have normalised it
+# to LF and handed CRLF back on checkout -- the quiet trap this file exists
+# for, and git said so the first time the script was staged.
+*.ps1         text eol=crlf
 .gitattributes text eol=lf
 .gitignore    text eol=lf
 

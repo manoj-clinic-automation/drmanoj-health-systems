@@ -7,6 +7,7 @@ consults) . Review (trends, FODMAP load, dose overlay, exports).
 Run:  gunicorn -w 2 -b 127.0.0.1:8020 app:app
 GUTLOG_V3280_PLANS -- /plans holds and shares a dated plan document.
 GUTLOG_V3290_NUTRITION -- /nutrition, and a Meals tab with a day stepper.
+GUTLOG_V3300_MIRRORSTALE -- the Now tab says when the Drive mirror is stale.
 """
 import os, csv, io, json, time, sqlite3, secrets, uuid
 from datetime import date, datetime, timedelta
@@ -33,7 +34,7 @@ PLAN_STATUSES = ("Draft", "Active", "Closed")
 ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
 MAX_FILE_MB = 25   # v3.11.0: report pages are saved at ~220dpi now, not ~110
 # GUTLOG_V3272_HEALTHZ -- one place that states the running version.
-APP_VERSION = "3.29.0"   # GUTLOG_V3290_NUTRITION GUTLOG_V3280_PLANS GUTLOG_V3272_HEALTHZ GUTLOG_V3271_TARGETJS GUTLOG_V3270_TIMEPICK GUTLOG_V3260_TRIALS
+APP_VERSION = "3.30.0"   # GUTLOG_V3300_MIRRORSTALE GUTLOG_V3290_NUTRITION GUTLOG_V3280_PLANS GUTLOG_V3272_HEALTHZ GUTLOG_V3271_TARGETJS GUTLOG_V3270_TIMEPICK GUTLOG_V3260_TRIALS
 
 def _secret():
     env = os.environ.get("GUTLOG_SECRET")
@@ -4651,6 +4652,42 @@ showing zero, and a day with fewer meals than usual is marked partial.</p>
 """
 
 
+# ------------------------------------------------------------ mirror state
+# GUTLOG_V3300_MIRRORSTALE. The Health Mirror writes last_success.json ONLY
+# after an upload that worked. If that stamp is missing or old, the copy the
+# Claude app reads on his phone is not today's -- and a silently stale mirror
+# is worse than none, because it answers instead of asking.
+MIRROR_STAMP = os.environ.get("GUTLOG_MIRROR_STAMP",
+                              "/root/health_mirror/last_success.json")
+MIRROR_STALE_HOURS = 36
+
+
+def mirror_state():
+    """{ok, hours, text}. Never reads the record -- one timestamp only."""
+    try:
+        with open(MIRROR_STAMP, encoding="utf-8") as fh:
+            j = json.load(fh)
+        when = datetime.fromtimestamp(float(j.get("epoch") or 0))
+    except (OSError, ValueError, TypeError):
+        return {"ok": False, "hours": None, "never": True,
+                "text": "The health mirror has never finished. Claude on your "
+                        "phone is reading nothing, or something older."}
+    hours = (datetime.now() - when).total_seconds() / 3600.0
+    if hours <= MIRROR_STALE_HOURS:
+        return {"ok": True, "hours": round(hours, 1), "never": False,
+                "text": "Mirror updated %s." % when.strftime("%d %b, %H:%M")}
+    return {"ok": False, "hours": round(hours, 1), "never": False,
+            "text": "The health mirror last updated %s, about %d hours ago. "
+                    "Anything Claude tells you from it is that old."
+                    % (when.strftime("%d %b, %H:%M"), int(hours))}
+
+
+@app.route("/api/mirror")
+@login_required
+def api_mirror():
+    return jsonify(mirror_state())
+
+
 # -------------------------------------------------------------- nutrition
 # GUTLOG_V3290_NUTRITION. One place computes a day's totals. The day card on
 # the Meals tab, the history page and the API all read nut_day(), so they
@@ -5851,6 +5888,8 @@ border-radius:16px;padding:12px 10px;margin:0 0 12px;box-shadow:0 1px 2px rgba(2
 .pbar{height:9px;border-radius:999px;background:var(--chip);overflow:hidden;margin:7px 0 3px}
 .pbar i{display:block;height:100%;background:var(--grad);border-radius:999px;transition:width .25s}
 .tot{font-size:13px;color:var(--muted)}
+.mirrorwarn{border-color:var(--amber,#B57B08)}
+.mirrorwarn .q{color:var(--amber,#B57B08)}
 /* GUTLOG_V3290_NUTRITION -- the day stepper. Sized to sit inside 300px. */
 .mlstep{display:flex;align-items:center;gap:6px;margin:0 0 8px;flex-wrap:wrap}
 .mlstep button{border:1px solid var(--line);background:var(--card);color:var(--ink);
@@ -6354,6 +6393,7 @@ function thmCycle(){
 <!-- ============ LOG ============ -->
 <!-- ============ NOW ============ -->
 <section class="tab sel" id="tab-now">
+  <div id="nowMirror"></div>
   <div id="nowStock"></div>
   <div id="nowOrder"></div>
   <div id="nowMedStatus"></div>
@@ -8622,7 +8662,20 @@ function mcToday(){
     acts.appendChild(ed);acts.appendChild(ag);acts.appendChild(de);
     line.appendChild(txt);line.appendChild(acts);box.appendChild(line);});
 }
+/* GUTLOG_V3300_MIRRORSTALE -- one line, and only when there is something
+   wrong. A warning that is always on teaches you to ignore warnings. */
+async function loadMirror(){
+  const box=$('#nowMirror');if(!box)return;
+  let j;try{j=await jget('/api/mirror');}catch(e){return;}
+  box.innerHTML='';
+  if(j.ok)return;
+  const c=el('div','card mirrorwarn');
+  c.appendChild(el('p','q','\u26A0 Health mirror'));
+  c.appendChild(el('p','hint',j.text));
+  box.appendChild(c);
+}
 async function loadNow(){
+  loadMirror();
   loadMeals();
   loadStockAlerts();
   loadOrderDue();

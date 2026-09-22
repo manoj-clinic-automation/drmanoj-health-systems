@@ -3,6 +3,51 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-22 — the Health Mirror, and GutLog v3.30.0 to say when it stops
+
+He talks to Claude from his phone, where it cannot reach GutLog, FitLog,
+RxGuard or his PC. So it answered from whatever it had — a sleep summary
+drawn from his two best nights, a medicine list that was out of date. It can
+read his Drive. So the record goes there, kept current, and the answers come
+from the record.
+
+**One private folder, never shared and never given a link.** No new endpoint,
+no new login, nothing public. `ops/health_mirror.py` writes a readable
+snapshot — medicines now and every start, stop and dose change in 90 days;
+thirty nights of sleep; thirty days of vitals, gut and meals; every lab
+result on record; the plans — plus the same data as CSV and a copy of each
+plan document. Nightly at 02:30, and a Windows task for the reports folder.
+rclone with scope `drive.file`, so it can only ever touch the files it made
+itself.
+
+**Two rules it holds to, because they are the ones that make a record
+trustworthy.** Where a medicine has no recorded stop date it says *no stop
+date recorded* rather than inventing one. Where a day has no meals it says
+*not logged* rather than zero. Both are checked by a mutation that makes the
+tool guess instead, and both would otherwise read as fact.
+
+**And it never scores a night.** The sleep table puts the watch hours, his
+own check-in answer and what was taken that evening side by side, so nights
+with and without a given medicine can be told apart — with no grade, rating
+or good/poor label anywhere. That is a standing rule here and there is now a
+mutation that tries to break it.
+
+**GutLog v3.30.0 exists because of how this fails.** Not loudly — quietly.
+Claude would go on answering from a week-old copy with nothing to suggest
+otherwise; a missing file produces a question, a stale one produces an
+answer. So the mirror marks success only after an upload that actually
+worked, and the Now tab carries one line when that is over 36 hours old or
+has never happened. Right now it correctly says the mirror has never
+finished, because his one Google sign-in is still to do — the only manual
+step in any of this.
+
+The tracked tool names no medicine. The night window is a clock rule rather
+than a list of drug names, precisely so it does not have to. A negative
+control makes sure of it, and a second one caught a weaker assertion first:
+the upload check could only ever reach whichever branch the machine it ran
+on happened to fall into, so on a PC with no rclone the "not configured"
+path was never tested at all and passed for the wrong reason.
+
 ## 2026-09-22 — GutLog v3.29.0, the nutrition history he could not find
 
 He said he had logged food for two or three days and could not navigate to

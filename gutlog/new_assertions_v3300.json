@@ -1,0 +1,31 @@
+{
+ "_": ["GutLog v3.30.0 -- the Now tab says when the Drive mirror is stale. Everything fails on v3.29.0 because /api/mirror is not there, so version is kept only where the thing itself is new. The four that carry the promise -- a mirror that never ran is not 'ok', the threshold is where it is claimed to be, the state leaks no path, and a working mirror shows nothing -- are broken on purpose in the current build, because 'it fails without the patch' says nothing about whether the assertion measures the threshold or the silence."],
+ "suite": "test_v3300_mirror.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3300_mirror.py",
+ "assertions": [
+  {"name": "02 a fresh mirror is ok", "control": "version"},
+  {"name": "04 the warning explains the consequence, and needs a login", "control": "version"},
+  {"name": "06 the warning really appears on the Now tab", "control": "version"},
+
+  {"name": "01 a mirror that never ran is not 'ok'", "control": "mutation",
+   "mutation": {"id": "neverok", "why": "a mirror that has never finished reports itself as fine",
+    "find": "        return {\"ok\": False, \"hours\": None, \"never\": True,",
+    "replace": "        return {\"ok\": True, \"hours\": None, \"never\": True,"}},
+
+  {"name": "03 the line is at 36 hours, not somewhere near it", "control": "mutation",
+   "mutation": {"id": "nothreshold", "why": "the staleness threshold is so wide that nothing is ever stale",
+    "find": "MIRROR_STALE_HOURS = 36",
+    "replace": "MIRROR_STALE_HOURS = 100000"}},
+
+  {"name": "05 the mirror state carries no path, token or record", "control": "mutation",
+   "mutation": {"id": "leakpath", "why": "the state hands the page the server path it read",
+    "find": "def api_mirror():\n    return jsonify(mirror_state())",
+    "replace": "def api_mirror():\n    s = mirror_state()\n    s[\"stamp\"] = MIRROR_STAMP\n    return jsonify(s)"}},
+
+  {"name": "07 nothing is shown when the mirror is working", "control": "mutation",
+   "mutation": {"id": "alwayswarn", "why": "the warning is shown even when the mirror is current, which teaches him to ignore it",
+    "find": "  box.innerHTML='';\n  if(j.ok)return;",
+    "replace": "  box.innerHTML='';"}}
+ ]
+}

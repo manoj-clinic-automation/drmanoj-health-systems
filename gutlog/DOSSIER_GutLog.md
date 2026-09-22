@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.29.0)
+# GutLog — DOSSIER (v3.30.0)
 
 Single source of truth. Update after every change.
 
@@ -384,6 +384,39 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## The mirror staleness line — v3.30.0 (`GUTLOG_V3300_MIRRORSTALE`, 2026-09-22)
+
+`/api/mirror` reads one timestamp and the Now tab shows **one line, only when
+something is wrong**. Nothing here reads the record.
+
+The Health Mirror (`ops/health_mirror.py`, and `ops/mirror_records.ps1` on
+the PC) copies his record into a private Drive folder so the Claude app on
+his phone answers from the record rather than from memory. The danger is not
+that it breaks — it is that it breaks **quietly**. Claude would go on
+answering from a week-old file, confidently, with nothing to suggest
+otherwise. A missing file produces a question; a stale one produces an
+answer. So the mirror writes `last_success.json` **only after an upload that
+worked**, and GutLog says so when that stamp is over `MIRROR_STALE_HOURS`
+(36) old, or has never existed.
+
+Override the path with `GUTLOG_MIRROR_STAMP` (the suite does). The payload is
+four keys — `ok`, `hours`, `never`, `text` — and deliberately nothing else:
+no server path, no token, no record.
+
+*Assertion 05 is worth reading before changing it.* It first probed the
+response for `/root` and `health3`, strings that never appear in a temp path,
+so a mutation that handed the page the stamp path sailed straight through it
+and the negative control caught that. It now asserts the **property** — the
+exact key set, and no value that is a filesystem path.
+
+Evidence: `test_v3300_mirror.py` 7/7, negative control **7/7 seen to fail**,
+four by mutation: `neverok` (a mirror that never ran reports fine),
+`nothreshold` (nothing is ever stale), `leakpath` (the state hands over the
+server path), `alwayswarn` (the warning is always on, which teaches him to
+ignore it). 24 suites green on the server before the restart. Deployed
+12:56 IST, `app.py` sha256 `bfbd1a56…`, rollback
+`app.py.bak-v3300-20260922_125629`.
 
 ## Nutrition history — v3.29.0 (`GUTLOG_V3290_NUTRITION`, 2026-09-22)
 
