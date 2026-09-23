@@ -14,7 +14,7 @@ Clinic automation lives separately in `drmanoj-clinic-automation` — do not mix
 | App | Subdomain | Port | DB (live path) | Health check |
 |---|---|---|---|---|
 | GutLog v3.32.0 | health.dr-manoj.in | 8020 | /root/gutlog/health3.db, plan PDFs in /root/gutlog/plans_files/; bundled food table `food_table_usda.json` beside app.py; food test at `/foodtest` | `/healthz` → `ok 3.32.0` (text/plain) |
-| RxGuard v1.8.2 | rx.dr-manoj.in | 8031 | /root/rxguard/ | `/healthz` → `ok 1.8.2` (text/plain) |
+| RxGuard v1.8.3 | rx.dr-manoj.in | 8031 | /root/rxguard/ | `/healthz` → `ok 1.8.3` (text/plain) |
 | FitLog v1.7.1 | fit.dr-manoj.in | 8040 | /root/fitlog/fitlog.db (verified on server 2026-09-10) | `/health` → `{"app","version","ok"}`. Note the spelling: **`/health`, not `/healthz`** |
 
 **The endpoints are authoritative — curl them, and believe what they say.**

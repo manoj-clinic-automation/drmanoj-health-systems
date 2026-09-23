@@ -96,9 +96,13 @@ def main():
             return set(f.get("rule_id") for f in rx.analyse(drug)["findings"] if f.get("rule_id"))
 
     def t00_rules_loaded():
-        got = [r["id"] for r in rx.CONDITION_RULES][-6:]
-        assert got == ["CR010", "CR011", "CR012", "CR013", "CR014", "CR015"], str(got)
-        assert rx.RULES_DOC["_meta"]["version"] == "1.1.0"
+        # v1.8.3 appended CR016 and moved the rules to 1.2.0; what this checks
+        # is that CR010-CR015 are there, in order, and the base is at least 1.1.0.
+        allids = [r["id"] for r in rx.CONDITION_RULES]
+        want = ["CR010", "CR011", "CR012", "CR013", "CR014", "CR015"]
+        got = [i for i in allids if i in want]
+        assert got == want, str(allids)
+        assert tuple(int(x) for x in rx.RULES_DOC["_meta"]["version"].split(".")) >= (1, 1, 0)
         assert all(r.get("source") and r.get("reviewed") for r in rx.CONDITION_RULES), "rule without source/date"
         for c in ("thrombocytopenia", "hyponatraemia", "hypocalcaemia", "conduction_disease", "coronary_disease"):
             assert c in rx.CONDITION_LABELS, c

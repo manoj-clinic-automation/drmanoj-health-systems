@@ -72,6 +72,41 @@ named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
 days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
 GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
 
+## An orexin receptor antagonist, and narcolepsy — v1.8.3 (DEPLOYED 2026-09-23 20:59 IST)
+
+A dual orexin receptor antagonist hypnotic was not in the knowledge base —
+checked in the curated files and in the server's approved overlay first. It
+is now, from its US label (read through openFDA, 23-Sep-2026) with its RxCUI
+from NLM RxNorm: CYP3A4 major substrate, sedation 3, 5 and 10 mg tablets
+(`strengths`), start 5 mg, max 10 mg nightly, max 5 mg with a weak CYP3A
+inhibitor; hepatic: **moderate impairment max 5 mg, severe not
+recommended** (the label's wording, which differs from the "severe: max
+5 mg" in the request — the label won). The brand name resolves as a synonym.
+
+Rules (`rules.json` 1.1.0 → 1.2.0, `drugs.json` 1.0.0 → 1.1.0):
+- **PW025–PW030 RED** "avoid": strong or moderate CYP3A inhibitors, six of
+  them, including the base's own moderate one the request did not list.
+  Three are not in the base as entries; a pairwise rule matches on the key,
+  so it still fires if one is ever recorded.
+- **PW031 / PW031B RED**: the strong CYP3A inducer, under both its names.
+- **PW032–PW034 AMBER**: additive CNS depression with the three Z-drugs.
+  Opioids and benzodiazepines are covered by the sedation-burden threshold;
+  alcohol lives in the notes and every rule's action.
+- **CR016 RED**: the class with **narcolepsy**, now a condition in
+  `CONDITIONS` (the only `app.py` change).
+
+A curated rule beats the property engine for the same pair, so the label's
+"avoid" wording is what shows. `test_v183_orexin.py` 6/6 **names no
+medicine** — every drug comes out of the knowledge base by rule id or class —
+so it can never carry a name from his list into the public tree; the patcher
+is on NO_SECRETS' `CLINICAL_ALLOW` for the same reason as the v1.4.0 one.
+Negative control 7/7 (six by load-time mutation, because the reconstructed
+previous `app.py` reads the same knowledge files). `test_conditions` 00 was
+changed on purpose (it pinned the last six condition rules and the rules
+version). All 11 suites green on the server; `app.py` `527bae52…`,
+`drugs.json` `c84c2525…`, `rules.json` `c915d6d2…`. Rollback: the three
+`*.bak-v183-20260923_205827` files, then restart.
+
 ## One session key for every worker — v1.8.2 (DEPLOYED 2026-09-20 12:46 IST)
 
 With `RXGUARD_SECRET` unset, each gunicorn worker minted **its own random

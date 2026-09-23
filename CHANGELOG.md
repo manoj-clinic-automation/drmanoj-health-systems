@@ -3,6 +3,16 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-23 (evening) — RxGuard v1.8.3: an orexin antagonist hypnotic
+
+A new hypnotic class was missing from RxGuard's curated base. It is there
+now from its label: the CYP3A inhibitors and inducer it must be kept apart
+from (RED, "avoid"), additive sedation with the Z-drugs (AMBER) and through
+the existing burden score, the hepatic limits as the label states them, and
+narcolepsy — added as a condition — as a contraindication. The test names no
+medicine at all, so it cannot carry his list into this repository. 6/6,
+negative control 7/7, 11 server suites green.
+
 ## 2026-09-23 (later) — GutLog v3.32.0: the food test
 
 The FODMAP reintroduction now runs from the Now tab: one tap for the day's

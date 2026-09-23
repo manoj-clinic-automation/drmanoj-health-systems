@@ -28,7 +28,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # HEALTH_SSO_V1
 import health_sso  # noqa: E402
 
-APP_VERSION = "1.8.2"   # RXGUARD_V182_SECRETFILE RXGUARD_V181_LABELMAX RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST RXGUARD_V180_DOSE
+APP_VERSION = "1.8.3"   # RXGUARD_V183_LEMBOREXANT RXGUARD_V182_SECRETFILE RXGUARD_V181_LABELMAX RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST RXGUARD_V180_DOSE
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KNOWLEDGE_DIR = os.path.join(BASE_DIR, "knowledge")
 DEFAULT_DB = os.path.join(BASE_DIR, "rxguard.db")
@@ -131,6 +131,7 @@ CONDITIONS = [
     ("hypocalcaemia", "Low ionic calcium"),
     ("conduction_disease", "Conduction disease (e.g. bundle branch block)"),
     ("coronary_disease", "Coronary artery disease"),
+    ("narcolepsy", "Narcolepsy"),   # RXGUARD_V183_LEMBOREXANT
 ]
 CONDITION_LABELS = dict(CONDITIONS)
 

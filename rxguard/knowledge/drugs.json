@@ -1,7 +1,7 @@
 {
   "_meta": {
     "schema": "medsafe-drugs/1",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "reviewed": "2026-07-25",
     "scales": {
       "anticholinergic": "0-3, ACB/ADS-style. 3 = strongly anticholinergic.",
@@ -748,11 +748,14 @@
       "qt": "none", "hr": "none", "bp": "none",
       "notes": "Generally better tolerated than lactulose for sustained use; minimal interaction potential.",
       "source": "US SPL.", "reviewed": "2026-07-25"
-    }
+    },
+
+    "lemborexant": {"class": "Dual orexin receptor antagonist (hypnotic)", "atc": "N05CJ02", "rxcui": "2272403", "cyp": {"substrate": {"CYP3A4": "major"}, "inhibitor": {}, "inducer": {}}, "burden": {"anticholinergic": 0, "serotonergic": 0, "sedation": 3, "constipating": 0, "bleeding": 0, "nephrotoxic": 0, "seizure": 0}, "qt": "none", "hr": "none", "bp": "none", "strengths": ["5 mg", "10 mg"], "hepatic": "Moderate hepatic impairment: initial and maximum dose 5 mg. Severe hepatic impairment: not recommended.", "notes": "Tablets 5 mg and 10 mg. Recommended 5 mg no more than once a night, immediately before bed with at least 7 hours before planned awakening; maximum 10 mg once daily. Maximum 5 mg with a weak CYP3A inhibitor; avoid with strong or moderate CYP3A inhibitors and with strong or moderate CYP3A inducers. Additive CNS depression with other CNS depressants; no alcohol with it. Contraindicated in narcolepsy. Next-day impairment is possible, more so at 10 mg.", "source": "US SPL, DAYVIGO (lemborexant), read through openFDA 2026-09-23; RxCUI from NLM RxNorm.", "reviewed": "2026-09-23"}
 
   },
 
   "synonyms": {
+    "dayvigo": "lemborexant",
     "nortriptylene": "nortriptyline", "nortryptiline": "nortriptyline", "nortrip": "nortriptyline",
     "paroxetin": "paroxetine", "paxil": "paroxetine", "paroxitene": "paroxetine", "paroxitine": "paroxetine",
     "verapramil": "verapamil", "verapamill": "verapamil", "calan": "verapamil",

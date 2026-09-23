@@ -1,0 +1,27 @@
+{
+ "_": ["RxGuard v1.8.3 -- an orexin receptor antagonist and narcolepsy. The previous build is reconstructed as app.py only, and it loads the SAME knowledge files, so a version control can only see the app.py half (the narcolepsy condition). The knowledge-base half is broken on purpose at load time in a copy of app.py, just after the base is read: the entry removed, each family of rules dropped, the sedation score and the hepatic text taken away."],
+ "suite": "test_v183_orexin.py",
+ "app": "app.py",
+ "patcher": "patch_rxguard_v183.py",
+ "assertions": [
+  {"name": "01 the orexin antagonist is in the knowledge base", "control": "mutation",
+   "mutation": {"id": "noentry", "why": "the knowledge base does not know the new entry",
+    "find": "\n\nreload_overlay(force=True)\n", "replace": "\n\nreload_overlay(force=True)\nDRUGS.pop([r for r in PAIRWISE if r['id']=='PW025'][0]['a'], None)\n"}},
+  {"name": "02 strong or moderate CYP3A inhibitors are RED", "control": "mutation",
+   "mutation": {"id": "noinhrules", "why": "the label's avoid rules for CYP3A inhibitors are gone",
+    "find": "\n\nreload_overlay(force=True)\n", "replace": "\n\nreload_overlay(force=True)\nPAIRWISE[:] = [r for r in PAIRWISE if r['id'] not in ('PW025','PW026','PW027','PW028','PW029','PW030')]\n"}},
+  {"name": "03 a strong CYP3A inducer is RED", "control": "mutation",
+   "mutation": {"id": "noindrules", "why": "the inducer rules are gone",
+    "find": "\n\nreload_overlay(force=True)\n", "replace": "\n\nreload_overlay(force=True)\nPAIRWISE[:] = [r for r in PAIRWISE if r['id'] not in ('PW031','PW031B')]\n"}},
+  {"name": "04 additive sedation is flagged", "control": "mutation",
+   "mutation": {"id": "nosedation", "why": "the new entry carries no sedation score",
+    "find": "\n\nreload_overlay(force=True)\n", "replace": "\n\nreload_overlay(force=True)\nDRUGS[[r for r in PAIRWISE if r['id']=='PW025'][0]['a']]['burden']['sedation'] = 0\n"}},
+  {"name": "05 narcolepsy is a contraindication", "control": "version"},
+  {"name": "05 narcolepsy is a contraindication", "control": "mutation",
+   "mutation": {"id": "nocr016", "why": "the narcolepsy rule is gone though the condition exists",
+    "find": "\n\nreload_overlay(force=True)\n", "replace": "\n\nreload_overlay(force=True)\nCONDITION_RULES[:] = [r for r in CONDITION_RULES if r['id'] != 'CR016']\n"}},
+  {"name": "06 hepatic impairment carries the label's limits", "control": "mutation",
+   "mutation": {"id": "nohepatic", "why": "the hepatic limits are missing",
+    "find": "\n\nreload_overlay(force=True)\n", "replace": "\n\nreload_overlay(force=True)\nDRUGS[[r for r in PAIRWISE if r['id']=='PW025'][0]['a']].pop('hepatic', None)\n"}}
+ ]
+}

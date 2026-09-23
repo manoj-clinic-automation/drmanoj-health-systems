@@ -126,6 +126,10 @@ CLINICAL_ALLOW = {
         "name aliases for the RxNorm/openFDA lookups, no personal content",
     "rxguard/patch_rxguard_v140.py":
         "the patcher that wrote those same curated rules",
+    "rxguard/patch_rxguard_v183.py":
+        "the patcher that wrote the orexin-antagonist entry and its label rules "
+        "(PW025-PW034, CR016) into the curated base - generic label pharmacology, "
+        "the same content as knowledge/rules.json; its test names no drug",
     "rxguard/test_conditions.py":
         "synthetic condition fixtures over the generic rule set",
     "rxguard/test_kb.py":
