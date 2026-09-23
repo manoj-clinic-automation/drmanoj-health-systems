@@ -152,7 +152,10 @@ def main():
         assert set(cols) == set(["id", "day", "components", "coped", "note", "created"]), cols
         assert "temp" not in cols, "temperature must never live in down_days"
         sv = q("SELECT value FROM settings WHERE key='schema_version'")[0][0]
-        assert sv == "3.3.4", "schema_version " + sv
+        # v3.31.0 bumped it to 3.3.5 (library weights). What this checks is
+        # that the down_days migration RAN, i.e. the version reached 3.3.4;
+        # pinning the exact string made every later schema bump fail it.
+        assert tuple(int(x) for x in sv.split(".")) >= (3, 3, 4), "schema_version " + sv
         idx = q("SELECT sql FROM sqlite_master WHERE tbl_name='down_days' AND sql LIKE '%UNIQUE%'")
         assert idx or "UNIQUE" in (q("SELECT sql FROM sqlite_master WHERE name='down_days'")[0][0] or ""), \
             "day is not UNIQUE"

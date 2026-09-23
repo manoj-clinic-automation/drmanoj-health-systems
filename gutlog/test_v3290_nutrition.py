@@ -71,9 +71,12 @@ def main():
                                                   "f": f, "fm": "L"}]})
         assert r.status_code == 200, "seeding %s failed: %s" % (day, r.status_code)
 
-    meal(D0, "08:00", "Breakfast", "Test porridge", 12, 300, 6)
-    meal(D0, "13:00", "Lunch", "Test dal", 20, 450, 9)
-    meal(D0, "20:00", "Dinner", "Test khichdi", 18, 400, 7)
+    # Today's three at 00:00: since v3.31.0 a meal cannot be logged later
+    # than now today, and 13:00 / 20:00 fixtures failed every morning run.
+    # Nothing here reads their order.
+    meal(D0, "00:00", "Breakfast", "Test porridge", 12, 300, 6)
+    meal(D0, "00:00", "Lunch", "Test dal", 20, 450, 9)
+    meal(D0, "00:00", "Dinner", "Test khichdi", 18, 400, 7)
     meal(D1, "13:30", "Lunch", "Test soup", 9, 210, 4)
 
     # ---------------------------------------------------------------- 01

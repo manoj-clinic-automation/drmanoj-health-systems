@@ -52,7 +52,9 @@ def main():
     c.post("/setup", data={"pw": "testpassword1", "pw2": "testpassword1"}, follow_redirects=True)
     c.get("/")
     T = date.today().isoformat()
-    c.post("/api/meals", json={"day": T, "mtime": "13:00", "slot": "Lunch", "notes": "",
+    # 00:00: since v3.31.0 a meal cannot be logged later than now today,
+    # so a fixed 13:00 fixture failed every morning run.
+    c.post("/api/meals", json={"day": T, "mtime": "00:00", "slot": "Lunch", "notes": "",
                                "items": [{"n": "Test dal", "q": 1, "p": 50, "k": 300, "f": 4, "fm": "L"}]})
 
     def t01():

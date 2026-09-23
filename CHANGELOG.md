@@ -3,6 +3,26 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-23 — GutLog v3.31.0: foods by weight, and every time editable
+
+He weighs food and wants to log what he actually ate. Every food now has a
+weight and values per 100 g — per 100 g **dry** for dal, rice, poha and oats,
+so the dry weight on the scale is exact. A meal row takes grams beside the
+old portion counter, and the server scales from the food's basis. Values can
+come from a bundled USDA table (SR Legacy, public domain, 7,791 foods; IFCT
+2017 has no licence-clean copy), and every food says where its numbers came
+from — the table, his own, or estimated. No live API call.
+
+Every meal and dose shows its time as a button; tapping it opens the same
+hour/minute lists as every other time box, on any day, and every change is
+recorded in `edits`. The Now meal card gained a time field, default now.
+
+The migration touched the library only: 162 foods, 17 with an exact weight,
+76 estimated, 69 with none; no per-portion value changed and the day totals
+for every logged day are identical. It also fixed a 316 px Meds-tab row on
+the folded screen, measured on the live v3.30.0. 19/19, negative control
+33/33 — which caught one assertion that could not fail as first written.
+
 ## 2026-09-22 (later) — the mirror is live, and carries the reports too
 
 Signed in, both halves uploading, and the snapshot now carries **the reports

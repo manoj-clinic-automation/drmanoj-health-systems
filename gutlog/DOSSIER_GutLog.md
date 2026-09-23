@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.30.0)
+# GutLog — DOSSIER (v3.31.0)
 
 Single source of truth. Update after every change.
 
@@ -384,6 +384,104 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## Foods by weight, a sourced table, and a time on every entry — v3.31.0 (`GUTLOG_V3310_FOODLIB`, 2026-09-23)
+
+**Food list:** Meals → *Manage food library*, at `https://health.dr-manoj.in/`.
+
+### What was there
+`library.portion` was free text ("1 katori", "30 g") and protein / kcal /
+fibre were per *that* portion. Logging was whole multiples of it (the
+basket's counter, small/medium/large, ½–2 servings). Every value was
+hardcoded or typed. On times: the Day by day card could move any entry and
+a dose row could be re-timed, but the Now meal card logged at the moment Log
+was pressed, meal rows showed a time that could not be tapped, and the Meds
+tab listed dose times as plain text.
+
+### What it does now
+- **A numeric basis for every food.** New `library` columns: `portion_qty`
+  + `portion_unit` (g/ml), per-100 `b_protein` / `b_kcal` / `b_fibre`,
+  `weighed_dry`, `portion_est`, `source`, `source_date`, `source_ref`. The
+  old `protein`/`kcal`/`fibre` stay the **per-portion** values every reader
+  already uses; `lib_apply()` is the one place that works them out from the
+  basis, so nothing that reads them changed.
+- **Weighed dry.** For dal, rice, poha, oats: the basis is per 100 g *dry*,
+  so the dry weight on the scale is exact and no cooked-yield factor is
+  guessed. Every weight field for such a food says "dry weight".
+- **Logging by weight.** The basket row and the Now card's "Also had" rows
+  keep their counter and gain a grams/ml field. The server scales from the
+  per-100 basis (`lib_weigh`); a weighed item's numbers never come from the
+  page. The meal keeps `g`, and `dry` when it was a dry weight.
+- **The source, decided on the server.** Values equal to the table row he
+  picked are `USDA`; values that differ from what was stored are `own`; a
+  save that changes no value keeps what it had, so a later lookup can never
+  turn `own` back. Shown on every row.
+- **The table.** `food_table_usda.json` beside `app.py`, built by
+  `build_food_table.py` from USDA FoodData Central **SR Legacy** (April
+  2018), public domain (CC0 1.0): protein, kcal and fibre per 100 g for
+  7,791 foods. **IFCT 2017 is not bundled** — no licence-clean
+  machine-readable copy exists (NIN copyright). No live API call: a lookup
+  is a deterministic search of that file (`/api/foodtable`, login-gated),
+  with Indian names mapped to the table's words (masoor dal → lentils, chana
+  → chickpeas, besan …). It does not know paneer or poha; there the values
+  stay his to type. A new food whose name the table knows is filled once,
+  with the match shown; nothing is ever written over his values without a
+  tap. **Two SR Legacy rows are left out** by the builder because their names
+  contain a word on the local clinical-terms list, which NO_SECRETS check C
+  would refuse in a tracked file; only the count is printed.
+- **The list.** Most used (90 days) first, then by group; each row shows the
+  portion with its weight ("1 katori · 150 g (est.)"), the values for that
+  portion, the per-100 values and the source. One editor (`lfEditor`) serves
+  the list and the Meals tab's "add a food".
+- **Times.** `teOpen()`: one way to change the time of anything logged,
+  using the same hour/minute lists as every time box (v3.27.0), never the
+  phone's dialog. Wired to meal rows on the Meals tab (any day), meal rows on
+  the Now tab, the Meds tab's today list and the Review tab's dose table. All
+  save through `/api/retime`, so every change lands in `edits`. The Now meal
+  card has a **Time eaten** field (default now; an edited meal opens at its
+  own time, and a change made there is audited too). A meal cannot be logged
+  later than now today — the rule doses and retimes already had. The Meals
+  and Meds time boxes reset to now when the tab opens unless he set one.
+- **Meds tab, folded screen.** Its Date | Time row was **316 px wide on
+  v3.30.0** — the same `.row2` fault v3.29.0 removed from the Meals tab. The
+  two cells now wrap.
+
+### The migration (library only)
+`lib_backfill()` runs from `_migrate()` (schema **3.3.4 → 3.3.5**), from
+`_seed()`, and before `/api/library` reads. It touches only rows whose
+`source` is empty and never changes per-portion values; meals are not read or
+written. A portion text starting with a number and unit is exact; `~150 g`
+inside the text or a household word (katori 150 g, roti/chapati 40 g, slice
+30 g, egg 50 g, glass 250 ml, tbsp 15 g, tsp 5 g) is **estimated**; anything
+else gets no weight. Every pre-existing food is `source='estimated'`, since
+none of those numbers came from a table — including any he typed himself;
+editing a value makes it `own`.
+
+**Live, 10:35 IST:** 162 foods — **17 exact, 76 estimated weight, 69 no
+weight**; 0 of 162 per-portion rows changed; day totals for all 6 logged days
+identical before and after.
+
+### Suites changed on purpose
+Four older suites seeded today's meals at 08:00–20:00 or pinned the schema
+string, and would fail every morning under the new rule: `test_v3271`,
+`test_v3272_healthz`, `test_v3290_nutrition` now seed at 00:00;
+`test_phase_m` 01 checks the schema reached 3.3.4 rather than equalling it.
+
+### Evidence
+`test_v3310_foodlib.py` **19/19** (13 API, 6 in Chromium at 300 px; the
+browser six skip on the server, which has no Playwright). Negative control
+**33/33 seen to fail**, 16 by mutation: `householdexact`, `touchmeals`,
+`clientnumbers`, `nodry`, `keepsource`, `backfillall`, `anyfdc`,
+`staysday`, `nofuture`, `noaudit`, `nobasis`, `nodrylabel`, `retimetoday`,
+`cardnow`, `nofill`, `widebasket`. It caught a hole on its first run:
+assertion 02 took its "before" snapshot with a request that had already run
+the migration, so a migration rewriting meals passed; the snapshot now comes
+first. All 27 server suites green before the restart (phase_j 28/28 with the
+FitLog path; `test_ui_now` offline, ALL PASS). Deployed 10:35 IST, `app.py`
+sha256 `12f1101c…`, byte-identical to the repo; `--reverse` reproduces
+v3.30.0 byte-for-byte (`bfbd1a56…`). Rollback
+`app.py.bak-v3310-20260923_103419`; DB backup
+`health3.db.pre-v3310-20260923_102711` (integrity ok, 36 tables).
 
 ## The mirror staleness line — v3.30.0 (`GUTLOG_V3300_MIRRORSTALE`, 2026-09-22)
 
@@ -1849,6 +1947,12 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-23 v3.31.0 — foods by weight, a sourced table, every time
+  editable. DEPLOYED 10:35 IST.** See the section above. `patch_gutlog_v3310_foodlib.py`,
+  **41 anchors**, Jinja guard, reversible byte-for-byte. Schema 3.3.4 → 3.3.5,
+  verified by reading `schema_version` after one `GET /login`. New tracked
+  files: `food_table_usda.json`, `build_food_table.py`,
+  `test_v3310_foodlib.py`, `new_assertions_v3310.json`.
 - **2026-09-22 record data, no code change.** Three owner-authorised data
   changes, applied by `ops/apply_changes_20260922.py` (dry run by default,
   idempotent, `sqlite3.backup()` taken first ->

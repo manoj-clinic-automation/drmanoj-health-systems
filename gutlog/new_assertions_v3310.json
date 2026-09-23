@@ -1,0 +1,109 @@
+{
+ "_": ["GutLog v3.31.0 -- a food library by weight with a sourced table, and a time on every entry. v3.30.0 has no weights, no table, no time on the meal card and no time buttons, so a version control fails most of these -- and says little about the ones that guard a PROPERTY. Those are also broken on purpose in the current build: the migration writing to meals, a household measure passed off as exact, the page's numbers trusted for a weighed item, a dry weight not marked, his value reverted to a table's or to 'estimated', a changed number passed off as USDA, a retime that leaves the day where it was, a future meal time accepted, a card time change left unrecorded, the per-100 line gone from the list, the dry label gone from the basket, a past-day row saving onto today, the card ignoring the time chosen, the editor never filling from the table, and a weight field too wide for the folded screen. 02 has no version control at all: v3.30.0 has no migration, so it cannot fail it."],
+ "suite": "test_v3310_foodlib.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3310_foodlib.py",
+ "assertions": [
+  {"name": "01 the migration: grams exactly, a household measure flagged estimated", "control": "version"},
+  {"name": "01 the migration: grams exactly, a household measure flagged estimated", "control": "mutation",
+   "mutation": {"id": "householdexact", "why": "a katori's guessed weight is recorded as if he had weighed it",
+    "find": "            return _lib_num(m.group(1)) * grams, unit, 1",
+    "replace": "            return _lib_num(m.group(1)) * grams, unit, 0"}},
+
+  {"name": "02 a past day's totals are unchanged by the migration", "control": "mutation",
+   "mutation": {"id": "touchmeals", "why": "the migration re-works the meals it finds instead of leaving them as logged",
+    "find": "    rows = con.execute(\"SELECT id, portion, protein, kcal, fibre FROM library \"",
+    "replace": "    con.execute(\"UPDATE meals SET protein=ROUND(protein)\")\n    rows = con.execute(\"SELECT id, portion, protein, kcal, fibre FROM library \""}},
+
+  {"name": "03 a new food is saved with its weight and is reusable", "control": "version"},
+
+  {"name": "04 logging 40 g of a food with a 100 g basis records 0.4 x its values", "control": "version"},
+  {"name": "04 logging 40 g of a food with a 100 g basis records 0.4 x its values", "control": "mutation",
+   "mutation": {"id": "clientnumbers", "why": "a weighed item takes the page's numbers instead of the food's basis",
+    "find": "            clean.append(w)\n            p += w[\"q\"] * w[\"p\"]",
+    "replace": "            w = dict(w, p=float(it.get(\"p\") or 0), k=float(it.get(\"k\") or 0), f=float(it.get(\"f\") or 0))\n            clean.append(w)\n            p += w[\"q\"] * w[\"p\"]"}},
+
+  {"name": "05 a dry-weight food logged at 60 g dry records 0.6 x the dry basis", "control": "version"},
+  {"name": "05 a dry-weight food logged at 60 g dry records 0.6 x the dry basis", "control": "mutation",
+   "mutation": {"id": "nodry", "why": "a meal weighed dry does not say so",
+    "find": "    if r[\"weighed_dry\"]:\n        it[\"dry\"] = 1",
+    "replace": "    if False:\n        it[\"dry\"] = 1"}},
+
+  {"name": "06 editing nutrition makes it 'own' and a later lookup never reverts it", "control": "version"},
+  {"name": "06 editing nutrition makes it 'own' and a later lookup never reverts it", "control": "mutation",
+   "mutation": {"id": "keepsource", "why": "an edited value keeps the table's label",
+    "find": "        if not same:\n            f.update(source=\"own\", source_date=stamp, source_ref=\"\")",
+    "replace": "        if False:\n            f.update(source=\"own\", source_date=stamp, source_ref=\"\")"}},
+  {"name": "06 editing nutrition makes it 'own' and a later lookup never reverts it", "control": "mutation",
+   "mutation": {"id": "backfillall", "why": "the backfill re-labels every food, including the ones he set",
+    "find": "\"WHERE COALESCE(source,'')=''\").fetchall()",
+    "replace": "\"WHERE 1\").fetchall()"}},
+
+  {"name": "07 only values that match the table row are labelled USDA", "control": "mutation",
+   "mutation": {"id": "anyfdc", "why": "naming a table row is enough to be labelled USDA, whatever the numbers",
+    "find": "    if t is not None and pq and all(",
+    "replace": "    if t is not None and pq and True or all("}},
+
+  {"name": "08 the Now card logs by weight too", "control": "version"},
+
+  {"name": "09 a past-day meal's time is edited and the day totals move with it", "control": "mutation",
+   "mutation": {"id": "staysday", "why": "a retime changes the clock but leaves the entry on its old day",
+    "find": "    db().execute(\"UPDATE \" + tbl + \" SET day=?, \" + col + \"=? WHERE id=?\",\n                 (new_d, new_t, rid))",
+    "replace": "    db().execute(\"UPDATE \" + tbl + \" SET day=?, \" + col + \"=? WHERE id=?\",\n                 (old_d, new_t, rid))"}},
+  {"name": "10 a past-day dose's time is edited and the day counts move with it", "control": "version"},
+  {"name": "10 a past-day dose's time is edited and the day counts move with it", "control": "mutation",
+   "mutation": {"id": "staysday", "why": "a retime changes the clock but leaves the entry on its old day",
+    "find": "    db().execute(\"UPDATE \" + tbl + \" SET day=?, \" + col + \"=? WHERE id=?\",\n                 (new_d, new_t, rid))",
+    "replace": "    db().execute(\"UPDATE \" + tbl + \" SET day=?, \" + col + \"=? WHERE id=?\",\n                 (old_d, new_t, rid))"}},
+
+  {"name": "11 a meal cannot be logged later than now today", "control": "version"},
+  {"name": "11 a meal cannot be logged later than now today", "control": "mutation",
+   "mutation": {"id": "nofuture", "why": "the meal card accepts a time that has not come yet",
+    "find": "    if day == today() and mtime > now_hm():\n        return {\"ok\": False, \"err\": \"That time has not come yet today.\"}, 400",
+    "replace": "    if False:\n        return {\"ok\": False, \"err\": \"That time has not come yet today.\"}, 400"}},
+
+  {"name": "12 a time changed from the meal card is kept and recorded", "control": "version"},
+  {"name": "12 a time changed from the meal card is kept and recorded", "control": "mutation",
+   "mutation": {"id": "noaudit", "why": "a time changed from the card is not written to edits, so it changed silently",
+    "find": "        if (day, mtime) != (old[\"day\"], old[\"mtime\"] or \"\"):",
+    "replace": "        if False:"}},
+
+  {"name": "13 the food list shows each food's portion, per-100 values and source", "control": "version"},
+  {"name": "13 the food list shows each food's portion, per-100 values and source", "control": "mutation",
+   "mutation": {"id": "nobasis", "why": "the list stops showing the per-100 values and the source",
+    "find": "  nm.appendChild(el('small','lfbasis',",
+    "replace": "  if(0)nm.appendChild(el('small','lfbasis',"}},
+
+  {"name": "14 the basket takes a weight and says when it is a dry weight", "control": "version"},
+  {"name": "14 the basket takes a weight and says when it is a dry weight", "control": "mutation",
+   "mutation": {"id": "nodrylabel", "why": "the weight field no longer says dry weight",
+    "find": "  if(dry)w.appendChild(el('b','dryw','dry weight'));",
+    "replace": "  if(0)w.appendChild(el('b','dryw','dry weight'));"}},
+
+  {"name": "15 a meal's time on a past day is changed from its row", "control": "version"},
+  {"name": "15 a meal's time on a past day is changed from its row", "control": "mutation",
+   "mutation": {"id": "retimetoday", "why": "a past meal's time is saved onto today",
+    "find": "    try{const r=await post('/api/retime',{table:o.table,id:o.id,day:o.day,time:tt.value});",
+    "replace": "    try{const r=await post('/api/retime',{table:o.table,id:o.id,day:todayISO,time:tt.value});"}},
+
+  {"name": "16 the Now meal card has a time, default now, and its rows can be re-timed", "control": "version"},
+  {"name": "16 the Now meal card has a time, default now, and its rows can be re-timed", "control": "mutation",
+   "mutation": {"id": "cardnow", "why": "the card logs at the moment Log is pressed, whatever time was chosen",
+    "find": "    const mt=($('#mcTime')&&$('#mcTime').value)||mcNowHM();",
+    "replace": "    const mt=mcNowHM();"}},
+
+  {"name": "17 a dose time on the Meds tab is changed from the list", "control": "version"},
+
+  {"name": "18 the editor saves per-100 values and fills a new food from the table", "control": "version"},
+  {"name": "18 the editor saves per-100 values and fills a new food from the table", "control": "mutation",
+   "mutation": {"id": "nofill", "why": "a new food the table knows is never filled from it",
+    "find": "    if(autofill&&top&&top.full&&!touched&&(auto||rd().every(v=>v==null)))useHit(top);",
+    "replace": "    if(0)useHit(top);"}},
+
+  {"name": "19 everything new fits the folded screen", "control": "version"},
+  {"name": "19 everything new fits the folded screen", "control": "mutation",
+   "mutation": {"id": "widebasket", "why": "the weight field is too wide for the folded screen",
+    "find": ".bkw input.bkg{width:76px;flex:0 0 76px;",
+    "replace": ".bkw input.bkg{width:376px;flex:0 0 376px;"}}
+ ]
+}
