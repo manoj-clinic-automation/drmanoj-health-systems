@@ -422,6 +422,9 @@ def main():
                     "const w=i.nextElementSibling;return {hidden:i.style.display==='none',"
                     "lists:!!(w&&w.querySelector('select.tph')&&w.querySelector('select.tpm')),"
                     "value:i.value};})()")
+                # read the clock AFTER the page did, so "defaults to now" is a
+                # window, not a race against the minute the suite started in
+                B["now_at"] = datetime.now().strftime("%H:%M")
                 B["wide_now"] = wide()
                 pg.select_option("#mealBody .mctime select.tph", hh)
                 pg.select_option("#mealBody .mctime select.tpm", "00")
@@ -579,7 +582,8 @@ def main():
             return "SKIPPED: Playwright not installed here"
         t = G("now_time_lists", "now")
         assert t and t["hidden"] and t["lists"], "the Now card's time is not the two lists: %r" % t
-        assert t["value"] and t["value"] <= NOW, "the Now card's time does not default to now: %r" % t
+        assert t["value"] and NOW <= t["value"] <= B.get("now_at", NOW), \
+            "the Now card's time does not default to now: %r (suite %s, read %s)" % (t, NOW, B.get("now_at"))
         assert G("now_logged", "now") == [(NOW[:2] + ":00",)], \
             "the card logged at %r, not the time chosen" % B["now_logged"]
         assert (NOW[:2] + ":00") in G("now_row", "now"), "the logged meal does not show its time"

@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.31.0)
+# GutLog — DOSSIER (v3.32.0)
 
 Single source of truth. Update after every change.
 
@@ -384,6 +384,80 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## The food test — v3.32.0 (`GUTLOG_V3320_FOODTEST`, 2026-09-23)
+
+**`https://health.dr-manoj.in/foodtest`**, and a Food test card on the Now
+tab. It runs the FODMAP reintroduction in plan document 4, in under 30
+seconds a day: one tap for the day's step, one short evening score.
+
+### The plan is data
+`seed_foodtest.py --plan foodtest.local.json --apply` loads his plan file
+(gitignored; master copy `fitlog-ingest\foodtest.local.json`; **deleted from
+the server after seeding**, like the recipe cards) into `ft_items`, and the
+reminder line, plan-document id, safe plate and rules into the `ft_cfg`
+setting. Re-seeding replaces the plan's definition only, never a logged
+step, score or outcome. The medicine lines of the PDF's Week 0 are **not**
+transcribed; they stay in the PDF, one tap away. Where the PDF states
+nothing, the file leaves it blank: **no washout for Weeks 4 and 5, no meal
+for Weeks 2 and 4** — ask him before filling either in. The seeder also adds
+each test food to the library from the USDA table (source `USDA`, dry basis
+for pulses, cooked for cauliflower), so a logged dose is also an ordinary
+meal in the day's nutrition totals.
+
+### How it behaves
+- **Steps advance when logged, never by the calendar.** `ft_progress()`
+  finds the first step not yet logged. A missed day, **Skip today** or
+  **Pause** (holiday / operating list / illness / other) leaves it where it
+  was and is noted as a gap, not a result. One step per week per day; only
+  the next step can be logged.
+- **The card**: "Week 1 · day 2 — Kala chana 25 g dry", cooked equivalent and
+  meal, the amount (editable), the day (today or up to six back, a list) and
+  the time (default now, the two time lists). **Taken**. A conditional step
+  (the 60 g) also offers "Not clean — go to washout". Afterwards: "✓ Today …
+  at [time]" (tap to change), Undo, and "Next: …".
+- **Washout days ask only the evening score**; saving it counts the day.
+- **Evening score**: pain 0–10, bloating, urgency, Bristol — all four
+  required — and "clear symptoms today?". One per day, re-opens for editing.
+- **The stop rule is offered, never applied.** A clear-symptom score on a
+  ladder with a dose that day or the two before brings "Stop this ladder and
+  record the limit at N g?"; one tap records **limit at N g** and moves to
+  washout. Nothing is ever concluded from the scores.
+- **Outcome per group** — Tolerated / Limit at N g / Not tolerated / Not
+  tested — asked on the card when a week ends, changeable on `/foodtest`.
+  Week 4 is offered only after Week 1 is marked Tolerated; optional weeks
+  can be declined ("Not doing this week" = Not tested).
+- **`/foodtest`**: per group, each dose with date, time and that day's
+  score, **plus the first washout day** (reactions run 24–48 h behind); the
+  outcome; every time and day editable (`/api/ft/retime`, audited in
+  `edits`; a dose's meal moves with it); cooking notes, the safe plate, the
+  rules, and the plan PDF link. Dinner days of Week 0 are listed with time,
+  size and cramp.
+- **Two flags, stated not interpreted**: a medicine start, stop or dose
+  change recorded in GutLog inside the challenge window (`med_schedule`
+  effective dates and `courses` start/end) — "medicine change during this
+  week — result may be unreliable" — and a gap of more than one day between
+  doses inside a ladder.
+
+### Evidence
+`test_v3320_foodtest.py` **16/16** (11 API on a synthetic plan, 5 in Chromium
+at 300 px). Negative control **31/31 seen to fail**, 12 by mutation
+including `hideflag` (the confounder flag hidden), `autostop` (the stop
+imposed from the score), `skipadvances` (a skipped day moving the plan on),
+`mealstays`, `partialscore`, `nowashday`, `anystep`, `twoaday`, `nostopjump`,
+`amountignored`, `limitnog`, `widecard`. It caught one weak check on the way:
+the folded-width test measured only the page, and a card that clips its
+overflow passed with a line running off it; it now checks nothing inside
+the card ends past the card's edge. `test_v3310_foodlib` 16 was also
+tightened (it compared the card's "now" with the minute the suite started,
+and failed when a slow run crossed a minute); the v3.31.0 negative control
+was re-run against the exact v3.31.0 build afterwards, 33/33. All 28 server
+suites green before the restart. Deployed 12:51 IST, `app.py` sha256
+`8eea4dd0…`, byte-identical to the repo. Rollback
+`app.py.bak-v3320-20260923_125020`; DB before the patch
+`health3.db.pre-v3320-20260923_125019`, before the seed
+`health3.db.bak-seedfoodtest-20260923_125058`. New tables `ft_items`,
+`ft_log`, `ft_score`, `ft_outcome` via `SCHEMA` — no schema-version bump.
 
 ## Foods by weight, a sourced table, and a time on every entry — v3.31.0 (`GUTLOG_V3310_FOODLIB`, 2026-09-23)
 
@@ -1947,6 +2021,10 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-23 v3.32.0 — the food test. DEPLOYED 12:51 IST.** See the section
+  above. `patch_gutlog_v3320_foodtest.py`, 8 anchors, Jinja guard,
+  reversible. New tracked files: `seed_foodtest.py`, `test_v3320_foodtest.py`,
+  `new_assertions_v3320.json`.
 - **2026-09-23 v3.31.0 — foods by weight, a sourced table, every time
   editable. DEPLOYED 10:35 IST.** See the section above. `patch_gutlog_v3310_foodlib.py`,
   **41 anchors**, Jinja guard, reversible byte-for-byte. Schema 3.3.4 → 3.3.5,

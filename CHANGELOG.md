@@ -3,6 +3,18 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-23 (later) — GutLog v3.32.0: the food test
+
+The FODMAP reintroduction now runs from the Now tab: one tap for the day's
+step, one short evening score. The plan is data, seeded from his gitignored
+file; steps advance when he logs them, never by the calendar, so a missed or
+skipped day leaves the plan where it was. The stop rule is offered, never
+imposed; the outcome per group is his to set. `/foodtest` shows each group's
+doses with the score for every challenge day plus the first washout day, and
+flags a medicine change recorded inside a test week or a gap in a ladder —
+stated, not interpreted. 16/16, negative control 31/31, including a
+mutation that hides that flag.
+
 ## 2026-09-23 — GutLog v3.31.0: foods by weight, and every time editable
 
 He weighs food and wants to log what he actually ate. Every food now has a
