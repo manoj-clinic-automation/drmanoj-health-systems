@@ -398,9 +398,11 @@ the server after seeding**, like the recipe cards) into `ft_items`, and the
 reminder line, plan-document id, safe plate and rules into the `ft_cfg`
 setting. Re-seeding replaces the plan's definition only, never a logged
 step, score or outcome. The medicine lines of the PDF's Week 0 are **not**
-transcribed; they stay in the PDF, one tap away. Where the PDF states
-nothing, the file leaves it blank: **no washout for Weeks 4 and 5, no meal
-for Weeks 2 and 4** — ask him before filling either in. The seeder also adds
+transcribed; they stay in the PDF, one tap away. The PDF stated no washout
+for Weeks 4 and 5 and no meal for Weeks 2 and 4; **he set those on
+23-Sep-2026** and the plan was re-seeded at 13:06 IST (backup
+`health3.db.bak-seedfoodtest-20260923_130602`, no step, score or outcome
+existed yet, none changed). The seeder also adds
 each test food to the library from the USDA table (source `USDA`, dry basis
 for pulses, cooked for cauliflower), so a logged dose is also an ordinary
 meal in the day's nutrition totals.
