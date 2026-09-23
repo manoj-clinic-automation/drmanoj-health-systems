@@ -130,6 +130,10 @@ CLINICAL_ALLOW = {
         "the patcher that wrote the orexin-antagonist entry and its label rules "
         "(PW025-PW034, CR016) into the curated base - generic label pharmacology, "
         "the same content as knowledge/rules.json; its test names no drug",
+    "rxguard/patch_rxguard_v184.py":
+        "the patcher that wrote the NaSSA entry's label fields and rules "
+        "(PW035-PW047, CR017, mao_inhibitor_keys) into the curated base - generic "
+        "label pharmacology, the same content as knowledge/*.json; its test names no drug",
     "rxguard/test_conditions.py":
         "synthetic condition fixtures over the generic rule set",
     "rxguard/test_kb.py":

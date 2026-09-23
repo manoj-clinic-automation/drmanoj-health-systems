@@ -239,6 +239,25 @@ def gut_recent(g, since):
     return ep, dy
 
 
+def food_test_recent(g, since):
+    """GutLog v3.32.0+ Food Test: the evening scores -- with where the pain
+    was and when it began (v3.33.0) -- and the logged steps. Columns are
+    read only if the database has them, so an older GutLog still mirrors."""
+    have = [r["name"] for r in rows(g, "SELECT name FROM sqlite_master WHERE type='table'")]
+    if "ft_score" not in have:
+        return [], []
+    cols = [r["name"] for r in rows(g, "PRAGMA table_info(ft_score)")]
+    extra = "".join(", " + c for c in ("pain_sites", "onset") if c in cols)
+    sc = rows(g, "SELECT day, stime, pain, bloating, urgency, bristol, clear" + extra +
+                 " FROM ft_score WHERE day >= ? ORDER BY day DESC, stime DESC", (since,))
+    for s in sc:
+        s.setdefault("pain_sites", "")
+        s.setdefault("onset", "")
+    st = rows(g, "SELECT day, ltime, slug, kind, amount, unit, size, cramp, reason FROM ft_log "
+                 "WHERE day >= ? ORDER BY day DESC, ltime DESC", (since,)) if "ft_log" in have else []
+    return sc, st
+
+
 def meals_recent(g, since):
     """The SAME numbers the app shows. See departure 2: this is a SUM here,
     and test_health_mirror.py holds it equal to GutLog's nut_day()."""
@@ -422,6 +441,26 @@ def build_markdown(data, generated):
                 for d in data["daylog"]]))
     A("")
 
+    A("## Food test, last 30 days")
+    A("")
+    A("The evening scores as he entered them. *Where* and *Started* are the")
+    A("abdominal regions and the time the pain began, when he gave them.")
+    A("")
+    A(md_table(["Date", "Time", "Pain", "Bloating", "Urgency", "Bristol", "Clear", "Where", "Started"],
+               [[dmy(s["day"]), s.get("stime") or "", s.get("pain"),
+                 "yes" if s.get("bloating") else "no", "yes" if s.get("urgency") else "no",
+                 s.get("bristol") or "", "yes" if s.get("clear") else "",
+                 (s.get("pain_sites") or "").replace("|", ", "), s.get("onset") or ""]
+                for s in data.get("ft_scores") or []]))
+    A("")
+    A("### Steps")
+    A("")
+    A(md_table(["Date", "Time", "Week", "What", "Amount"],
+               [[dmy(t["day"]), t.get("ltime") or "", t.get("slug") or "", t.get("kind") or "",
+                 ("%s %s" % (t["amount"], t.get("unit") or "")) if t.get("amount") is not None else ""]
+                for t in data.get("ft_steps") or []]))
+    A("")
+
     A("## Meals, last 30 days")
     A("")
     A("Estimated, as in the app. A day with nothing logged says **not logged**")
@@ -498,7 +537,10 @@ def collect(days):
     since30 = days_ago(days)
     since90 = days_ago(90)
     ep, dy = gut_recent(g, since30)
+    fts, ftl = food_test_recent(g, since30)
     data = {
+        "ft_scores": fts,
+        "ft_steps": ftl,
         "meds_now": medicines_now(g),
         "med_events": medicine_events(g, since90),
         "sleep": sleep_nights(g, f, since30) if f else [],
@@ -543,7 +585,7 @@ def generate(out_dir, days=30, dry_run=False):
 
     md = build_markdown(data, generated)
 
-    counts = {"sections": 9, "meds_now": len(data["meds_now"]),
+    counts = {"sections": 10, "ft_scores": len(data["ft_scores"]), "meds_now": len(data["meds_now"]),
               "med_events": len(data["med_events"]), "sleep_nights": len(data["sleep"]),
               "vitals": len(data["vitals"]), "episodes": len(data["episodes"]),
               "meal_days": len(data["meals"]), "labs": len(data["labs"]),
@@ -596,6 +638,14 @@ def generate(out_dir, days=30, dry_run=False):
               ["day", "pain", "pain_site", "bristol", "stools", "syms", "notes"],
               [[d.get(k) for k in ("day", "pain", "pain_site", "bristol", "stools",
                                    "syms", "notes")] for d in data["daylog"]])
+    write_csv(os.path.join(csvd, "food_test_scores.csv"),
+              ["day", "stime", "pain", "bloating", "urgency", "bristol", "clear", "pain_sites", "onset"],
+              [[s.get(k) for k in ("day", "stime", "pain", "bloating", "urgency", "bristol", "clear",
+                                   "pain_sites", "onset")] for s in data["ft_scores"]])
+    write_csv(os.path.join(csvd, "food_test_steps.csv"),
+              ["day", "ltime", "week", "kind", "amount", "unit", "size", "cramp", "reason"],
+              [[t.get(k) for k in ("day", "ltime", "slug", "kind", "amount", "unit", "size", "cramp",
+                                   "reason")] for t in data["ft_steps"]])
     write_csv(os.path.join(csvd, "meals.csv"),
               ["day", "logged", "partial", "kcal", "protein", "fibre", "meals"],
               [[m.get(k) for k in ("day", "logged", "partial", "kcal", "protein",

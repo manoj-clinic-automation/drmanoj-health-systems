@@ -16,6 +16,7 @@ fitlog/test_analgesic_mirror.py, which runs both applications for real.
 """
 import ast
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -439,10 +440,15 @@ def main():
         # rule 5d: medicine names live in regimen.local.json, not in the page
         for lbl in mod.PAIN_ANALGESICS:
             assert lbl not in h, "an analgesic chip name is baked into the page: " + lbl
-        # rule 5b: the v3.4.2 gut tiles must stay at two, or test_ui_now fails
-        m = re.search(r"const PAIN_SITES=\[(.*?)\];", h)
-        assert m and m.group(1).count(",") == 1, \
-            "the gut pain-by-site list changed: " + (m.group(1) if m else "gone")
+        # v3.33.0: the gut pain-by-site list is the nine-region grid plus
+        # diffuse, written in from ABD_SITES; both v3.4.2 labels are kept
+        # exactly so history stays continuous (test_ui_now drives the grid)
+        m = re.search(r"const ABD_SITES=(\[.*?\]\]);", h)
+        assert m, "the region list was not written into the page"
+        sites = [x[0] for x in json.loads(m.group(1))]
+        assert len(sites) == 10 and "Left iliac pain" in sites and "Hypogastrium pain" in sites, \
+            "the gut pain-by-site list changed: %r" % sites
+        assert "__ABD_SITES__" not in h, "the placeholder reached the page"
         blk = h.split("GUTLOG_V3120_PAIN -- pain tiles", 1)[1].split("function buildNowStatics", 1)[0]
         for tok in ("{{", "{%", "{#"):
             assert tok not in blk, "Jinja token " + tok + " in the new JS (rule 5b)"

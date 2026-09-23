@@ -1,7 +1,7 @@
 {
   "_meta": {
     "schema": "medsafe-drugs/1",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "reviewed": "2026-07-25",
     "scales": {
       "anticholinergic": "0-3, ACB/ADS-style. 3 = strongly anticholinergic.",
@@ -110,12 +110,15 @@
     },
 
     "mirtazapine": {
-      "class": "Noradrenergic and specific serotonergic antidepressant", "atc": "N06AX11", "rxcui": "15996",
+      "class": "Noradrenergic and specific serotonergic antidepressant (NaSSA)", "atc": "N06AX11", "rxcui": "15996",
       "cyp": {"substrate": {"CYP3A4": "major", "CYP2D6": "minor", "CYP1A2": "minor"}, "inhibitor": {}, "inducer": {}},
       "burden": {"anticholinergic": 1, "serotonergic": 1, "sedation": 3, "constipating": 2, "bleeding": 1, "nephrotoxic": 0, "seizure": 1},
       "qt": "conditional", "hr": "none", "bp": "decrease", "withdrawal": "moderate",
-      "notes": "Strongly sedating at low dose. Weight gain. Blocks 5HT2/5HT3 so serotonin-syndrome contribution is lower than SSRI/SNRI but not zero.",
-      "source": "US SPL.", "reviewed": "2026-07-25"
+      "strengths": ["3.75 mg", "7.5 mg", "15 mg", "30 mg", "45 mg"],
+      "mao_contraindicated": true,
+      "start_checks": [{"flag": "AMBER", "title": "Sodium check 2–3 weeks after starting", "consequence": "Hyponatraemia (SIADH) can follow a serotonergic antidepressant; the label names older age, diuretics and volume depletion as greater risk, and it is most often seen over 55.", "monitoring": "Serum sodium 2–3 weeks after starting, sooner with headache, confusion, unsteadiness, nausea or weakness."}],
+      "notes": "Sleep: the useful dose is 3.75–7.5 mg, where antihistamine (H1) action dominates; noradrenergic activity rises with the dose and sedation falls, so raising the dose for sleep is the wrong move (owner's note). 3.75 mg is half a 7.5 mg tablet; the US label lists 7.5, 15, 30 and 45 mg. Appetite increase in 17% vs 2% and weight gain of 7% or more in 7.5% (label); may worsen glycaemic control. Rare agranulocytosis: with a sore throat, fever, mouth ulcers or other signs of infection, check the blood count and stop if the white count is low (label). Avoid benzodiazepines and alcohol (label); Z-drugs add sedation too. MAO inhibitors: contraindicated, and 14 days must pass after stopping one (label). CYP2D6: the label reports that paroxetine did not change its pharmacokinetics relevantly, so CYP2D6 inhibitors are not flagged. QT: the label found no clinically meaningful QTc change at 75 mg; kept at 'conditional' as before. Blocks 5HT2/5HT3, so its serotonin-syndrome contribution is lower than an SSRI/SNRI but not zero.",
+      "source": "US SPL (mirtazapine), read through openFDA 2026-09-23; the 3.75 mg strength and the sleep-dose note are the owner's.", "reviewed": "2026-09-23"
     },
 
     "gabapentin": {

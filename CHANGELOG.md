@@ -3,6 +3,29 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-23 (late) — GutLog v3.33.0: where the pain was, and when it began
+
+A pain that started before dinner could not be recorded as such: two pain
+tiles, and every episode stamped with the moment Save was pressed. Now nine
+abdominal regions sit in a grid as seen facing him, "Started at" is the time
+the episode is filed under, and every GI episode says where it fell against
+the nearest meal — computed from what was logged, never asked. The evening
+score takes a site and an onset too. Day by day is one timeline in true time,
+Food Test steps, scores and pain onsets included, each retimed from the same
+box and audited. The mirror carries it. 12/12, negative control 24/24.
+
+## 2026-09-23 (night) — RxGuard v1.8.4: as-needed counts only when taken
+
+RxGuard's list had drifted from GutLog's, and its quick check counted an
+as-needed analgesic as if it were taken every day — which is why two checks
+came back RED for reasons that were not true. The list was brought into line
+with GutLog, each change recorded; the quick check now counts an as-needed
+medicine only on a day GutLog logged it, and counts it anyway when GutLog
+cannot be read. The MAO-inhibitor contraindication, marked in the base for
+months and read by nothing, now fires — including within 14 days of stopping
+one. A NaSSA's entry was completed from its label; one requested rule was
+left out because the label contradicts it. 6/6, negative control 11/11.
+
 ## 2026-09-23 (evening) — RxGuard v1.8.3: an orexin antagonist hypnotic
 
 A new hypnotic class was missing from RxGuard's curated base. It is there

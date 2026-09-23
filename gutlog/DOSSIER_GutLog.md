@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.32.0)
+# GutLog — DOSSIER (v3.33.0)
 
 Single source of truth. Update after every change.
 
@@ -384,6 +384,76 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## Pain site, onset time, one true-time day — v3.33.0 (`GUTLOG_V3330_PAINSITE`, 2026-09-23)
+
+Now → *Symptom now* at `https://health.dr-manoj.in/`, and
+`https://health.dr-manoj.in/foodtest`.
+
+**Why.** On 23-Sep a left-upper pain began before dinner and the app could
+record neither fact: the Symptom card had two pain tiles, and every episode
+was stamped with the moment Save was pressed. The question for his
+gastroenterologist is whether episodes start before or after meals.
+
+**What it does**
+- **Nine regions as a 3 × 3 grid**, as seen facing him ("your right | your
+  left"), plus a full-width *Diffuse / whole abdomen*. One server constant,
+  `ABD_SITES`, written into the page at render time (a placeholder replaced
+  before `render_template_string`, so no Jinja token). The two v3.4.2 labels
+  are kept **exactly** (`Left iliac pain`, `Hypogastrium pain`), so history
+  stays continuous. Tap a region: its 1–10 row opens **below** the grid; tap
+  again: cleared; one episode per region, as before.
+- **Started at**: a time box (the two lists), default now, with Now / 15 min
+  / 30 min / 1 h ago. Saved as the episode's `etime`; the save moment is
+  already in `created`. No new episode column.
+- **Before / after a meal, computed**: `meal_relation()` finds the nearest
+  meal that day within 4 h — "20 min before dinner", "1 h 10 min after
+  dinner", "no meal logged within 4 h". In Day by day under every GI
+  episode (categories GI and Gut) and under each Food Test result day. The
+  Food Test page adds **Onset vs meals** for the current week (its first
+  logged step to today): before a meal / after (0–3 h) / unrelated. Counts
+  only.
+- **Evening score**: with pain > 0 the same grid (several, no per-site
+  score) and an optional *Started at*; both optional, the "all four" rule
+  unchanged, and re-opening the score shows them. `ft_score.pain_sites`
+  (pipe-joined labels, grid order) and `ft_score.onset`, through
+  `_migrate()` **and** `SCHEMA`; schema 3.3.5 → **3.3.6**.
+- **Day by day is one timeline**: Food Test steps at their time (*Food
+  test*), scores at theirs (*Score*), and a separate *Pain onset* entry at
+  the onset with its regions — among meals, doses and symptoms in true time.
+  All retime from the same box: `_TIME_COL` gains `ft_log`, `ft_score` and
+  `ft_score_onset`. The Food Test two go through `ft_retime_core()` — the
+  body of `/api/ft/retime`, now shared, so the one-per-day rules and the
+  dose's meal moving with it cannot differ; the onset row writes
+  `ft_score.onset` only and stays on its score's day. Every move lands in
+  `edits`.
+- **Health Mirror**: it had no Food Test section at all; it now has one —
+  scores with *Where* and *Started*, and the steps — plus
+  `food_test_scores.csv` (with `pain_sites`, `onset`) and
+  `food_test_steps.csv`. Columns are read only if present, so it still runs
+  against an older database.
+
+Nothing backfilled: 17 episodes and every past score untouched.
+
+**Suites changed on purpose.** `test_ui_now` drives the grid, and its
+"if the tiles exist" guard is **gone** — a missing grid now fails instead of
+skipping, which is the pattern that once printed a clean run for a card that
+was not there. `test_phase_i` 16 pins the ten-region list and both old labels
+instead of "two tiles".
+
+**Evidence.** `test_v3330_painsite.py` **12/12** (8 API incl. the mirror, 4 in
+Chromium at 300 px). Negative control **24/24 seen to fail**, 12 by mutation,
+including the two the brief names — `savetime` (episodes stamped with the save
+time, not the onset) and `dropft` (Food Test rows dropped from Day by day) —
+and `mirrored` (the grid drawn as he sees himself rather than as seen facing
+him). It also caught two weak checks of my own before it ran: one assertion
+that could not fail, and an old-label check v3.32.0 would also have passed.
+All 28 server suites and the mirror's 14/14 green before the restart.
+Deployed 21:48 IST, `app.py` sha256 `28b50914…`, byte-identical to the repo;
+schema read 3.3.5 after the restart and **3.3.6 after one GET /login**.
+Rollback `app.py.bak-v3330-20260923_214724`, DB
+`health3.db.pre-v3330-20260923_214724`, mirror
+`/root/ops/health_mirror.py.bak-v3330-20260923_214724`.
 
 ## The food test — v3.32.0 (`GUTLOG_V3320_FOODTEST`, 2026-09-23)
 
@@ -2023,6 +2093,10 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-23 v3.33.0 — pain site, onset, one true-time day. DEPLOYED 21:48
+  IST.** See the section above. `patch_gutlog_v3330_painsite.py`, 30 anchors,
+  Jinja guard, reversible. Schema 3.3.5 → 3.3.6. `ops/health_mirror.py` gains
+  a Food Test section.
 - **2026-09-23 v3.32.0 — the food test. DEPLOYED 12:51 IST.** See the section
   above. `patch_gutlog_v3320_foodtest.py`, 8 anchors, Jinja guard,
   reversible. New tracked files: `seed_foodtest.py`, `test_v3320_foodtest.py`,

@@ -28,7 +28,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # HEALTH_SSO_V1
 import health_sso  # noqa: E402
 
-APP_VERSION = "1.8.3"   # RXGUARD_V183_LEMBOREXANT RXGUARD_V182_SECRETFILE RXGUARD_V181_LABELMAX RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST RXGUARD_V180_DOSE
+APP_VERSION = "1.8.4"   # RXGUARD_V184_NASSA RXGUARD_V183_LEMBOREXANT RXGUARD_V182_SECRETFILE RXGUARD_V181_LABELMAX RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST RXGUARD_V180_DOSE
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KNOWLEDGE_DIR = os.path.join(BASE_DIR, "knowledge")
 DEFAULT_DB = os.path.join(BASE_DIR, "rxguard.db")
@@ -745,6 +745,85 @@ def build_discussion(proposed_key, dose, frequency, indication, findings, condit
                lead["title"] + ". ", ctx))
 
 
+# RXGUARD_V184_NASSA -- three engine pieces the knowledge base now needs.
+PRN_KINDS = ("episodic", "prn")
+
+
+def prn_untaken_today(keys):
+    """As-needed rows among `keys` with no dose logged in GutLog today (IST).
+    When GutLog cannot be read nothing is left out -- a missing feed must
+    never make a burden total look smaller than it is."""
+    prn = set()
+    for m in active_meds():
+        if m["drug_key"] in keys and (m["kind"] or "") in PRN_KINDS:
+            prn.add(m["drug_key"])
+    if not prn:
+        return []
+    data, err = gutlog_doses(days=1)
+    if err or not data:
+        return []
+    day = dose_now().date().isoformat()
+    taken = set()
+    for ev in data.get("events") or []:
+        if ev.get("day") != day:
+            continue
+        taken.update(_split_molecules(ev.get("molecule") or ""))
+        taken.add(norm_key(ev.get("name") or ""))
+    return sorted(k for k in prn if k not in taken)
+
+
+def mao_keys():
+    ks = set(k for k, d in DRUGS.items() if d.get("mao_inhibitor"))
+    ks.update(RULES_DOC.get("mao_inhibitor_keys") or [])
+    return ks
+
+
+def mao_findings(proposed_key, other_keys):
+    """A drug marked mao_contraindicated with an MAO inhibitor -- current, or
+    stopped within 14 days -- is RED, whichever of the two is proposed."""
+    maoi = mao_keys()
+    cutoff = (date.today() - timedelta(days=14)).isoformat()
+    pool = [(k, "on the current list") for k in other_keys]
+    for r in get_db().execute(
+            "SELECT drug_key, stop_date FROM medications WHERE status='stopped' "
+            "AND COALESCE(stop_date,'')>=?", (cutoff,)).fetchall():
+        if r["drug_key"] not in other_keys:
+            pool.append((r["drug_key"], "stopped on %s, under 14 days ago" % r["stop_date"]))
+    p = get_drug(proposed_key) or {}
+    out = []
+    for k, when in pool:
+        if k == proposed_key:
+            continue
+        o = get_drug(k) or {}
+        if (p.get("mao_contraindicated") and k in maoi) or \
+                (proposed_key in maoi and o.get("mao_contraindicated")):
+            drug, inh = (proposed_key, k) if k in maoi else (k, proposed_key)
+            out.append(finding(
+                "RED", "Contraindication",
+                "%s with an MAO inhibitor (%s): contraindicated" % (display_name(drug), display_name(inh)),
+                mechanism="%s is %s. At least 14 days must pass between stopping an MAO "
+                          "inhibitor and starting %s." % (display_name(inh), when, display_name(drug)),
+                consequence="Serotonin syndrome and hypertensive reactions.",
+                action="Do not combine. Keep the 14-day gap.",
+                source=(get_drug(drug) or {}).get("source", "Product labelling."),
+                reviewed=(get_drug(drug) or {}).get("reviewed", "")))
+    return out
+
+
+def start_check_findings(proposed_key, action):
+    """A monitoring step the knowledge base says is owed after starting."""
+    if action != "start":
+        return []
+    d = get_drug(proposed_key) or {}
+    out = []
+    for c in d.get("start_checks") or []:
+        out.append(finding(
+            c.get("flag", "AMBER"), "Monitoring", c.get("title", "Check after starting"),
+            consequence=c.get("consequence", ""), monitoring=c.get("monitoring", ""),
+            action=c.get("action", ""), source=d.get("source", ""), reviewed=d.get("reviewed", "")))
+    return out
+
+
 def analyse(proposed_key, action="start", dose="", frequency="", indication="",
             extra_keys=None):
     """Main entry point. extra_keys allows an ad-hoc episodic course check."""
@@ -759,6 +838,10 @@ def analyse(proposed_key, action="start", dose="", frequency="", indication="",
         burden_keys = [k for k in all_keys if k != proposed_key]
     else:
         burden_keys = all_keys
+    # RXGUARD_V184_NASSA -- an as-needed medicine counts toward a total only
+    # on a day it was taken; pairwise and CYP checks still see it.
+    not_counted = prn_untaken_today([k for k in burden_keys if k != proposed_key])
+    burden_keys = [k for k in burden_keys if k not in not_counted]
 
     totals, contributors = compute_burdens(burden_keys)
 
@@ -781,6 +864,14 @@ def analyse(proposed_key, action="start", dose="", frequency="", indication="",
         findings += condition_findings(proposed_key, conditions, totals)
         findings += renal_findings(proposed_key, conditions)
         findings += duplication_findings(proposed_key, other_keys)
+    if action != "stop":
+        findings += mao_findings(proposed_key, other_keys)
+        findings += start_check_findings(proposed_key, action)
+    if not_counted:
+        left = ", ".join(display_name(k) for k in not_counted)
+        for f in findings:
+            if f["category"] in ("Cumulative burden", "QT / conduction"):
+                f["mechanism"] += (" Not counted: %s (as needed, no dose logged today)." % left)
     findings += history_findings(proposed_key)
     findings += withdrawal_findings(proposed_key, action, other_keys)
 
@@ -808,6 +899,7 @@ def analyse(proposed_key, action="start", dose="", frequency="", indication="",
         "drug": proposed_key, "known": known, "action": action,
         "dose": dose, "frequency": frequency, "indication": indication,
         "considered": [display_name(k) for k in all_keys],
+        "not_counted": [display_name(k) for k in not_counted],
         "discussion": build_discussion(proposed_key, dose, frequency, indication,
                                        findings, conditions),
         "kb_version": "%s / %s" % (DRUGS_DOC["_meta"]["version"], RULES_DOC["_meta"]["version"]),

@@ -298,32 +298,37 @@ with sync_playwright() as p:
     import sqlite3
     nd = lambda: sqlite3.connect(os.environ["GUTLOG_DB"]).execute("SELECT COUNT(*) FROM doses").fetchone()[0]
     res(nd() == 0, "no dose rows left behind after undo (" + str(nd()) + ")")
-    # --- pain by site (v3.4.2) --------------------------------------------
-    if pg.locator("#n_painSites .ptile").count():
-        pg.click("#nowSym .fold-h"); time.sleep(0.3)
-        tiles = pg.locator("#n_painSites .ptile")
-        res(tiles.count() == 2 and pg.locator("#n_painSites .pscore:visible").count() == 0,
-            "two pain tiles, score rows closed")
-        li = tiles.filter(has_text="Left iliac pain"); hy = tiles.filter(has_text="Hypogastrium pain")
-        li.locator(".ph").click(); time.sleep(0.2)
-        res(li.locator(".pscore").is_visible(), "tapping Left iliac expands its score row")
-        ep = lambda: sqlite3.connect(os.environ["GUTLOG_DB"]).execute(
-            "SELECT etype,severity,bristol FROM episodes ORDER BY id").fetchall()
-        pg.click("#n_symSave"); time.sleep(0.5)
-        res(len(ep()) == 0, "unscored site refused, nothing saved")
-        li.locator(".pscore .chip", has_text="6").click()
-        hy.locator(".ph").click(); time.sleep(0.2); hy.locator(".pscore .chip").nth(2).click()
-        pg.locator("#n_symType .chip", has_text="Bloating").click()
-        pg.locator("#n_symSev .chip").nth(3).click()
-        pg.locator("#n_symBristol .chip", has_text="4").click()
-        res(li.locator(".pv").inner_text() == "6/10", "tile header shows its score")
-        pg.click("#n_symSave"); time.sleep(0.8)
-        rows = sorted(tuple(str(v) for v in r) for r in ep())
-        want = sorted([("Bloating", "4", "4"), ("Left iliac pain", "6", "4"), ("Hypogastrium pain", "3", "4")])
-        res(rows == want, "3 episodes, each with its own score: " + str(rows))
-        res(pg.locator("#n_painSites .pscore:visible").count() == 0, "tiles reset after save")
-        hy.locator(".ph").click(); time.sleep(0.2); hy.locator(".ph").click(); time.sleep(0.2)
-        res(not hy.locator(".pscore").is_visible(), "tapping the name again clears the tile")
+    # --- pain by site: the nine-region grid (v3.33.0; two tiles in v3.4.2) --
+    # No "if the tiles exist" guard any more: a missing grid must FAIL here,
+    # not skip -- the guard was exactly the pattern that once printed a clean
+    # run for a card that was not there.
+    pg.click("#nowSym .fold-h"); time.sleep(0.3)
+    tiles = pg.locator("#n_painSites .abdt")
+    res(tiles.count() == 10 and pg.locator("#n_painSites .abdrow").count() == 0,
+        "ten region tiles, no score row open")
+    li = lambda: pg.locator("#n_painSites .abdt[data-site='Left iliac pain']")
+    hy = lambda: pg.locator("#n_painSites .abdt[data-site='Hypogastrium pain']")
+    lirow = lambda: pg.locator("#n_painSites .abdrow[data-site='Left iliac pain']")
+    hyrow = lambda: pg.locator("#n_painSites .abdrow[data-site='Hypogastrium pain']")
+    li().click(); time.sleep(0.2)
+    res(lirow().is_visible(), "tapping Left iliac opens its score row below the grid")
+    ep = lambda: sqlite3.connect(os.environ["GUTLOG_DB"]).execute(
+        "SELECT etype,severity,bristol FROM episodes ORDER BY id").fetchall()
+    pg.click("#n_symSave"); time.sleep(0.5)
+    res(len(ep()) == 0, "unscored site refused, nothing saved")
+    lirow().locator(".chip", has_text="6").first.click(); time.sleep(0.2)
+    hy().click(); time.sleep(0.2); hyrow().locator(".chip").nth(2).click(); time.sleep(0.2)
+    pg.locator("#n_symType .chip", has_text="Bloating").click()
+    pg.locator("#n_symSev .chip").nth(3).click()
+    pg.locator("#n_symBristol .chip", has_text="4").click()
+    res(li().locator(".pv").inner_text() == "6/10", "the tile shows its score")
+    pg.click("#n_symSave"); time.sleep(0.8)
+    rows = sorted(tuple(str(v) for v in r) for r in ep())
+    want = sorted([("Bloating", "4", "4"), ("Left iliac pain", "6", "4"), ("Hypogastrium pain", "3", "4")])
+    res(rows == want, "3 episodes, each with its own score, old labels kept: " + str(rows))
+    res(pg.locator("#n_painSites .abdrow").count() == 0, "grid reset after save")
+    hy().click(); time.sleep(0.2); hy().click(); time.sleep(0.2)
+    res(hyrow().count() == 0, "tapping the region again clears it")
     # --- Phase B (v3.5.0) ------------------------------------------------
     if "loadDayView" in pg.content():
         def nrow(mid, day=None):

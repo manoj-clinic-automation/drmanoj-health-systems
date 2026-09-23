@@ -72,6 +72,53 @@ named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
 days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
 GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
 
+## The NaSSA from its label, MAO inhibitors, as-needed counting — v1.8.4 (DEPLOYED 2026-09-23 21:16 IST)
+
+**Engine.**
+- *As needed counts only when taken.* In `analyse()` a row of kind
+  `episodic`/`prn` counts toward a burden total and the QT sum only if GutLog
+  logged a dose of it **today** (IST). Pairwise and CYP checks still see it —
+  a rarely taken drug still interacts on the day it is taken. **If GutLog
+  cannot be read, it counts**: a missing feed must never make a total look
+  smaller. What was left out is named on each burden finding ("Not counted:
+  …") and returned as `not_counted`. `/astaken` is unchanged.
+- *The MAO-inhibitor contraindication fires.* The `mao_inhibitor` marker was
+  in the base and read by nothing. A drug marked `mao_contraindicated` with
+  an MAO inhibitor — current, or **stopped within 14 days** — is RED, from
+  either side. MAO inhibitors are the marked entries plus
+  `mao_inhibitor_keys` in `rules.json`, so one not in the base counts by name.
+- *Start checks.* A drug may carry `start_checks`, shown when the action is
+  start — here the sodium check 2–3 weeks after starting.
+
+**Knowledge (drugs 1.1.0 → 1.2.0, rules 1.2.0 → 1.3.0).** The NaSSA entry
+from its US label (openFDA, 23-Sep-2026): strengths, the sleep-dose note (the
+owner's), MAO contraindication, sodium start check, appetite/weight, glucose,
+agranulocytosis, benzodiazepines, Z-drugs, alcohol. PW035–PW037 strong
+CYP3A4 inhibitors and PW038–PW040B strong CYP3A inducers, AMBER with the
+label's dose advice; PW041–PW045 Z-drugs and benzodiazepines; PW046–PW047
+serotonergic caution; CR017 with diabetes. **CYP2D6 inhibitors were asked for
+and are deliberately not a rule**: the label's own study with a strong
+CYP2D6 inhibitor found no relevant change in its pharmacokinetics, so the
+rule would contradict
+its own source — it is in the notes instead. The PW037 AMBER replaces the
+engine's derived RED for the strong 3A4 inhibitor, because a curated rule
+beats the derivation and the label says "a decrease in dosage may be needed",
+not "avoid".
+
+**Server-only.** A benzodiazepine-receptor agonist on his list had no entry
+anywhere, so it was invisible to every check; it is in the approved overlay
+(`drugs.local.json`) with its evidence quoted from a human interaction study
+(no US label, no RxCUI), plus one overlay rule. His list was brought into
+line with GutLog the same evening — two stops, one date corrected, one row
+marked as needed, one added — each with a `med_events` row (source `owner`).
+DB backup `rxguard.db.pre-v184-20260923_211525`; overlay backups
+`*.local.json.bak-v184-20260923_211525`.
+
+`test_v184_nassa.py` 6/6, names no medicine, stubs the GutLog feed. Negative
+control 11/11, including `feeddown` — a feed that cannot be read must not
+shrink a total. All 12 suites green on the server, smoke 49/49 with the live
+list resolving. Rollback: the three `*.bak-v184-20260923_211525` files.
+
 ## An orexin receptor antagonist, and narcolepsy — v1.8.3 (DEPLOYED 2026-09-23 20:59 IST)
 
 A dual orexin receptor antagonist hypnotic was not in the knowledge base —
