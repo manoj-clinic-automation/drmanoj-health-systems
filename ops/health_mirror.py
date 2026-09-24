@@ -293,6 +293,31 @@ def meals_recent(g, since):
     return out
 
 
+def meal_rows_recent(g, since):
+    """GutLog v3.35.0+: every meal row with its slot -- Quick bite and Late
+    snack included -- and, where the database has the column, why a Quick
+    bite was eaten. Named columns; an older GutLog simply has no reason."""
+    cols = [r["name"] for r in rows(g, "PRAGMA table_info(meals)")]
+    extra = ", reason" if "reason" in cols else ""
+    out = rows(g, "SELECT day, mtime, slot, items, kcal, protein, fibre" + extra +
+                  " FROM meals WHERE day >= ? ORDER BY day DESC, mtime DESC", (since,))
+    for m in out:
+        m.setdefault("reason", "")
+        try:
+            m["items"] = "; ".join(str(i.get("n")) for i in json.loads(m.get("items") or "[]") if i.get("n"))
+        except (ValueError, AttributeError):
+            m["items"] = ""
+    return out
+
+
+def snack_marks_all(g):
+    """His weekly Keep / Swap / Stop marks (v3.35.0+); none on an older GutLog."""
+    have = [r["name"] for r in rows(g, "SELECT name FROM sqlite_master WHERE type='table'")]
+    if "snack_marks" not in have:
+        return []
+    return rows(g, "SELECT week_start, item, mark, set_at FROM snack_marks ORDER BY week_start DESC, item")
+
+
 def documents_all(g):
     """The report PDFs already on the server: rec_docs is the record's own
     index of them, and `files` is the older upload vault. Both point into
@@ -476,6 +501,22 @@ def build_markdown(data, generated):
                  m["meals"] if m["logged"] else "",
                  "partial" if m["partial"] else ""] for m in data["meals"]]))
     A("")
+    A("### Meals by slot")
+    A("")
+    A("Each entry with its slot. *Quick bite* and *Late snack* are snacks he")
+    A("logged as such; *Why* is the reason he gave for a Quick bite.")
+    A("")
+    A(md_table(["Date", "Time", "Slot", "What", "kcal", "Why"],
+               [[dmy(m["day"]), m.get("mtime") or "", m.get("slot") or "", m.get("items") or "",
+                 int(round(m["kcal"])) if m.get("kcal") is not None else "", m.get("reason") or ""]
+                for m in data.get("meal_rows") or []]))
+    A("")
+    if data.get("snack_marks"):
+        A("### Weekly snack review — his marks")
+        A("")
+        A(md_table(["Week from", "Snack", "Mark"],
+                   [[dmy(s["week_start"]), s["item"], s["mark"]] for s in data["snack_marks"]]))
+        A("")
 
     A("## Labs, every result on record")
     A("")
@@ -548,6 +589,8 @@ def collect(days):
         "episodes": ep,
         "daylog": dy,
         "meals": meals_recent(g, since30),
+        "meal_rows": meal_rows_recent(g, since30),
+        "snack_marks": snack_marks_all(g),
         "labs": labs_all(g),
         "plans": plans_all(g),
         "documents": documents_all(g),
@@ -650,6 +693,13 @@ def generate(out_dir, days=30, dry_run=False):
               ["day", "logged", "partial", "kcal", "protein", "fibre", "meals"],
               [[m.get(k) for k in ("day", "logged", "partial", "kcal", "protein",
                                    "fibre", "meals")] for m in data["meals"]])
+    write_csv(os.path.join(csvd, "meal_rows.csv"),
+              ["day", "mtime", "slot", "reason", "kcal", "protein", "fibre", "items"],
+              [[m.get(k) for k in ("day", "mtime", "slot", "reason", "kcal", "protein", "fibre", "items")]
+               for m in data["meal_rows"]])
+    write_csv(os.path.join(csvd, "snack_marks.csv"),
+              ["week_start", "item", "mark", "set_at"],
+              [[s.get(k) for k in ("week_start", "item", "mark", "set_at")] for s in data["snack_marks"]])
     write_csv(os.path.join(csvd, "documents.csv"),
               ["day", "kind", "title", "source", "finding", "status", "from",
                "original_name", "mirror_name"],

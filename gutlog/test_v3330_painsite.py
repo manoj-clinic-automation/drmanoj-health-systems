@@ -101,7 +101,8 @@ def main():
         cols = [r[1] for r in q("PRAGMA table_info(ft_score)")]
         assert "pain_sites" in cols and "onset" in cols, "ft_score lacks the columns: %r" % cols
         sv = q("SELECT value FROM settings WHERE key='schema_version'")[0][0]
-        assert sv == "3.3.6", "schema_version is %s" % sv
+        # 3.3.6 or later: v3.35.0 moved it on to 3.3.7 on purpose.
+        assert tuple(int(x) for x in sv.split(".")) >= (3, 3, 6), "schema_version is %s" % sv
         h = c.get("/").get_data(as_text=True)
         assert "__ABD_SITES__" not in h and "const ABD_SITES=[[" in h, "the region list is not in the page"
         return "two columns, schema 3.3.6, the list written into the page"
@@ -291,6 +292,9 @@ def main():
                 c.post("/api/ft/pause", json={"resume": True})
                 pg.goto("http://127.0.0.1:%d/" % port)
                 pg.wait_for_timeout(1100)
+                # v3.34.0: the Food Test card starts folded; open it as he would.
+                if pg.locator("#ftCard.fold:not(.open)").count():
+                    tap("#ftCard .fold-h")
                 if pg.locator("#ftScoreBtn").count():
                     tap("#ftScoreBtn")
                 B["px_nopain"] = pg.evaluate("(()=>{const x=document.getElementById('ftPainX');"

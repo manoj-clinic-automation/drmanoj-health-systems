@@ -232,6 +232,9 @@ def main():
             pg.wait_for_timeout(900)
             pg.goto("http://127.0.0.1:%d/" % port)
             pg.wait_for_timeout(1200)
+            # v3.34.0: the Meals card starts folded -- open it as he would.
+            if pg.locator("#nowMeal.fold:not(.open)").count():
+                pg.click("#nowMeal .fold-h")
             pg.click("#mealTabs >> text=Breakfast")
             label = pg.inner_text("#mealBody .btn.primary")
             pg.click("#mealBody .btn.primary")

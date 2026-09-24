@@ -97,6 +97,15 @@ def main():
     if hasattr(gm, "ft_seed"):
         with gm.app.app_context():
             seeded = gm.ft_seed(gm.db(), PLAN)
+    # v3.34.0: Week 0 is read from Dinners in Meals, from this day on.
+    q("INSERT OR REPLACE INTO settings(key, value) VALUES('ft_week0_from', ?)", (D(40),))
+
+    def dinner(day, t="19:00"):
+        r = c.post("/api/meals", json={"day": day, "mtime": t, "slot": "Dinner", "notes": "",
+                                       "items": [{"n": "Test rice", "q": 1, "p": 2, "k": 400, "f": 1,
+                                                  "fm": "L"}]})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        return q("SELECT id FROM meals WHERE day=? AND slot='Dinner' ORDER BY id DESC", (day,))[0]["id"]
 
     # ---------------------------------------------------------------- 01
     def t01():
@@ -120,9 +129,7 @@ def main():
     # ---------------------------------------------------------------- 02
     def t02():
         for i in range(7):
-            r = c.post("/api/ft/log", json={"slug": "w0", "step": i, "day": D(20 - i), "time": "19:00",
-                                            "size": "small", "cramp": i == 2})
-            assert j(r).get("ok"), r.get_data(as_text=True)
+            dinner(D(20 - i))          # v3.34.0: Week 0 from Meals, not from the card
         cu = state()["current"]
         assert cu["slug"] == "tchana" and cu["step"] == 0 and cu["g"] == 12, cu
         r = c.post("/api/ft/log", json={"slug": "tchana", "step": 0, "day": D(10), "time": "08:00"})
@@ -283,7 +290,7 @@ def main():
             q("DELETE FROM " + t)
         q("DELETE FROM settings WHERE key='ft_paused'")
         for i in range(6):
-            c.post("/api/ft/log", json={"slug": "w0", "step": i, "day": D(10 - i), "time": "19:00"})
+            dinner(D(10 - i))
 
     def browse():
         if B or not have_pw:
@@ -314,6 +321,11 @@ def main():
                 pg.wait_for_timeout(700)
 
             def card():
+                # v3.34.0: the card starts folded; open it as he would.
+                if pg.evaluate("(()=>{const c=document.getElementById('ftCard');"
+                               "return !!c&&c.classList.contains('fold')&&!c.classList.contains('open');})()"):
+                    pg.click("#ftCard .fold-h")
+                    pg.wait_for_timeout(200)
                 return pg.inner_text("#nowFT")
 
             def wide():
@@ -348,12 +360,15 @@ def main():
                 B["vis_time_inputs"] = pg.evaluate(
                     "[...document.querySelectorAll('#nowFT input[type=time]')]"
                     ".filter(e=>e.offsetParent!==null).length")
-                tap("#nowFT .chips[data-k=size] .chip")
-                tap("#ftTaken")
+                # v3.34.0: the day is logged by the Dinner in Meals, not on the card.
+                B["dinner_id"] = dinner(D(0), NOW)
+                home()
                 B["c_logged"] = card()
 
             def s_skip():
-                tap("#ftUndo")
+                c.post("/api/meals/%d/delete" % B["dinner_id"], json={})
+                home()
+                card()
                 tap("#ftSkip")
                 B["c_skipped"] = card()
 
@@ -366,7 +381,7 @@ def main():
                 B["c_resumed"] = card()
 
             def s_dose():
-                c.post("/api/ft/log", json={"slug": "w0", "step": 6, "day": D(1), "time": "19:00"})
+                dinner(D(1))
                 home()
                 B["c_dose"] = card()
                 B["spill_dose"] = spill()
@@ -438,8 +453,8 @@ def main():
         sk = G("c_skipped", "skip")
         assert "Skipped today" in sk and "Next is still: Week 0 · day 7" in sk, sk
         pa = G("c_paused", "pause")
-        assert "Paused since" in pa and "Resume" in pa and "Taken" not in pa and "Save dinner" not in pa, pa
-        assert "Save dinner" in G("c_resumed", "pause"), "resuming did not bring the step back"
+        assert "Paused since" in pa and "Resume" in pa and "Taken" not in pa and "Open Meals" not in pa, pa
+        assert "Log dinner in Meals" in G("c_resumed", "pause"), "resuming did not bring the step back"
         return "skipped: the step stays; paused: no step offered until Resume"
     check("13 the card holds the step after a skipped day and while paused", t13)
 

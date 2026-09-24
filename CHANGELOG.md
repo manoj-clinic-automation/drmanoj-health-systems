@@ -3,6 +3,48 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-24 (later) — GutLog v3.35.0: meals and snacks
+
+One slot list everywhere — Breakfast, Mid-morning, Lunch, Evening, Dinner,
+Late snack (Eating out kept) — and a guess that files anything after dinner
+as a Late snack instead of a second dinner. Foods are arranged in groups with
+favourites and recent first, search spans them all, and a missing food can be
+added on the spot with its weight and table values. Dry sabzi is logged as a
+dish with its variant (tinda, or tinda with paneer) by the katori, worked out
+from its parts. Late snacks are one tap; a Quick Bite records what, how much,
+why and when in one sheet. A weekly review counts the snacks, says when and
+why, suggests a swap for anything eaten twice, keeps his Keep / Swap / Stop
+marks and shows next week whether it came down; a one-line nudge appears in
+his usual snack time. Food Test days list snacks beside the test food, and
+the mirror carries it all. Schema 3.3.7. 15/15, negative control 33/33.
+
+## 2026-09-24 — RxGuard and GutLog lists brought into line (data only)
+
+At the owner's instruction, with both databases backed up first: RxGuard
+recorded the two night hypnotics GutLog ended on 23-Sep as stopped on that
+date, each with a `med_events` row written exactly as its Reconcile "stop"
+writes one (source `gutlog`). One antispasmodic moved from regular to
+as-needed (kind `prn`, a `change` event, not stopped); the other was already
+as-needed and stays so. GutLog's entry for the new night medicine had its
+salt spelling corrected. RxGuard now shows 0 unresolved keys and nothing left
+to reconcile. The quick checks were re-run: the new night medicine's check no
+longer fires the additive-sedation interaction with a stopped hypnotic, and a
+proposed NaSSA now totals sedation 6 rather than 11. No code changed.
+
+## 2026-09-24 — GutLog v3.34.0: Week 0 reads dinner from Meals
+
+The Food Test asked for a dinner already logged in Meals, so Week 0 could
+never finish and the ladder due on 30-Sep would never start. Now a meal
+logged as Dinner — from the Meals tab or the Now card — completes that day's
+Week 0 step by itself, with its time and a size worked out by a stated rule;
+editing, moving or deleting the dinner follows through, and the card asks
+only "Cramp after dinner?", which may be left blank. There is no second
+dinner entry anywhere. 23-Sep was backfilled from the dinner already logged;
+days with no dinner stay unlogged. The Now page now runs medicines, meals,
+symptoms, the Food Test, then the rest, with the Meals and Food Test cards
+folded behind one-line summaries. PRN Add medicine goes on to Salts. 10/10,
+negative control 33/33.
+
 ## 2026-09-23 (late) — GutLog v3.33.0: where the pain was, and when it began
 
 A pain that started before dinner could not be recorded as such: two pain

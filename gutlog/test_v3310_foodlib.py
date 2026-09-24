@@ -417,6 +417,9 @@ def main():
 
             # ---- the Now card: a Time field, default now, in two lists
             def s_now():
+                # v3.34.0: the Meals card starts folded -- open it as he would.
+                if pg.locator("#nowMeal.fold:not(.open)").count():
+                    tap("#nowMeal .fold-h")
                 B["now_time_lists"] = pg.evaluate(
                     "(()=>{const i=document.getElementById('mcTime');if(!i)return null;"
                     "const w=i.nextElementSibling;return {hidden:i.style.display==='none',"

@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.33.0)
+# GutLog — DOSSIER (v3.35.0)
 
 Single source of truth. Update after every change.
 
@@ -384,6 +384,204 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## Meals and snacks — v3.35.0 (`GUTLOG_V3350_SNACKS`, 2026-09-24)
+
+**Why.** His day is not three meals. A late snack after dinner was filed as
+dinner (23-Sep: a 21:55 entry went in as a second Dinner), random daytime
+snacks were not logged at all, the food list was one long run of chips, and a
+combination sabzi could not be logged as he cooks it. The aim is to uncover
+the snacking and correct it — with counts and his own marks, never a score.
+
+**What it does**
+- **One slot list**, `MEAL_SLOTS` = Breakfast · Mid-morning · Lunch · Evening
+  · Dinner · Late snack, plus *Eating out* kept as a choice
+  (`MEAL_SLOT_EXTRA`). Written into the page before render (`__MEAL_CFG__`,
+  no Jinja token), used by the Meals tab slot chips and the Now card's *Other
+  meal*. Old rows keep their slot ("Snack" still shows and totals). **His meal
+  cards** (`meals.local.json`: Morning, Breakfast, Before lunch, Lunch, Evening
+  tea, Dinner) still file under their own names — renaming a card there is
+  his call.
+- **Slot guess** (`meal_slot_guess`, `/api/meals/slotguess`): after the
+  day's last Dinner → **Late snack**, never added onto dinner; otherwise
+  <10:00 Breakfast, 10–12 Mid-morning, 12–15:30 Lunch, 15:30–18:00 Evening,
+  18:00+ Dinner. A save with no slot uses it; the Now card opens on Late snack
+  after Dinner instead of the Dinner card; one tap changes it.
+- **Day totals** say Late snack and Quick bites on their own lines
+  (`nut_snacks`, `snack_text`) on the Meals tab, `/nutrition` and Day by day
+  (a Quick bite shows *why* under its time). They stay inside the totals.
+- **Arranged picker** (`/api/foods/picker`): chips ★ Mine · Dal · Sabzi ·
+  Protein · Grain · Fruit · Dairy · Nuts & seeds · Sweets · Snacks. Groups are
+  a **mapping**, never a rename: a `group:X` tag (set when he adds a food) →
+  name words (`FOOD_GROUP_WORDS`: paneer/egg/fish → Protein, nuts/makhana →
+  Nuts & seeds, laddu/chikki → Sweets, curd/milk → Dairy) → `library.cat`
+  (`FOOD_GROUP_BY_CAT`: A Grain, B Dal, C Protein, D Dairy, E Sabzi, F Snacks,
+  G Fruit, H Snacks). Within a group: favourites A–Z, then recently used
+  (latest first, 60 days), then A–Z. Search spans every group. Same picker in
+  the Meals tab and the Now card's "+ Something else"; the Now card keeps its
+  quick estimated add too.
+- **A new food on the spot** from the not-found state: name, group, dry or
+  cooked weight, portion (1 katori ≈ 150 g, 1 piece, or grams), FODMAP, and
+  values per 100 g filled from the bundled table when he taps a match
+  (editable). Saved through `/api/library` with the v3.31.0 fields; tagged
+  `own entry` with a dated note; source `USDA` when the values are the
+  table's, `own` otherwise.
+- **Dishes** (`dishes` table: name, `katori_g` default 150 g, variants with
+  parts as shares of the cooked katori; editable, shares must total 100).
+  Worked out from each component's per-100 values in his food list; a
+  variant with a missing component says so rather than half-compute. Logged
+  as ½ / 1 / 1½ katori or grams, from either picker. **Defaults:** Tinda
+  (plain, or 70 % tinda + 30 % paneer); Parwal (plain, or 60 % parwal + 40 %
+  aloo); Lauki (plain, or 70 % lauki + 30 % paneer); Aloo; Arbi; Bhindi;
+  Beans; Carrot-beans (50/50); Torai; Kaddu; Palak. Components are his library
+  entries (Tinda, Parval, Lauki, Potato, Paneer 50 g, ...), so their values are
+  the ones already there (mostly estimated per katori). Live per katori: Tinda
+  65 kcal, Tinda + paneer 163, Parwal + aloo 83, Lauki + paneer 156.
+- **Late-snack buttons** under Late snack, one tap each (`/api/snacks/late`,
+  an ordinary meal row, editable after): warm skimmed milk 200 ml, orange 1
+  small, kiwi 1, guava ½, roasted makhana 15 g, peanuts 10 g, almonds 5, curd
+  100 g, paneer 30 g, cucumber 1, carrot 1 — by weight where the food has one,
+  otherwise by portion (live: orange 0.75, kiwi 1, almonds 1 portion). Note
+  under them: "Before 21:00, at least an hour before the night tablet."
+- **Quick Bite**: a small button at the top of the Now page, one sheet —
+  what (biscuit, namkeen, chikki, laddu, fruit → Fruit group, nuts → Nuts &
+  seeds, tea with something, other → full picker; several allowed), how much
+  (a little / normal / a lot = 0.5 / 1 / 1.5), why (hungry · bored · stressed
+  · tired · offered · craving · habit), time default now. One meal row, slot
+  *Quick bite*, `meals.reason`.
+- **Weekly snack review** card on the Meals tab (`/api/snacks/review`):
+  Monday–Sunday ending the most recent Sunday (on a Sunday, that week), or the
+  last 7 days. Counts of Quick bites and Late snacks; the busiest 90-minute
+  band starting on a half hour ("4 of 6 between 16:00 and 17:30"); reasons;
+  top items with kcal, protein and share of the week's kcal (sugar is not in
+  the bundled table and is said so); for anything eaten twice or more a swap
+  idea from `snack_swaps.json` (tracked, foods only) and his **Keep / Swap /
+  Stop** mark (`snack_marks`, per week). The next week lists each Swap/Stop
+  item's count before → after. No scoring, no judgement words.
+- **Nudge**: during a band that held **≥ 3 Quick bites in the seven days
+  before today**, one line on the Now page — "Usual snack time — planned swap:
+  …" (a Swap-marked item's idea first). Dismissible for the day
+  (`snack_nudge_off`).
+- **Food Test results** list each day's Late snacks and Quick bites on their
+  own lines.
+- **Health Mirror**: `meal_rows.csv` (day, time, slot, reason, kcal, protein,
+  fibre, items) and `snack_marks.csv`, and both in the snapshot; columns read
+  only if present.
+
+Also fixed on the way: editing a past meal opened the Now card folded (a
+v3.34.0 side effect); it now opens it.
+
+Schema 3.3.6 → **3.3.7** (`meals.reason` through `_migrate()` and `SCHEMA`;
+`dishes` and `snack_marks` in `SCHEMA`). **Seed**
+`migrate_gutlog_v3350_snacks.py` (dry run by default, `sqlite3.backup()`,
+calls the app's own `snacks_seed()`, never changes an existing food or dish):
+live on 24-Sep it added *Skimmed milk (warm)* from the table, *Namkeen (30 g)*
+and *Chikki (1 piece)* as estimated, and the 11 dishes; a second run found
+nothing to add. Every button and every dish variant resolves on his food list.
+
+**Suites changed on purpose.** `test_v3330_painsite` 01 now accepts schema
+3.3.6 *or later*.
+
+**Evidence.** `test_v3350_snacks.py` **15/15** (11 API incl. the review on
+fixed synthetic weeks with the server clock set, and the mirror; 4 in
+Chromium at 300 px). Negative control **33/33 seen to fail**: all 15 against
+the reconstructed v3.34.0 and 18 mutations, including the four the brief
+names — `latemerged`, `biteouttotals`, `wrongweek`, `nudge2`. It caught one
+weak check first: the new-food group test used a category that already mapped
+to the chosen group, so ignoring his pick changed nothing; it now uses Sweets,
+which only his pick can express. All 30 server suites, `ops/test_sso.py`
+11/11 and the mirror's 14/14 green before the restart; offline `test_ui_now`
+and `test_ui_order` ALL PASS. Deployed 10:39 IST, `app.py` sha256
+`4580ad23…`, byte-identical to the repo; `--reverse` reproduces v3.34.0
+byte-for-byte (`80f87187…`). Schema read 3.3.7 after one GET /login.
+Rollback `app.py.bak-v3350-20260924_103818`, DB
+`health3.db.pre-v3350-20260924_103818`, seed backup
+`health3-pre-v3350-seed-20260924_103914.db`, mirror
+`/root/ops/health_mirror.py.bak-v3350-20260924_103756`.
+
+## Week 0 from Meals; the Now page folds — v3.34.0 (`GUTLOG_V3340_FTMEALS`, 2026-09-24)
+
+**Why.** On 24-Sep the Food Test card asked for dinner time, size and cramp,
+and the dinner was already in Meals. He would not enter it twice — rightly —
+and since a step advances only when logged, Week 0 could never finish and
+the Week 1 ladder due on 30-Sep would never start.
+
+**What it does**
+- **A meal logged as Dinner completes that day's Week 0 step by itself** —
+  from the Meals tab, the Now meal card, *log again*, or any edit. One
+  function, `ft_dinner_sync(day…)`, is called by every path that writes,
+  edits, re-times, moves or deletes a meal (`/api/meals`, `_log_meal`, meal
+  delete, *again*, `/api/delete/meals`, `/api/retime` for meals, and the
+  Food Test retime of a dinner step). It writes one `ft_log` row with
+  `meal_id` set and `ltime` = the day's earliest Dinner. A split dinner (two
+  meals logged as Dinner) is one dinner. **No meal row is ever created by the
+  Food Test**, and `/api/ft/log` now refuses a Week 0 dinner (409): there is
+  no second dinner entry anywhere.
+- **Size, by a stated rule (`FT_SIZE_RULE`)**: that day's Dinner kcal against
+  the **median** of his Dinner days (days with kcal) in the 28 days before —
+  below 75 % *small*, above 125 % *large*, otherwise *usual*; and *usual*
+  whenever the day has no kcal or fewer than three earlier Dinner days carry
+  kcal. Nothing is guessed.
+- **Follow-through**: editing, re-timing or moving the Dinner re-syncs the
+  day(s) touched — the step takes the new time, moves with it, or goes when
+  no Dinner is left (a Dinner edited into a Lunch included). Steps are
+  renumbered in day order, so a hole never shifts the plan. Once a later
+  week has a logged step, Week 0 is closed: a deleted Dinner then only
+  unlinks its row, so a finished Week 0 is never re-opened. **Undo** refuses
+  a day that comes from Meals and says to edit the dinner there.
+- **Which days count**: on or after `ft_week0_from` (a setting; if absent,
+  the day the plan was seeded, then kept so a re-seed does not move it —
+  23-Sep-2026 live), while Week 0 is unfinished and the test is not paused.
+- **The card asks only "Cramp after dinner? yes / no"** — optional; tap the
+  chosen answer again to leave it blank; blank still counts the day
+  (`/api/ft/cramp`, `ft_log.cramp` NULL = not noted, shown as *cramp not
+  noted* on `/foodtest`). Before the Dinner is logged the card says "Log
+  dinner in Meals — this day counts by itself" with an *Open Meals* button.
+- **Now page order**: medicines (doses, extra dose, stock/order/status
+  lines), meals (+ plan), symptoms (Symptom now, Pain now), the Food Test,
+  then BP, activity, day context, down day, watch. Nothing removed.
+- **Meals card and Food Test card start folded** (the `bindFolds()` card
+  pattern). Headers: "Breakfast ✓ · Lunch ✓ · Dinner —" (+N for other
+  slots; protein moved inside), and today's step only — "Week 0 · day 3 —
+  dinner logged ✓", "Week 1 · Kala chana 25 g dry" (`ft_state().header`,
+  worked out on the server). A Dinner logged on the Now card refreshes the
+  Food Test card at once.
+- **Meds → PRN → Add medicine** goes on to Meds → Salts with "Added. Now give
+  its salt and strength.", as the Now tab's Add medicine already did.
+
+No schema change (3.3.6). **Backfill**: `migrate_gutlog_v3340_week0.py`
+(dry run by default; `sqlite3.backup()` + integrity check before writing;
+calls the app's own `ft_dinner_sync()`; idempotent). Live on 24-Sep 08:24
+IST: **23-Sep** linked (earliest Dinner 18:39, 645 kcal over two Dinner
+meals against a 538 kcal median → *usual*); 24-Sep had no Dinner yet and
+stayed unlogged. A second `--apply` added 0. The card then read **"Week 0 ·
+day 2 — dinner not logged yet"**. With a Dinner logged each day to 29-Sep,
+30-Sep opens on the Week 1 12 g dry dose (proved with synthetic dates, both
+clocks set to 30-Sep).
+
+**Suites changed on purpose.** `test_v3320_foodtest` logs Week 0 through
+Dinners in Meals (the card no longer takes a dinner), opens the folded card
+before reading it, and expects *Log dinner in Meals* where it expected *Save
+dinner*. `test_meal_cards`, `test_v3310_foodlib` and `test_v3330_painsite`
+open the folded card first (guarded on `.fold`, so they still pass against
+v3.33.0).
+
+**Evidence.** `test_v3340_ftmeals.py` **10/10** (6 API incl. the backfill on
+23..29-Sep with the server clock at 30-Sep; 4 in Chromium at 300 px incl. the
+30-Sep card with the browser clock set too). Negative control **33/33 seen to
+fail**: all 10 against the reconstructed v3.33.0, and 23 mutations including
+the three the brief names — `twomeals` (a second meal row), `ignoretab` /
+`ignorecard` (the dinner ignored), `ftattop` (the Food Test card left at the
+top) — plus `drywrites` on the backfill script. It caught two weak checks of
+mine first: the card-path check was masked by a later Meals-tab write, and the
+plan's first-day rule was never reached by the backfill test. All 29 server
+suites, FitLog's `test_phase_j` 28/28, `ops/test_sso.py` 11/11 and the
+mirror's 14/14 green before the restart; offline `test_ui_now` 196 PASS / 0
+FAIL, `test_ui_order` ALL PASS. Deployed 08:23 IST, `app.py` sha256
+`80f87187…`, byte-identical to the repo build; `--reverse` reproduces v3.33.0
+byte-for-byte (`28b50914…`). Rollback `app.py.bak-v3340-20260924_082218`, DB
+`health3.db.pre-v3340-20260924_082218`, backfill backup
+`health3-pre-v3340-week0-20260924_082403.db`.
 
 ## Pain site, onset time, one true-time day — v3.33.0 (`GUTLOG_V3330_PAINSITE`, 2026-09-23)
 
@@ -2093,6 +2291,25 @@ rediscovered the expensive way.
 - Cardiologist BP export from `vitals`
 
 ## Changelog
+- **2026-09-24 v3.35.0 — meals and snacks. DEPLOYED 10:39 IST.** See the
+  section above. `patch_gutlog_v3350_snacks.py`, 43 anchors, Jinja guard,
+  reversible. Schema 3.3.6 → 3.3.7. New tracked files:
+  `migrate_gutlog_v3350_snacks.py`, `snack_swaps.json`, `test_v3350_snacks.py`,
+  `new_assertions_v3350.json`. `ops/health_mirror.py` gains meal rows and marks.
+- **2026-09-24 record data, no code change (owner-authorised).** The new
+  night medicine's entry carried a misspelt salt; the salt and the same
+  spelling inside its display name were corrected, and its one logged dose
+  relabelled to match (linked by `med_id` throughout, so no history moved).
+  The two antispasmodic entries were checked: neither has a regular schedule
+  line, so both stay as-needed and nothing was closed. Backup first:
+  `health3.db.pre-owner-20260924-20260924_100008`. The GutLog feed now
+  carries the correct salt, and RxGuard's reconcile view reads 0 stopped / 0
+  missing.
+- **2026-09-24 v3.34.0 — Week 0 from Meals, the Now page folds and reorders,
+  PRN Add medicine to Salts. DEPLOYED 08:23 IST.** See the section above.
+  `patch_gutlog_v3340_ftmeals.py`, 29 anchors, Jinja guard, reversible. No
+  schema change. New tracked files: `migrate_gutlog_v3340_week0.py`,
+  `test_v3340_ftmeals.py`, `new_assertions_v3340.json`.
 - **2026-09-23 v3.33.0 — pain site, onset, one true-time day. DEPLOYED 21:48
   IST.** See the section above. `patch_gutlog_v3330_painsite.py`, 30 anchors,
   Jinja guard, reversible. Schema 3.3.5 → 3.3.6. `ops/health_mirror.py` gains

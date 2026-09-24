@@ -1,0 +1,250 @@
+{
+ "_": [
+  "GutLog v3.35.0 -- meals and snacks. v3.34.0 has none of it, so every assertion fails on the reconstructed build. Each promise is also broken on purpose, including the four the brief names: a late snack merged into dinner (latemerged), a Quick bite missing from totals (biteouttotals), the review counting the wrong week (wrongweek), and the nudge showing with fewer than 3 (nudge2)."
+ ],
+ "suite": "test_v3350_snacks.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3350_snacks.py",
+ "assertions": [
+  {
+   "name": "01 the slot is guessed from the clock and from what is logged; old Snack rows still show",
+   "control": "version"
+  },
+  {
+   "name": "02 schema 3.3.7 and the one slot list in the page",
+   "control": "version"
+  },
+  {
+   "name": "03 the picker: groups, favourites then recent then A-Z, search across groups",
+   "control": "version"
+  },
+  {
+   "name": "04 a new food with its dry weight saves and totals by grams",
+   "control": "version"
+  },
+  {
+   "name": "05 a dish variant is worked out from its parts, and a new proportion changes it",
+   "control": "version"
+  },
+  {
+   "name": "06 a late-snack button logs its default portion in one tap",
+   "control": "version"
+  },
+  {
+   "name": "07 a Quick bite keeps what, how much, why and when, and shows apart in totals and Day by day",
+   "control": "version"
+  },
+  {
+   "name": "08 the weekly review counts the right week, band, reasons, top items and swaps; marks carry on",
+   "control": "version"
+  },
+  {
+   "name": "09 the nudge shows only in a band with 3 or more quick bites last week, and hides when dismissed",
+   "control": "version"
+  },
+  {
+   "name": "10 Food Test results list the day's late snacks and quick bites",
+   "control": "version"
+  },
+  {
+   "name": "11 the Health Mirror carries slot, the Quick-bite reason and the weekly marks",
+   "control": "version"
+  },
+  {
+   "name": "12 the Quick Bite button is at the top and its sheet saves what, how much, why and time",
+   "control": "version"
+  },
+  {
+   "name": "13 under Late snack the buttons log in one tap, with the note",
+   "control": "version"
+  },
+  {
+   "name": "14 the picker and the new-food form at 300 px, in the Now card and the Meals tab",
+   "control": "version"
+  },
+  {
+   "name": "15 the weekly review card renders on the Meals tab and Keep / Swap / Stop saves",
+   "control": "version"
+  },
+  {
+   "name": "01 the slot is guessed from the clock and from what is logged; old Snack rows still show",
+   "control": "mutation",
+   "mutation": {
+    "id": "latemerged",
+    "why": "a late snack is merged into dinner",
+    "find": "    if r and r[\"t\"] and hm > r[\"t\"]:\n        return LATE_SNACK",
+    "replace": "    if r and r[\"t\"] and hm > r[\"t\"]:\n        return \"Dinner\""
+   }
+  },
+  {
+   "name": "02 schema 3.3.7 and the one slot list in the page",
+   "control": "mutation",
+   "mutation": {
+    "id": "slotlist",
+    "why": "the slot list loses a slot",
+    "find": "MEAL_SLOTS = [\"Breakfast\", \"Mid-morning\", \"Lunch\", \"Evening\", \"Dinner\", \"Late snack\"]",
+    "replace": "MEAL_SLOTS = [\"Breakfast\", \"Lunch\", \"Evening\", \"Dinner\", \"Late snack\"]"
+   }
+  },
+  {
+   "name": "03 the picker: groups, favourites then recent then A-Z, search across groups",
+   "control": "mutation",
+   "mutation": {
+    "id": "pickorder",
+    "why": "recently used comes before favourites",
+    "find": "    foods = [_food_json(lib[n], n in last) for n in (fav + rec + rest)[:60]]",
+    "replace": "    foods = [_food_json(lib[n], n in last) for n in (rec + fav + rest)[:60]]"
+   }
+  },
+  {
+   "name": "03 the picker: groups, favourites then recent then A-Z, search across groups",
+   "control": "mutation",
+   "mutation": {
+    "id": "groupmap",
+    "why": "paneer is not mapped to Protein",
+    "find": "    (\"Protein\", (\"paneer\", \"egg\", \"fish\", \"chicken\", \"soya\", \"tofu\")),",
+    "replace": "    (\"Protein\", (\"egg\", \"fish\", \"chicken\", \"soya\", \"tofu\")),"
+   }
+  },
+  {
+   "name": "04 a new food with its dry weight saves and totals by grams",
+   "control": "mutation",
+   "mutation": {
+    "id": "grouptag",
+    "why": "the group he picked is ignored",
+    "find": "    if \"group:\" in tags:\n",
+    "replace": "    if False:\n"
+   }
+  },
+  {
+   "name": "05 a dish variant is worked out from its parts, and a new proportion changes it",
+   "control": "mutation",
+   "mutation": {
+    "id": "dishshare",
+    "why": "a component's share of the katori is ignored",
+    "find": "        w = lib_weigh(r, g * float(share) / 100.0) if r else None",
+    "replace": "        w = lib_weigh(r, g) if r else None"
+   }
+  },
+  {
+   "name": "06 a late-snack button logs its default portion in one tap",
+   "control": "mutation",
+   "mutation": {
+    "id": "latequarter",
+    "why": "a button logs portions instead of its weight",
+    "find": "            pay = {\"n\": r[\"item\"], \"g\": grams} if lib_wt(r)[\"w\"] else {\"n\": r[\"item\"], \"q\": q}",
+    "replace": "            pay = {\"n\": r[\"item\"], \"q\": q}"
+   }
+  },
+  {
+   "name": "07 a Quick bite keeps what, how much, why and when, and shows apart in totals and Day by day",
+   "control": "mutation",
+   "mutation": {
+    "id": "biteouttotals",
+    "why": "Quick bites are missing from the day totals",
+    "find": "\"COALESCE(SUM(fscore),0) AS fs FROM meals WHERE day=?\", (day,)).fetchone()",
+    "replace": "\"COALESCE(SUM(fscore),0) AS fs FROM meals WHERE day=? AND slot<>'Quick bite'\", (day,)).fetchone()"
+   }
+  },
+  {
+   "name": "07 a Quick bite keeps what, how much, why and when, and shows apart in totals and Day by day",
+   "control": "mutation",
+   "mutation": {
+    "id": "noreason",
+    "why": "why a Quick bite was eaten is not kept",
+    "find": "        db().execute(\"UPDATE meals SET reason=? WHERE id=?\", (reason, body[\"id\"]))",
+    "replace": "        pass"
+   }
+  },
+  {
+   "name": "08 the weekly review counts the right week, band, reasons, top items and swaps; marks carry on",
+   "control": "mutation",
+   "mutation": {
+    "id": "wrongweek",
+    "why": "the review counts the wrong week",
+    "find": "    end = t - timedelta(days=(t.weekday() + 1) % 7)",
+    "replace": "    end = t - timedelta(days=t.weekday())"
+   }
+  },
+  {
+   "name": "08 the weekly review counts the right week, band, reasons, top items and swaps; marks carry on",
+   "control": "mutation",
+   "mutation": {
+    "id": "bandsize",
+    "why": "the band is not 90 minutes",
+    "find": "SNACK_BAND_MIN = 90 ",
+    "replace": "SNACK_BAND_MIN = 60 "
+   }
+  },
+  {
+   "name": "09 the nudge shows only in a band with 3 or more quick bites last week, and hides when dismissed",
+   "control": "mutation",
+   "mutation": {
+    "id": "nudge2",
+    "why": "the nudge shows with fewer than 3 quick bites",
+    "find": "SNACK_NUDGE_MIN = 3 ",
+    "replace": "SNACK_NUDGE_MIN = 2 "
+   }
+  },
+  {
+   "name": "10 Food Test results list the day's late snacks and quick bites",
+   "control": "mutation",
+   "mutation": {
+    "id": "ftsnacks",
+    "why": "Food Test days hide the snacks",
+    "find": "            for ln in ft_day_snack_lines(r[\"day\"]):   # GUTLOG_V3350_SNACKS",
+    "replace": "            for ln in []:   # GUTLOG_V3350_SNACKS"
+   }
+  },
+  {
+   "name": "12 the Quick Bite button is at the top and its sheet saves what, how much, why and time",
+   "control": "mutation",
+   "mutation": {
+    "id": "qbnoreason",
+    "why": "the sheet drops the reason",
+    "find": "    try{await post('/api/quickbite',{items:QB.items,amount:QB.amount,reason:QB.reason,",
+    "replace": "    try{await post('/api/quickbite',{items:QB.items,amount:QB.amount,reason:'',"
+   }
+  },
+  {
+   "name": "13 under Late snack the buttons log in one tap, with the note",
+   "control": "mutation",
+   "mutation": {
+    "id": "nolatebuttons",
+    "why": "no buttons under Late snack",
+    "find": "    if(mcSel.slot===LATE_SLOT)b.appendChild(lateSnackRow());\n",
+    "replace": ""
+   }
+  },
+  {
+   "name": "13 under Late snack the buttons log in one tap, with the note",
+   "control": "mutation",
+   "mutation": {
+    "id": "autodinner",
+    "why": "after Dinner the card opens the Dinner card again",
+    "find": "  if(best<0&&MC.slot_guess===LATE_SLOT)return -1;\n",
+    "replace": ""
+   }
+  },
+  {
+   "name": "14 the picker and the new-food form at 300 px, in the Now card and the Meals tab",
+   "control": "mutation",
+   "mutation": {
+    "id": "nogroups",
+    "why": "the picker has no group chips",
+    "find": "  drawGroups();setTimeout(run,0);",
+    "replace": "  setTimeout(run,0);"
+   }
+  },
+  {
+   "name": "15 the weekly review card renders on the Meals tab and Keep / Swap / Stop saves",
+   "control": "mutation",
+   "mutation": {
+    "id": "markweek",
+    "why": "a mark is saved against the wrong week",
+    "find": "post('/api/snacks/mark',{week_start:j.from,",
+    "replace": "post('/api/snacks/mark',{week_start:j.to,"
+   }
+  }
+ ]
+}

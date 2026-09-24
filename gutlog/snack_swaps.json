@@ -1,0 +1,11 @@
+{
+ "_": "GutLog v3.35.0 (GUTLOG_V3350_SNACKS) -- the weekly snack review's swap suggestions. A rule applies to a snack whose name contains any of its words (lower case). late_only: only when that snack was eaten as a Late snack. First matching rule wins. Foods only; edit freely.",
+ "rules": [
+  {"words": ["namkeen", "bhujia", "mixture", "sev"], "swap": "makhana + mattha"},
+  {"words": ["chips", "lays", "kurkure"], "swap": "roasted makhana"},
+  {"words": ["biscuit", "parle", "cookie", "rusk", "marie"], "swap": "nuts (5 almonds)"},
+  {"words": ["laddu", "chikki", "choc", "barfi", "halwa", "mithai", "sweet", "cake", "ice cream", "kulfi"], "swap": "fruit + curd"},
+  {"words": ["parantha", "paratha", "puri", "pakora", "samosa"], "late_only": true, "swap": "milk + makhana"},
+  {"words": ["tea"], "swap": "tea without the biscuit"}
+ ]
+}

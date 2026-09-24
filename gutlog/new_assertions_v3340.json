@@ -1,0 +1,281 @@
+{
+ "_": [
+  "GutLog v3.34.0 -- Week 0 from Meals, Now page order and folds, PRN Add medicine to Salts. v3.33.0 has none of it, so every assertion fails on the reconstructed build. Each promise is also broken on purpose, including the three the brief names: a second meal row (twomeals), the dinner ignored (ignoretab, ignorecard), and the Food Test card left at the top (ftattop)."
+ ],
+ "suite": "test_v3340_ftmeals.py",
+ "app": "app.py",
+ "patcher": "patch_gutlog_v3340_ftmeals.py",
+ "assertions": [
+  {
+   "name": "01 a Dinner from the Meals tab completes the Week 0 day, with no second meal row",
+   "control": "version"
+  },
+  {
+   "name": "02 a Dinner from the Now meal card completes the day too",
+   "control": "version"
+  },
+  {
+   "name": "03 the size follows the stated rule, never a guess",
+   "control": "version"
+  },
+  {
+   "name": "04 editing, re-timing, moving and deleting the Dinner follow through to the step",
+   "control": "version"
+  },
+  {
+   "name": "05 the cramp question is yes, no or blank, and blank still counts",
+   "control": "version"
+  },
+  {
+   "name": "06 backfill: 23..29-Sep dinners, and on 30-Sep the next step is the 12 g dry dose",
+   "control": "version"
+  },
+  {
+   "name": "07 on 30-Sep the Now card shows the 12 g dry dose after the backfilled Week 0",
+   "control": "version"
+  },
+  {
+   "name": "08 the Now page order and folds at 300 px, with the summary lines",
+   "control": "version"
+  },
+  {
+   "name": "09 a Dinner on the Now meal card completes the day and the card asks only about cramp",
+   "control": "version"
+  },
+  {
+   "name": "10 PRN Add medicine goes on to Meds -> Salts",
+   "control": "version"
+  },
+  {
+   "name": "01 a Dinner from the Meals tab completes the Week 0 day, with no second meal row",
+   "control": "mutation",
+   "mutation": {
+    "id": "twomeals",
+    "why": "Week 0 writes its own meal row beside his Dinner",
+    "find": "                           [slug, cur, \"dinner\", day, first[\"mtime\"] or \"\", size, None, \"\",\n                            first[\"id\"]])\n                    added += 1\n",
+    "replace": "                           [slug, cur, \"dinner\", day, first[\"mtime\"] or \"\", size, None, \"\",\n                            first[\"id\"]])\n                    insert(\"meals\", [\"day\", \"mtime\", \"slot\", \"items\"], [day, first[\"mtime\"] or \"\", \"Dinner\", \"[]\"])\n                    added += 1\n"
+   }
+  },
+  {
+   "name": "02 a Dinner from the Now meal card completes the day too",
+   "control": "mutation",
+   "mutation": {
+    "id": "twomeals",
+    "why": "Week 0 writes its own meal row beside his Dinner",
+    "find": "                           [slug, cur, \"dinner\", day, first[\"mtime\"] or \"\", size, None, \"\",\n                            first[\"id\"]])\n                    added += 1\n",
+    "replace": "                           [slug, cur, \"dinner\", day, first[\"mtime\"] or \"\", size, None, \"\",\n                            first[\"id\"]])\n                    insert(\"meals\", [\"day\", \"mtime\", \"slot\", \"items\"], [day, first[\"mtime\"] or \"\", \"Dinner\", \"[]\"])\n                    added += 1\n"
+   }
+  },
+  {
+   "name": "09 a Dinner on the Now meal card completes the day and the card asks only about cramp",
+   "control": "mutation",
+   "mutation": {
+    "id": "twomeals",
+    "why": "Week 0 writes its own meal row beside his Dinner",
+    "find": "                           [slug, cur, \"dinner\", day, first[\"mtime\"] or \"\", size, None, \"\",\n                            first[\"id\"]])\n                    added += 1\n",
+    "replace": "                           [slug, cur, \"dinner\", day, first[\"mtime\"] or \"\", size, None, \"\",\n                            first[\"id\"]])\n                    insert(\"meals\", [\"day\", \"mtime\", \"slot\", \"items\"], [day, first[\"mtime\"] or \"\", \"Dinner\", \"[]\"])\n                    added += 1\n"
+   }
+  },
+  {
+   "name": "01 a Dinner from the Meals tab completes the Week 0 day, with no second meal row",
+   "control": "mutation",
+   "mutation": {
+    "id": "ignoretab",
+    "why": "a Dinner from the Meals tab is ignored",
+    "find": "    ft_dinner_sync(day)   # GUTLOG_V3340_FTMEALS\n",
+    "replace": ""
+   }
+  },
+  {
+   "name": "01 a Dinner from the Meals tab completes the Week 0 day, with no second meal row",
+   "control": "mutation",
+   "mutation": {
+    "id": "ftlogdinner",
+    "why": "the Food Test still takes its own dinner entry",
+    "find": "    if kind == \"dinner\":   # GUTLOG_V3340_FTMEALS\n",
+    "replace": "    if False:\n"
+   }
+  },
+  {
+   "name": "02 a Dinner from the Now meal card completes the day too",
+   "control": "mutation",
+   "mutation": {
+    "id": "ignorecard",
+    "why": "a Dinner from the Now meal card is ignored",
+    "find": "    ft_dinner_sync(day, prior[\"day\"] if prior else None)\n",
+    "replace": ""
+   }
+  },
+  {
+   "name": "09 a Dinner on the Now meal card completes the day and the card asks only about cramp",
+   "control": "mutation",
+   "mutation": {
+    "id": "ignorecard",
+    "why": "a Dinner from the Now meal card is ignored",
+    "find": "    ft_dinner_sync(day, prior[\"day\"] if prior else None)\n",
+    "replace": ""
+   }
+  },
+  {
+   "name": "03 the size follows the stated rule, never a guess",
+   "control": "mutation",
+   "mutation": {
+    "id": "sizeflip",
+    "why": "the small threshold is not the stated 75 %",
+    "find": "\"small_below\": 0.75",
+    "replace": "\"small_below\": 0.5"
+   }
+  },
+  {
+   "name": "03 the size follows the stated rule, never a guess",
+   "control": "mutation",
+   "mutation": {
+    "id": "sizeguess",
+    "why": "a Dinner with no kcal is sized instead of read as usual",
+    "find": "    if not kcal or kcal <= 0 or not usual:\n        return \"usual\"",
+    "replace": "    if not usual:\n        return \"usual\""
+   }
+  },
+  {
+   "name": "04 editing, re-timing, moving and deleting the Dinner follow through to the step",
+   "control": "mutation",
+   "mutation": {
+    "id": "deletekeeps",
+    "why": "deleting the Dinner in Meals leaves its step",
+    "find": "    if r:\n        ft_dinner_sync(r[\"day\"])\n",
+    "replace": "    if False:\n        ft_dinner_sync(r[\"day\"])\n"
+   }
+  },
+  {
+   "name": "04 editing, re-timing, moving and deleting the Dinner follow through to the step",
+   "control": "mutation",
+   "mutation": {
+    "id": "retimekeeps",
+    "why": "re-timing the Dinner does not re-time the step",
+    "find": "        ft_dinner_sync(old_d, new_d)\n",
+    "replace": "        pass\n"
+   }
+  },
+  {
+   "name": "04 editing, re-timing, moving and deleting the Dinner follow through to the step",
+   "control": "mutation",
+   "mutation": {
+    "id": "holes",
+    "why": "steps are not renumbered after a Dinner goes",
+    "find": "        db().execute(\"UPDATE ft_log SET step=? WHERE id=?\", (i, r[\"id\"]))",
+    "replace": "        pass"
+   }
+  },
+  {
+   "name": "05 the cramp question is yes, no or blank, and blank still counts",
+   "control": "mutation",
+   "mutation": {
+    "id": "blankzero",
+    "why": "a blank cramp is stored as no",
+    "find": "    val = None if v in (None, \"\") else",
+    "replace": "    val = 0 if v in (None, \"\") else"
+   }
+  },
+  {
+   "name": "05 the cramp question is yes, no or blank, and blank still counts",
+   "control": "mutation",
+   "mutation": {
+    "id": "undoallowed",
+    "why": "Undo deletes a day that comes from Meals, and his dinner with it",
+    "find": "    if r[\"kind\"] == \"dinner\" and r[\"meal_id\"]:   # GUTLOG_V3340_FTMEALS\n",
+    "replace": "    if False:\n"
+   }
+  },
+  {
+   "name": "06 backfill: 23..29-Sep dinners, and on 30-Sep the next step is the 12 g dry dose",
+   "control": "mutation",
+   "mutation": {
+    "id": "drywrites",
+    "why": "the backfill's dry run writes",
+    "find": "        if not apply:\n            print(\"dry run",
+    "replace": "        if False:\n            print(\"dry run",
+    "module": "migrate_gutlog_v3340_week0.py"
+   }
+  },
+  {
+   "name": "01 a Dinner from the Meals tab completes the Week 0 day, with no second meal row",
+   "control": "mutation",
+   "mutation": {
+    "id": "nofrom",
+    "why": "a Dinner from before the plan counts for Week 0",
+    "find": "            elif frm and day >= frm and not paused and not closed:\n",
+    "replace": "            elif not paused and not closed:\n"
+   }
+  },
+  {
+   "name": "07 on 30-Sep the Now card shows the 12 g dry dose after the backfilled Week 0",
+   "control": "mutation",
+   "mutation": {
+    "id": "noheader",
+    "why": "the folded card's header is empty",
+    "find": "const fs=el('span','fs',j.header||'');",
+    "replace": "const fs=el('span','fs','');"
+   }
+  },
+  {
+   "name": "08 the Now page order and folds at 300 px, with the summary lines",
+   "control": "mutation",
+   "mutation": {
+    "id": "ftattop",
+    "why": "the Food Test card is left at the top of the Now page",
+    "find": "  <div id=\"nowMirror\"></div>\n  <!-- GUTLOG_V3340_FTMEALS",
+    "replace": "  <div id=\"nowMirror\"></div>\n  <div id=\"nowFT\"></div>\n  <!-- GUTLOG_V3340_FTMEALS"
+   }
+  },
+  {
+   "name": "08 the Now page order and folds at 300 px, with the summary lines",
+   "control": "mutation",
+   "mutation": {
+    "id": "mealsopen",
+    "why": "the Meals card starts open",
+    "find": "<div class=\"card fold\" id=\"nowMeal\">",
+    "replace": "<div class=\"card fold open\" id=\"nowMeal\">"
+   }
+  },
+  {
+   "name": "08 the Now page order and folds at 300 px, with the summary lines",
+   "control": "mutation",
+   "mutation": {
+    "id": "summaryswap",
+    "why": "the Meals summary marks the wrong meals",
+    "find": "s+' '+(got(s)?'✓':'—')",
+    "replace": "s+' '+(got(s)?'—':'✓')"
+   }
+  },
+  {
+   "name": "09 a Dinner on the Now meal card completes the day and the card asks only about cramp",
+   "control": "mutation",
+   "mutation": {
+    "id": "ftnorefresh",
+    "why": "logging a Dinner on the card does not refresh the Food Test card",
+    "find": "  if(FT)loadFT();   /* GUTLOG_V3340_FTMEALS",
+    "replace": "  if(false)loadFT();   /* GUTLOG_V3340_FTMEALS"
+   }
+  },
+  {
+   "name": "09 a Dinner on the Now meal card completes the day and the card asks only about cramp",
+   "control": "mutation",
+   "mutation": {
+    "id": "nocrampq",
+    "why": "the card shows the old step line, not the cramp question",
+    "find": "    if(j.today_step&&j.today_step.from_meal){\n",
+    "replace": "    if(false){\n"
+   }
+  },
+  {
+   "name": "10 PRN Add medicine goes on to Meds -> Salts",
+   "control": "mutation",
+   "mutation": {
+    "id": "prnstays",
+    "why": "PRN Add medicine stays put",
+    "find": "loadSchedMeds();   /* GUTLOG_V3340_FTMEALS */\n    switchTab('meds');setSeg('meds','salts');toast('Added. Now give its salt and strength.');}\n",
+    "replace": "loadSchedMeds();   /* GUTLOG_V3340_FTMEALS */\n    toast('Added');}\n"
+   }
+  }
+ ]
+}
