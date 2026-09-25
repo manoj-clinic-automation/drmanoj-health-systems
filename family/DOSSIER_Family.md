@@ -113,9 +113,13 @@ folder that carries it.
 ## Open items (25-Sep-2026)
 
 * DNS: `family` A record → 93.127.195.49 at GoDaddy (the one owner step). SSL follows by itself.
-* Members m1 and m2 are designed and tested but not stamped: the stamping command was
-  stopped by the session's permission classifier (it creates Linux users and services
-  on the production server). Run it as above.
+* Members m1 (`gut`) and m2 (`joint`) stamped 25-Sep-2026 13:37 IST. The first attempt
+  failed: with no `--code`, the tool took the folder above itself (`/root`) as the code
+  tree, and the member's own user could not open `/root/family/init_member.py`. Fixed:
+  a real stamp always uses `/opt/family/code/current`, refuses a tree the member cannot
+  read before writing anything, and rolls back fully if the setup fails part-way.
+  `test_family_stamp_real.py` stamps through the real per-user path (server, root),
+  negative control 4/4. First-login passwords: `--password-file`, root-only.
 * Fat, carbohydrate and calcium per serving need a fuller food table (SR Legacy has
   them; the bundled file carries protein, kcal, fibre). Rebuild with the owner's
   go-ahead to download the USDA zip again.

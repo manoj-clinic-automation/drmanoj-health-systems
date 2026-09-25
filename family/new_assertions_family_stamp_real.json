@@ -1,0 +1,62 @@
+{
+ "_": [
+  "Real per-user stamping (server only, as root). rootcode is the exact bug of 2026-09-25: the stamp took /root as the code tree and the member's user could not open the setup."
+ ],
+ "suite": "test_family_stamp_real.py",
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3380_kitchen.py",
+ "assertions": [
+  {
+   "name": "R01 a real stamp runs the setup as the member's own user",
+   "control": "mutation",
+   "mutation": {
+    "id": "rootcode",
+    "why": "the 2026-09-25 bug: the folder above the tool is taken as the code tree",
+    "module": "stamp_member.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        code = a.code or \"/opt/family/code/current\"",
+    "replace": "        code = a.code or os.path.dirname(HERE)"
+   }
+  },
+  {
+   "name": "R01 the first-login password goes to a root-only file and is never printed",
+   "control": "mutation",
+   "mutation": {
+    "id": "printpw",
+    "why": "the password is printed as well",
+    "module": "stamp_member.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if a.password_file:\n",
+    "replace": "    print(pw)\n    if a.password_file:\n"
+   }
+  },
+  {
+   "name": "R02 a code tree the member cannot read is refused before anything is made",
+   "control": "mutation",
+   "mutation": {
+    "id": "nocheck",
+    "why": "the member-readable check is skipped",
+    "module": "stamp_member.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        ok, why = member_readable(init)\n",
+    "replace": "        ok, why = True, \"\"\n"
+   }
+  },
+  {
+   "name": "R03 a setup that fails part-way leaves nothing behind",
+   "control": "mutation",
+   "mutation": {
+    "id": "norollback",
+    "why": "a failed stamp leaves its folder, secrets and user",
+    "module": "stamp_member.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            rollback(P, slug, mdir, envp, user, made_user, system)\n",
+    "replace": ""
+   }
+  }
+ ]
+}

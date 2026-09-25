@@ -224,6 +224,40 @@ def units(slug):
     return ["family-%s@%s.service" % (a, slug) for a in APPS]
 
 
+def member_readable(path):
+    """(ok, why): can a user who is not root and not the owner read this file?
+    Every folder above it needs o+x, the file o+r, and nothing may sit under
+    /root, which member processes must never be able to open."""
+    p = os.path.realpath(path)
+    if p == "/root" or p.startswith("/root/"):
+        return False, "%s is under /root" % p
+    if not os.path.isfile(p):
+        return False, "%s does not exist" % p
+    if not os.stat(p).st_mode & 0o004:
+        return False, "%s is not world-readable" % p
+    d = os.path.dirname(p)
+    while True:
+        if not os.stat(d).st_mode & 0o001:
+            return False, "folder %s cannot be entered by other users" % d
+        if d == "/":
+            return True, ""
+        d = os.path.dirname(d)
+
+
+def rollback(P, slug, mdir, envp, user, made_user, system):
+    """Undo a stamp that failed part-way: nothing of it stays behind."""
+    for p in (os.path.join(P.care_dir, slug + ".key"), os.path.join(P.care_dir, slug + ".status"), envp):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    shutil.rmtree(mdir, ignore_errors=True)
+    if system and made_user:
+        subprocess.run(["userdel", user], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print("  rolled back: folder, env file, caretaker secrets%s removed. Nothing of %s remains."
+          % (" and user " + user if made_user else "", slug))
+
+
 def stamp(P, a, system):
     slug = a.slug
     reg = load_registry(P)
@@ -248,14 +282,25 @@ def stamp(P, a, system):
     user = "fam_" + slug
     m = {"slug": slug, "name": name, "profile": a.profile, "ports": ports, "user": user,
          "enabled": True, "created": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    init = os.path.join(P.code, "family", "init_member.py")
+    if system:
+        # The setup runs AS THE MEMBER, so the member must be able to read it.
+        # Checked before anything is written: a refusal here leaves nothing.
+        ok, why = member_readable(init)
+        if not ok:
+            print("REFUSED: the member's own user could not run the setup (%s). Nothing changed.\n"
+                  "  Use the family code tree, /opt/family/code/current." % why)
+            return 2
     print("stamping %s (%s, profile %s) ports %s" % (slug, name, a.profile,
                                                      "/".join(str(ports[x]) for x in APPS)))
     # -- user and folders --------------------------------------------------
+    made_user = False
     if system:
         r = subprocess.run(["id", "-u", user], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if r.returncode != 0:
             run(["useradd", "--system", "--no-create-home", "--home-dir", "/nonexistent",
                  "--shell", "/sbin/nologin", "--user-group", user])
+            made_user = True
     os.makedirs(P.srv, exist_ok=True)
     os.chmod(P.srv, 0o755)
     os.makedirs(mdir)
@@ -296,10 +341,10 @@ def stamp(P, a, system):
             if "=" in line and not line.startswith("#"):
                 k, v = line.rstrip("\n").split("=", 1)
                 env[k] = v
+    if P.root != "/":
+        env["FAMILY_DIR"] = mdir          # a scratch root (test suites)
     if not system:
-        env["FAMILY_DIR"] = mdir
         env["FAMILY_INSECURE"] = "1"
-    init = os.path.join(P.code, "family", "init_member.py")
     for app in APPS + ("care",):
         cmd = [sys.executable, "-B", init, "--app", app]
         if system:
@@ -309,9 +354,9 @@ def stamp(P, a, system):
         out = r.stdout.decode("utf-8", "replace").strip().splitlines()
         print("  " + (out[-1] if out else "(no output)"))
         if r.returncode != 0:
-            print("FAILED while creating the %s database. The folder %s is left for "
-                  "inspection; the member is NOT in the registry." % (app, mdir))
+            print("FAILED while creating the %s database; the member is NOT in the registry." % app)
             print("\n".join("    " + x for x in out[-15:]))
+            rollback(P, slug, mdir, envp, user, made_user, system)
             return 1
     # -- the Family Kitchen, if it is installed -----------------------------
     if kitchen_register(P, slug, name, system, member_dir=mdir):
@@ -320,13 +365,21 @@ def stamp(P, a, system):
     reg["members"].append(m)
     save_registry(P, reg)
     write_vhost(P, reg, system)
-    if system:
+    if system and not a.no_services:
         run(["systemctl", "enable", "--now"] + units(slug), stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL)
         print("  services: " + ", ".join(units(slug)) + " enabled and started")
     print("")
     print("  address : %s/%s/" % (reg["base"], slug))
-    print("  first-login password (shown once, written nowhere): " + pw)
+    if a.password_file:
+        # Root-only, appended, never echoed: the owner hands it over and deletes it.
+        fd = os.open(a.password_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a") as fh:
+            fh.write("%s\t%s\t%s/%s/\t%s\n" % (slug, name, reg["base"], slug, pw))
+        os.chmod(a.password_file, 0o600)
+        print("  first-login password: written to %s (root only)" % a.password_file)
+    else:
+        print("  first-login password (shown once, written nowhere): " + pw)
     return 0
 
 
@@ -431,14 +484,24 @@ def main():
     ap.add_argument("--code", default=None,
                     help="family code tree (default: the folder above this script's)")
     ap.add_argument("--no-system", action="store_true")
+    ap.add_argument("--no-services", action="store_true",
+                    help="real users and per-user setup, but no systemctl / proxy (the real-path test)")
+    ap.add_argument("--password-file", default=None,
+                    help="append the first-login password here (mode 600) instead of printing it")
     ap.add_argument("--port-base", type=int, default=8200)
     ap.add_argument("--base-url", default=None, help="test suites only")
     a = ap.parse_args()
-    code = a.code or os.environ.get("FAMILY_CODE_TREE") or os.path.dirname(HERE)
-    if not os.path.exists(os.path.join(code, "family", "init_member.py")):
-        code = "/opt/family/code/current"
-    P = Paths(a.root, code)
     system = not a.no_system
+    if system:
+        # 2026-09-25: the first real stamp took the folder above this script --
+        # /root -- as the code tree, and the member's own user could not open
+        # /root/family/init_member.py. A real stamp runs the setup as the member,
+        # so it always uses the member-readable family tree unless told
+        # otherwise, and stamp() refuses a tree the member cannot read.
+        code = a.code or "/opt/family/code/current"
+    else:
+        code = a.code or os.environ.get("FAMILY_CODE_TREE") or os.path.dirname(HERE)
+    P = Paths(a.root, code)
     if system and os.geteuid() != 0:
         print("Run as root.")
         return 2
