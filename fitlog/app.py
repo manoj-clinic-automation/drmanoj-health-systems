@@ -23,7 +23,7 @@ import health_sso  # noqa: E402
 # FITLOG_V171_VERSION -- one version, reported by /health. BUMP THIS IN EVERY
 # RELEASE: the deploy runbook reads /health to confirm which build is running,
 # and it answered 1.3.1 through four releases before this was noticed.
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.8.0"   # FITLOG_V180_PROGRAMME
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("FITLOG_DB", os.path.join(APP_DIR, "fitlog.db"))
@@ -50,6 +50,8 @@ TH = RULES["thresholds"]
 EX_BY_ID = {e["id"]: e for e in EXKB["exercises"]}
 
 PAIN_SITES = ["Glute L", "Glute R", "Post hip", "Ant thigh", "Lumbar", "Other"]
+# FITLOG_V180_PROGRAMME -- unset is the owner's templates, exactly as before.
+PROGRAMME = os.environ.get("FITLOG_PROGRAMME", "").strip()
 
 # ---------------- db ----------------
 SCHEMA = """
@@ -201,7 +203,11 @@ def evaluate(day_iso, sleep, energy, pain_max, avail_min):
 
 def build_plan(verdict, day_iso, avail_min):
     """Deterministic session from templates; day-ordinal rotation, no randomness. F08 time-trim."""
-    tpl = EXKB["templates"].get(verdict) or EXKB["templates"]["YELLOW"]
+    # FITLOG_V180_PROGRAMME -- a programme brings its own templates and an avoid list.
+    prog = (EXKB.get("programmes") or {}).get(PROGRAMME) or {}
+    tpls = prog.get("templates") or EXKB["templates"]
+    avoid = set(prog.get("avoid") or [])
+    tpl = tpls.get(verdict) or tpls.get("YELLOW") or EXKB["templates"]["YELLOW"]
     ordn = date.fromisoformat(day_iso).toordinal()
     items = []
     if "checklist" in tpl:
@@ -217,7 +223,8 @@ def build_plan(verdict, day_iso, avail_min):
     for slot in tpl["slots"]:
         cats, count = slot[0].split("|"), slot[1]
         pool = [e for e in EXKB["exercises"] if e["category"] in cats and e["active"]
-                and tier.upper() in e["tiers"] and e["id"] not in used]
+                and tier.upper() in e["tiers"] and e["id"] not in used
+                and e["id"] not in avoid]   # FITLOG_V180_PROGRAMME
         for i in range(count):
             if not pool: break
             pick = pool[(ordn + i) % len(pool)]

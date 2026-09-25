@@ -3,6 +3,47 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-25 — the Family Edition, the joint focus, the Family Kitchen
+
+**Phase A — one copy per relative.** The same GutLog, RxGuard and FitLog code runs
+for each family member at `family.dr-manoj.in/m<n>/` (`/rx/`, `/fit/`), each member
+as their own Linux user under systemd sandboxing, with their own folder, databases,
+keys and tokens; a path-prefix wrapper lets the unchanged apps live under a path.
+Nothing of the owner's reaches a copy: the code tree is built by allowlist, and the
+one personal field found in the approved RxGuard overlay (the strength he logged)
+is stripped on the way in. The owner is caretaker: GutLog v3.36.0's `/family` page
+shows each member's summary from a bearer-gated status endpoint and opens their copy
+with a one-use ticket; every caretaker change is shown to the member with its IST
+time, and the member can switch caretaker access off — off means off. One command
+stamps a member (`stamp_member.py`), one upgrades every copy (`upgrade_all.sh`, which
+self-tests on scratch members first), backups are nightly and verified. Meal cards
+now line up with the six slots (a card may name its slot, or go by the clock).
+50/50 + 14/14 in the browser; negative control 20/20, including a member ticket
+reaching the owner's `/api/now` and an ignored caretaker switch.
+
+**Phase B — the joint focus** (shown under the `joint` profile only; the owner's
+Now page is unchanged). GutLog v3.37.0: a joint pain log with triggers, morning
+stiffness and walking tolerance; knee and ankle first among the pain sites; pain
+medicines today from the member's own RxGuard; steps and walking minutes beside that
+day's joint pain, with one stated next-day comparison and the weight trend; lipid,
+liver and CK results with repeat dates and a weekly muscle-ache question when a
+statin-class medicine is listed. RxGuard v1.9.0: three lower-limb joint conditions,
+the falls-at-night rule FR001 (sourced, deterministic), `/api/feed/dose`, and a gel
+kept apart from the tablet ceiling where a rule says so; generic label-maximum
+ceilings for pain medicines for copies with no personal file. FitLog v1.8.0: a
+knee- and ankle-sparing programme on the same engine. 24/24 + 6/6; negative control
+16/16 + 2/2.
+
+**Phase C — the Family Kitchen.** One pool of recipes and ratings, no health column,
+seeded from the owner's 52 cards (his stage, estimates and personal note lines left
+out). Each GutLog (v3.38.0) shows its own card: nutrition per serving from the
+ingredients through stated household measures, unmatched items shown, and personal
+adjustments with a "modified" badge and the reason — low-FODMAP swaps and the Food
+Test's pulse limit, glucose, sodium, lipids, weight, and medicine-food from the
+member's own RxGuard. The shared recipe is never changed. Capture by the iPhone Share
+button, a link, a photo or a PDF lands as a draft in the Recipe Inbox and joins the
+pool only when a person confirms it, after a duplicate check.
+
 ## 2026-09-24 (later) — GutLog v3.35.0: meals and snacks
 
 One slot list everywhere — Breakfast, Mid-morning, Lunch, Evening, Dinner,

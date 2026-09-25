@@ -76,6 +76,7 @@ def normalise_rules(doc, norm):
         r["max_units"] = float(mu) if mu not in (None, "") else None
         r["confirmed"] = r.get("confirmed") or ""
         r["label"] = r.get("label") or k
+        r["routes"] = [x.lower() for x in r.get("routes") or []]   # RXGUARD_V190_JOINT
         ings[norm(k)] = r
     classes = []
     for c in doc.get("classes") or []:
@@ -267,7 +268,11 @@ def build_intakes(events, stack, rules, norm):
                 u = units
             it = {"ing": k, "when": when, "timed": timed, "amount": amt, "units": u,
                   "product": med["name"], "route": route, "day": e.get("day")}
-            if amt is None:
+            # RXGUARD_V190_JOINT -- a dose by a route the ingredient's ceiling does
+            # not cover (a gel against a tablet ceiling) is kept apart, never added in.
+            if known[k].get("routes") and route not in known[k]["routes"]:
+                it["ing"] = k + "@" + route
+            elif amt is None:
                 unreadable.append(it)
             intakes.append(it)
     intakes.sort(key=lambda x: x["when"])

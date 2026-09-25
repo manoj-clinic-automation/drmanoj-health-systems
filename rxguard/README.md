@@ -72,6 +72,26 @@ named rule firing once, CYP suppression, UNKNOWN coverage, order, read-only,
 days parameter, dashboard, login, wrong/missing token, scratch-DB isolation,
 GutLog down. `smoke_test.py` 42/42 and `validate.py` 50/50 unchanged.
 
+## Joints, falls at night, pain-medicine totals — v1.9.0 (DEPLOYED 2026-09-25 10:39 IST)
+
+For the Family Edition's joint profile; the owner's RxGuard behaves as before.
+* Conditions `knee_oa`, `ankle_arthritis`, `hip_oa`.
+* **FR001** (`knowledge/rules.json` "falls_rules", sourced and quoted): a recorded
+  lower-limb joint condition + age >= 60 (profile `age`) + a sedating medicine
+  (sedation burden >= 2) taken at night (GutLog slot EVENING/NIGHT, or a dose logged
+  19:00-05:00 in 14 days) -> AMBER "Falls risk at night - light on, rise slowly";
+  RED when two or more sedating medicines are being taken. Silent when the age cannot
+  be read. Counted in the as-taken view, so it reaches GutLog and the Family page.
+* `dose_ceiling.py`: an ingredient may carry `routes`; a dose by another route (a gel
+  against a tablet ceiling) is kept out of the total and shown apart. Rules without
+  `routes` count as before.
+* `knowledge/dose_rules.generic.json`: label-maximum ceilings for common pain
+  medicines, each cited, plus stomach-risk and kidney-risk NSAID loads; used only by a
+  copy with no personal `dose_rules.local.json`.
+* `/api/feed/dose` (feed bearer): per-ingredient totals, what was kept apart, class
+  loads, dose findings, the classes of the current medicines and which are major
+  CYP3A4 substrates (the Family Kitchen's medicine-food rule).
+
 ## The NaSSA from its label, MAO inhibitors, as-needed counting — v1.8.4 (DEPLOYED 2026-09-23 21:16 IST)
 
 **Engine.**

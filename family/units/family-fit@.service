@@ -1,0 +1,30 @@
+[Unit]
+Description=Family Edition FitLog (%i)
+After=network.target
+
+[Service]
+# FAMILY_EDITION_V1 -- one member, one Linux user. The process can read the
+# family code tree and write only its own member folder; /root and /home are
+# invisible to it, and every other member's folder is mode 700 to another user.
+User=fam_%i
+Group=fam_%i
+EnvironmentFile=/etc/family/%i.env
+WorkingDirectory=/opt/family/code/current/family
+ExecStart=/usr/bin/python3 -m gunicorn --workers 1 --threads 4 --timeout 60 --bind 127.0.0.1:${FAMILY_PORT_FIT} --access-logfile - --access-logformat "%%(h)s %%(t)s %%(m)s %%(U)s %%(s)s %%(b)s" --error-logfile - entry_fit:application
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/family/%i
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

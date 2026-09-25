@@ -39,6 +39,22 @@ for tname, tpl in exkb["templates"].items():
         if not any(e["category"] in cats and e["active"] for e in exkb["exercises"]):
             errs.append(f"templates {tname}: empty slot {slot[0]}")
 
+# FITLOG_V180_PROGRAMME -- every programme's templates, after its avoid list.
+for pname, prog in (exkb.get("programmes") or {}).items():
+    avoid = set(prog.get("avoid") or [])
+    for a in avoid:
+        if a not in eids: errs.append(f"programme {pname}: unknown avoid {a}")
+    for v in ["GREEN", "YELLOW", "RED", "RECOVERY", "DELOAD", "TRAVEL"]:
+        if v not in (prog.get("templates") or {}): errs.append(f"programme {pname}: no template {v}")
+    for tname, tpl in (prog.get("templates") or {}).items():
+        for eid in tpl.get("fixed", []):
+            if eid not in eids or eid in avoid: errs.append(f"programme {pname} {tname}: bad fixed {eid}")
+        for slot in tpl.get("slots", []):
+            cats = slot[0].split("|")
+            if not any(e["category"] in cats and e["active"] and e["id"] not in avoid
+                       for e in exkb["exercises"]):
+                errs.append(f"programme {pname} {tname}: empty slot {slot[0]}")
+
 # protocols
 pids = [p["id"] for p in proto["protocols"]]
 if len(pids) != len(set(pids)): errs.append("protocols: duplicate ids")

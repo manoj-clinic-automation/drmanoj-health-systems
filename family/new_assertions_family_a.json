@@ -1,0 +1,243 @@
+{
+ "_": [
+  "Family Edition Phase A. The owner's Family page is new in GutLog v3.36.0, so A01/A02 fail on the reconstructed v3.35.0. Everything else lives in family/ and is broken on purpose in a COPY of that folder (NEGATIVE_CONTROL 'dir' mutations), including the two the brief names: ownerkey (m1's session reads the owner's /api/now) and toggleignored."
+ ],
+ "suite": "test_family_a.py",
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3360_family.py",
+ "assertions": [
+  {
+   "name": "A01 the Family page lists each member with their summary, read live",
+   "control": "version"
+  },
+  {
+   "name": "A02 open as caretaker: the ticket signs the caretaker in",
+   "control": "version"
+  },
+  {
+   "name": "A02 open as caretaker: a ticket works once",
+   "control": "mutation",
+   "mutation": {
+    "id": "reuse",
+    "why": "a used ticket is accepted again",
+    "module": "family_care.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            except sqlite3.IntegrityError:\n                return None",
+    "replace": "            except sqlite3.IntegrityError:\n                pass"
+   }
+  },
+  {
+   "name": "A03 caretaker changes are tagged and shown to the member",
+   "control": "mutation",
+   "mutation": {
+    "id": "notag",
+    "why": "caretaker writes are not logged",
+    "module": "family_care.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "                care.log(appname, who, request.method, request.path, label)",
+    "replace": "                pass"
+   }
+  },
+  {
+   "name": "A04 the caretaker cannot touch the member's own credentials or switch",
+   "control": "mutation",
+   "mutation": {
+    "id": "unblock",
+    "why": "nothing is blocked for the caretaker",
+    "module": "entry_gut.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "blocked=(\"account\", \"setup\", \"care_switch\")",
+    "replace": "blocked=()"
+   }
+  },
+  {
+   "name": "A05 switched off means off -- the caretaker's session is refused",
+   "control": "mutation",
+   "mutation": {
+    "id": "toggleignored",
+    "why": "the caretaker toggle is ignored",
+    "module": "family_care.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            return bool(r) and r[\"value\"] == \"on\"",
+    "replace": "            return True"
+   }
+  },
+  {
+   "name": "A05 switched off means off -- a new ticket is refused",
+   "control": "mutation",
+   "mutation": {
+    "id": "toggleignored",
+    "why": "the caretaker toggle is ignored",
+    "module": "family_care.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            return bool(r) and r[\"value\"] == \"on\"",
+    "replace": "            return True"
+   }
+  },
+  {
+   "name": "A05 switched off means off -- the status endpoint says off",
+   "control": "mutation",
+   "mutation": {
+    "id": "statusleak",
+    "why": "the status endpoint answers while access is off",
+    "module": "entry_gut.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if not CARE.access_on():\n        return jsonify(ok=True, access=\"off\")\n",
+    "replace": ""
+   }
+  },
+  {
+   "name": "A06 status endpoint: bearer only, this member's token only",
+   "control": "mutation",
+   "mutation": {
+    "id": "anytoken",
+    "why": "any bearer token is accepted",
+    "module": "family_care.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        return bool(tok) and bool(got) and hmac.compare_digest(tok, got.encode(\"ascii\", \"replace\"))",
+    "replace": "        return bool(got)"
+   }
+  },
+  {
+   "name": "A07 each process answers only its own prefix -- no prefix",
+   "control": "mutation",
+   "mutation": {
+    "id": "noprefix",
+    "why": "a request outside the prefix is passed to the app instead of refused",
+    "module": "family_prefix.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if not path.startswith(p + \"/\"):\n            body = b\"Not found\"",
+    "replace": "        if not path.startswith(p + \"/\"):\n            return self.app(environ, start_response)"
+   }
+  },
+  {
+   "name": "A08 a member's sign-in ticket never opens the owner's GutLog (/api/now)",
+   "control": "mutation",
+   "mutation": {
+    "id": "ownerkey",
+    "why": "a stray owner SSO key in the environment is honoured -- m1's session reads the owner's /api/now",
+    "module": "family_env.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        return {\"HEALTH_SSO_KEY_FILE\": self.path(\"sso.key\"),",
+    "replace": "        return {\"HEALTH_SSO_KEY_FILE\": os.environ.get(\"HEALTH_SSO_KEY_FILE\") or self.path(\"sso.key\"),"
+   }
+  },
+  {
+   "name": "A09 a feed token works only for its own member",
+   "control": "mutation",
+   "mutation": {
+    "id": "sharedfeed",
+    "why": "a stray feed-token path is honoured",
+    "module": "entry_gut.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    \"GUTLOG_FEED_TOKEN_FILE\": M.path(\"feed.token\"),",
+    "replace": "    \"GUTLOG_FEED_TOKEN_FILE\": os.environ.get(\"GUTLOG_FEED_TOKEN_FILE\") or M.path(\"feed.token\"),"
+   }
+  },
+  {
+   "name": "A10 stamping twice refuses",
+   "control": "mutation",
+   "mutation": {
+    "id": "restamp",
+    "why": "the registry check is skipped",
+    "module": "stamp_member.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if any(m[\"slug\"] == slug for m in reg[\"members\"]):",
+    "replace": "    if False:"
+   }
+  },
+  {
+   "name": "A11 a family copy starts with no owner data -- the running copy serves no medicine",
+   "control": "mutation",
+   "mutation": {
+    "id": "ownerdb",
+    "why": "a stray GUTLOG_DB is honoured, so the member process opens the owner's database",
+    "module": "entry_gut.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    \"GUTLOG_DB\": os.path.join(_gdir, \"health.db\"),",
+    "replace": "    \"GUTLOG_DB\": os.environ.get(\"GUTLOG_DB\") or os.path.join(_gdir, \"health.db\"),"
+   }
+  },
+  {
+   "name": "A12 each member's copy installs as its own app -- m1 manifest",
+   "control": "mutation",
+   "mutation": {
+    "id": "manifestscope",
+    "why": "the manifest keeps scope '/'",
+    "module": "family_prefix.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "k in (\"id\", \"start_url\", \"scope\", \"src\", \"url\")",
+    "replace": "k in (\"src\", \"url\")"
+   }
+  },
+  {
+   "name": "A13 a caretaker stays a caretaker across the member's apps",
+   "control": "mutation",
+   "mutation": {
+    "id": "carehop",
+    "why": "a caretaker session vouches as a member",
+    "module": "family_care.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if ep == \"sso_vouch\" and health_sso is not None:",
+    "replace": "        if False:"
+   }
+  },
+  {
+   "name": "A14 the page under the prefix links only inside it",
+   "control": "mutation",
+   "mutation": {
+    "id": "norewrite",
+    "why": "absolute paths in the page are not rewritten",
+    "module": "family_prefix.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        text = self._seg_rx.sub(lambda m: p + m.group(0), text)",
+    "replace": "        pass"
+   }
+  },
+  {
+   "name": "A15 the backup copies every member database",
+   "control": "mutation",
+   "mutation": {
+    "id": "nocaredb",
+    "why": "the backup skips care.db",
+    "module": "family_backup.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            if f.endswith(\".db\"):",
+    "replace": "            if f.endswith(\".db\") and not f.startswith(\"care\"):"
+   }
+  },
+  {
+   "name": "A16 the approved overlay reaches a family copy without the owner's logged strengths",
+   "control": "mutation",
+   "mutation": {
+    "id": "keepstrength",
+    "why": "the owner's logged strengths are not stripped",
+    "module": "build_code.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "STRIP_FIELDS = (\"strength_logged\", \"personal_relevance\")",
+    "replace": "STRIP_FIELDS = (\"personal_relevance\",)"
+   }
+  },
+  {
+   "name": "A17 meal cards line up with the slots",
+   "control": "version"
+  }
+ ]
+}

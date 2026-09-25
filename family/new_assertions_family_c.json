@@ -1,0 +1,257 @@
+{
+ "_": [
+  "Family Edition Phase C -- the Family Kitchen. Every assertion is broken on purpose in a COPY of the folder that carries it (GutLog code or its data files, the Kitchen service, the reader, the seeder), including the two the brief names: draftnutrition (an unconfirmed draft reaches nutrition) and leakcondition (a member's condition reaches the pool)."
+ ],
+ "suite": "test_family_c.py",
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3380_kitchen.py",
+ "assertions": [
+  {
+   "name": "C07 an unconfirmed draft never reaches nutrition or adjustments",
+   "control": "mutation",
+   "mutation": {
+    "id": "draftnutrition",
+    "why": "the Inbox review computes the draft's nutrition and badges",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "    return jsonify(ok=True, draft=j[\"draft\"], unknown=unknown)\n",
+    "replace": "    return jsonify(ok=True, draft=j[\"draft\"], unknown=unknown,\n                   **kitchen_card(dict(ex, servings=ex.get(\"servings\") or 1)))\n"
+   }
+  },
+  {
+   "name": "C01 nothing about a member's health reaches the pool",
+   "control": "mutation",
+   "mutation": {
+    "id": "leakcondition",
+    "why": "logging a meal sends the member's adjustment reasons to the pool as a note",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "    ft_dinner_sync(day)\n    return jsonify(ok=True, id=mid, slot=slot, kcal=",
+    "replace": "    kitchen_call(\"POST\", \"/api/recipes/%d/rate\" % rid, {\"made\": True, \"note\": \"; \".join(b[\"reason\"] for b in card[\"badges\"])[:200]})\n    ft_dinner_sync(day)\n    return jsonify(ok=True, id=mid, slot=slot, kcal="
+   }
+  },
+  {
+   "name": "C01 the pool holds no health fields (schema)",
+   "control": "mutation",
+   "mutation": {
+    "id": "healthcol",
+    "why": "the pool gains a conditions column",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "  added_at TEXT, updated TEXT, variant_of INTEGER, variant_label TEXT DEFAULT '');",
+    "replace": "  added_at TEXT, updated TEXT, variant_of INTEGER, variant_label TEXT DEFAULT '', conditions TEXT DEFAULT '');"
+   }
+  },
+  {
+   "name": "C04 the capture endpoint takes text, a link, a photo and a PDF, as drafts only",
+   "control": "mutation",
+   "mutation": {
+    "id": "autoconfirm",
+    "why": "a capture goes straight into the pool",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    return jsonify(ok=True, drafts=ids, message=\"Saved to your Recipe Inbox.\")",
+    "replace": "    db().execute(\"INSERT INTO recipes(slug, name, ingredients, method) VALUES(?,?,?,?)\", (uuid.uuid4().hex, text or \"shared\", \"[]\", \"[]\"))\n    db().commit()\n    return jsonify(ok=True, drafts=ids, message=\"Saved to your Recipe Inbox.\")"
+   }
+  },
+  {
+   "name": "C04 the capture endpoint refuses no token, another member's token",
+   "control": "mutation",
+   "mutation": {
+    "id": "anycapture",
+    "why": "any member's capture token captures for anyone",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    v = (tokens().get(\"capture\") or {}).get(slug) or {}\n    return len(got) >= 32 and isinstance(v, dict) and hmac.compare_digest(str(v.get(\"token\", \"\")), got)",
+    "replace": "    return len(got) >= 32 and any(hmac.compare_digest(str((v or {}).get(\"token\", \"\")), got) for v in (tokens().get(\"capture\") or {}).values())"
+   }
+  },
+  {
+   "name": "C04 the capture endpoint refuses no token, another member's token, and reads nothing",
+   "control": "mutation",
+   "mutation": {
+    "id": "capisapi",
+    "why": "a capture token can read the pool",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    for slug, v in (tokens().get(\"api\") or {}).items():",
+    "replace": "    for slug, v in list((tokens().get(\"api\") or {}).items()) + list((tokens().get(\"capture\") or {}).items()):"
+   }
+  },
+  {
+   "name": "C05 Inbox confirm moves a draft into the pool; a duplicate is caught",
+   "control": "mutation",
+   "mutation": {
+    "id": "nodup",
+    "why": "duplicates are never detected",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    n = norm_name(name)\n    w = ing_words(ings)\n",
+    "replace": "    return None\n"
+   }
+  },
+  {
+   "name": "C02 nutrition per serving from the ingredients, household measures converted to grams",
+   "control": "mutation",
+   "mutation": {
+    "id": "measurecup",
+    "why": "a cup is taken as 200 ml",
+    "module": "kitchen_measures.json",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "\"cup\": 240",
+    "replace": "\"cup\": 200"
+   }
+  },
+  {
+   "name": "C02 unmatched ingredients are shown, never guessed",
+   "control": "mutation",
+   "mutation": {
+    "id": "guessfood",
+    "why": "a food not in the table is matched to the nearest partial name",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "    hits = [h for h in food_lookup(item, limit=3) if h.get(\"full\")]",
+    "replace": "    hits = food_lookup(item, limit=3)"
+   }
+  },
+  {
+   "name": "C03 low-FODMAP: onion swapped for hing and pulses capped at the Food Test limit, for IBS only",
+   "control": "mutation",
+   "mutation": {
+    "id": "fodmapall",
+    "why": "the onion swap fires for everyone",
+    "module": "kitchen_rules.json",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "\"when\": {\"conditions_any\": [\"ibs\"]},",
+    "replace": "\"when\": {},"
+   }
+  },
+  {
+   "name": "C03 low-FODMAP: onion swapped for hing and pulses capped at the Food Test limit",
+   "control": "mutation",
+   "mutation": {
+    "id": "ftcap",
+    "why": "the Food Test limit caps the whole pot, not a serving",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "            cap = lim * serv\n",
+    "replace": "            cap = lim\n"
+   }
+  },
+  {
+   "name": "C03 lipids and weight: ghee halved and a smaller portion, with their reasons, only where recorded",
+   "control": "mutation",
+   "mutation": {
+    "id": "lipidall",
+    "why": "the lipid rule fires for IBS too",
+    "module": "kitchen_rules.json",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "{\"any\": [{\"conditions_any\": [\"high_cholesterol\"]}",
+    "replace": "{\"any\": [{\"conditions_any\": [\"high_cholesterol\", \"ibs\"]}"
+   }
+  },
+  {
+   "name": "C03 medicine-food: grapefruit removed and potassium salt swapped, from the member's own RxGuard",
+   "control": "mutation",
+   "mutation": {
+    "id": "cypall",
+    "why": "the grapefruit rule fires without a CYP3A4 medicine",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "        return bool(ctx[\"cyp3a4\"]) == bool(w[\"cyp3a4_major\"])",
+    "replace": "        return True"
+   }
+  },
+  {
+   "name": "C03 the shared recipe is never changed by anyone's adjustments",
+   "control": "mutation",
+   "mutation": {
+    "id": "touchread",
+    "why": "opening a recipe rewrites it",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        return jsonify(ok=False, err=\"Not found.\"), 404\n    return jsonify(ok=True, recipe=recipe_json(r, who, full=True))",
+    "replace": "        return jsonify(ok=False, err=\"Not found.\"), 404\n    db().execute(\"UPDATE recipes SET updated=? WHERE id=?\", (now_s(), rid))\n    db().commit()\n    return jsonify(ok=True, recipe=recipe_json(r, who, full=True))"
+   }
+  },
+  {
+   "name": "C08 one tap logs a serving as a meal, with the adjusted portion's nutrition",
+   "control": "mutation",
+   "mutation": {
+    "id": "logunadjusted",
+    "why": "the meal is logged from the unadjusted recipe",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "    per = card[\"nutrition\"][\"per_serving\"]\n",
+    "replace": "    per = recipe_nutrition(j[\"recipe\"][\"ingredients\"], j[\"recipe\"][\"servings\"])[\"per_serving\"]\n"
+   }
+  },
+  {
+   "name": "C06 the owner's GutLog shows the pool with his own adjustments",
+   "control": "mutation",
+   "mutation": {
+    "id": "nohba1c",
+    "why": "the HbA1c result is never found",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "_lab_latest(r\"hba1c|glycosylated|glycated\")",
+    "replace": "_lab_latest(r\"zzzz\")"
+   }
+  },
+  {
+   "name": "C09 a web page's own recipe data is read without a model",
+   "control": "mutation",
+   "mutation": {
+    "id": "noldgraph",
+    "why": "structured data inside @graph is missed",
+    "module": "kitchen_reader.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "                for k in (\"@graph\", \"mainEntity\", \"itemListElement\"):",
+    "replace": "                for k in ():"
+   }
+  },
+  {
+   "name": "C09 a web page's own recipe data is read without a model; a missing amount is flagged",
+   "control": "mutation",
+   "mutation": {
+    "id": "noqtyflag",
+    "why": "a missing amount is not flagged",
+    "module": "kitchen_reader.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if i.get(\"qty\") is None and i.get(\"unit\") not in (\"pinch\",):",
+    "replace": "        if False:"
+   }
+  },
+  {
+   "name": "C10 the owner's cards seed the pool, with the onion-free version beside, personal lines left out",
+   "control": "mutation",
+   "mutation": {
+    "id": "seedpersonal",
+    "why": "personal note lines are carried into the pool",
+    "module": "seed_kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if PERSONAL.search(x):",
+    "replace": "        if False:"
+   }
+  }
+ ]
+}

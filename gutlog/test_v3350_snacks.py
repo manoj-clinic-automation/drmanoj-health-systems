@@ -169,7 +169,8 @@ def main():
         names = [r[0] for r in q("SELECT name FROM sqlite_master WHERE type='table'")]
         assert "dishes" in names and "snack_marks" in names, names
         sv = q("SELECT value FROM settings WHERE key='schema_version'")[0][0]
-        assert sv == "3.3.7", "schema_version %s" % sv
+        # 3.3.7 or any later schema (v3.37.0 moved it to 3.3.8 for the joint tables).
+        assert tuple(int(x) for x in sv.split(".")) >= (3, 3, 7), "schema_version %s" % sv
         h = c.get("/").get_data(as_text=True)
         assert "__MEAL_CFG__" not in h and "const MEALCFG=" in h, "the lists are not in the page"
         cfg = json.loads(h.split("const MEALCFG=", 1)[1].split(";\n", 1)[0])

@@ -145,6 +145,12 @@ CLINICAL_ALLOW = {
         "declared-synthetic fixture - its header states that the molecules "
         "are chosen for the thresholds they cross and that none of them is on "
         "the owner's record, which is what makes it unreadable as a list",
+    "rxguard/knowledge/dose_rules.generic.json":
+        "FAMILY_EDITION_V1 / RxGuard v1.9.0 - label-maximum daily ceilings for a "
+        "generic set of pain medicines, each with its cited source; used only by a "
+        "copy with no personal dose-rules file. It lists every common analgesic "
+        "the same way and says nothing about who takes any of them - the personal "
+        "file stays knowledge/dose_rules.local.json, gitignored",
     "rxguard/validation_cases.json":
         "the engine's formal validation suite, with acceptance thresholds "
         "declared before the run; its 'index case' is the suite's, not a person's",

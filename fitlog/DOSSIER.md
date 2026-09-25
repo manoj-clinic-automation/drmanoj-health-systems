@@ -1,4 +1,4 @@
-# FitLog — DOSSIER (v1.7.1)
+# FitLog — DOSSIER (v1.8.0)
 
 Single source of truth. Update after every change.
 
@@ -61,6 +61,17 @@ so a locked FitLog stays locked until its own password. With no
 above: the whole ring is only as trustworthy as the weakest session it will
 vouch for. Module `health_sso.py` beside `app.py`; patch
 `ops/patch_sso.py --app fitlog` (4 anchors); suite `ops/test_sso.py`.
+
+## A knee- and ankle-sparing programme — v1.8.0 (`FITLOG_V180_PROGRAMME`, 2026-09-25)
+
+`FITLOG_PROGRAMME` (environment; unset = the owner's templates, as before) selects a
+programme from `knowledge/exercises.json` "programmes": its own templates per verdict
+and an `avoid` list that no pool may draw from. `joint`: no step-ups, sit-to-stands,
+calf raises, wall sits, carries or treadmill; knee strength (seated extension,
+straight-leg raise), seated strength, joint mobility, and low-impact aerobic work
+(static cycling, water walking, a water class). The eight new exercises sit in new
+categories no owner template names, so his sessions are unchanged. `kb_lint.py`
+validates every programme. The Family Edition sets `joint` for the joint profile.
 
 ## Doses from GutLog — v1.1.0 (read-endpoint cutover)
 

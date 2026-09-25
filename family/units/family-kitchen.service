@@ -1,0 +1,29 @@
+[Unit]
+Description=Family Edition - Family Kitchen (shared recipes and ratings)
+After=network.target
+
+[Service]
+# FAMILY_EDITION_V1 -- its own Linux user; it can write /srv/family/kitchen and
+# nothing else. It holds recipes and ratings only -- no member's health data.
+User=fam_kitchen
+Group=fam_kitchen
+Environment=KITCHEN_DIR=/srv/family/kitchen
+WorkingDirectory=/opt/family/code/current/family
+ExecStart=/usr/bin/python3 -m gunicorn --workers 1 --threads 4 --timeout 60 --bind 127.0.0.1:8199 --access-logfile - --access-logformat "%%(h)s %%(t)s %%(m)s %%(U)s %%(s)s %%(b)s" --error-logfile - entry_kitchen:application
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/family/kitchen
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

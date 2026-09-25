@@ -1,0 +1,123 @@
+# Family Edition — dossier
+
+Single source of truth for the Family Edition (FAMILY_EDITION_V1), built 25-Sep-2026.
+A copy of GutLog, RxGuard and FitLog for each relative, run from the owner's own code,
+isolated per person, with the owner as caretaker; and one shared recipe pool, the
+Family Kitchen. **No family member's health data is in this repository, ever** —
+not in code, fixtures, docs or commit messages. Tests use "Member A", "Medicine A".
+
+## Layout
+
+| What | Where |
+|---|---|
+| Host | `https://family.dr-manoj.in` (CyberPanel website; SSL issued automatically by `ssl_when_ready.sh` once the DNS record exists) |
+| Member *n* | `/m<n>/` GutLog · `/m<n>/rx/` RxGuard · `/m<n>/fit/` FitLog — ports `8200+10n+{1,2,3}` on loopback |
+| Family Kitchen | `/kitchen/` — port 8199; Share-shortcut guide at `/kitchen/help` |
+| Code | `/opt/family/code/<stamp>/{gutlog,rxguard,fitlog,family}`, `current` → the live tree (root-owned, read-only to members) |
+| Member data | `/srv/family/m<n>/` (owner `fam_m<n>`, mode 700): `gutlog/ rxguard/ fitlog/ care.db care.key status.token feed.token sso.key kitchen.token kitchen.capture` |
+| Kitchen data | `/srv/family/kitchen/` (owner `fam_kitchen`, 700): `kitchen.db attach/ tokens.json` |
+| Member env | `/etc/family/m<n>.env` (root 600): slug, folder, base, display name, profile, ports |
+| Registry | `/root/family/members.local.json` (root 600) — slug, display name, profile, ports, enabled |
+| Owner-side secrets | `/root/family/care/m<n>.key` + `.status`; `/root/family/kitchen/owner.token` + `.capture` |
+| Tooling | `/root/family/` — this folder of the repository |
+| Backups | `/root/backups/family/<slug>/` and `/kitchen/`, nightly 02:40, 30 days |
+
+Why one host with paths, not a host per member: one DNS record and one certificate,
+and the apps' ~300 absolute paths are handled by one wrapper (`family_prefix.py`)
+instead of by editing a live 12,000-line file. What paths do **not** give is browser
+isolation between members (same origin); that is accepted because each person's
+copy is used on their own phone, and the server isolates them regardless (below).
+
+## Isolation — the headline
+
+* **Operating system.** Each member's three processes run as that member's own Linux
+  user under systemd sandboxing (`ProtectHome`, `ProtectSystem=strict`,
+  `ReadWritePaths` = own folder only, `NoNewPrivileges`, `PrivateTmp`). They cannot
+  open `/root` (the owner's apps, databases and keys) or another member's folder.
+* **Secrets.** Every member has their own session keys, sign-in-ring key, GutLog feed
+  token, caretaker key, status token, FitLog ingest and Health Connect tokens.
+  `family_env.py` **forces** every path and key file from the member folder — a stray
+  owner variable in the environment changes nothing (tested: `ownerkey`, `ownerdb`,
+  `sharedfeed` mutations).
+* **Prefix.** A member process answers only its own prefix; anything else is 404.
+* **Knowledge.** RxGuard's curated base and the owner-approved overlay are copied in,
+  read-only; the overlay has its personal field (`strength_logged`, the strength the
+  owner logged) stripped by `build_code.py`, which refuses the build if any
+  personal-looking field remains. Members never approve drafts or fetch sources.
+  The curated rules' "personal relevance" notes (the owner's) are dropped.
+* **What crosses between copies:** the Family Kitchen (recipes and ratings only) and
+  the owner's caretaker access. Nothing else. No family data enters the owner's
+  databases, RxGuard, FitLog, Health Mirror or sign-in ring.
+
+## Caretaker
+
+The owner signs in to his own GutLog; `/family` shows each member (last entry, doses
+taken/due/missed today, RED in their RxGuard, last BP, days since the last report),
+read live from the member's `/api/care/status` (bearer; summary fields only). **Open
+as caretaker** mints a one-use, 60-second HMAC ticket with that member's key. The
+member app stamps a caretaker session; moving to the member's RxGuard or FitLog keeps
+the role. Every caretaker write is logged in `care.db` and shown to the member on
+`/care` as "by caretaker (Manoj)" with IST time. The caretaker cannot use the member's
+credentials page or the switch. **The member can switch caretaker access off**; off
+means every caretaker request is refused, tickets are refused, and the status endpoint
+answers `{"access":"off"}` only. Missing/unreadable switch = off.
+
+## Profiles
+
+`gut` (the owner's Now order), `joint` (joint pain log, pain-medicine totals, steps
+against next-day pain, cholesterol-medicine checks first; knee- and ankle-sparing
+FitLog programme), `general`. All features exist in every copy; the profile sets
+order and which joint cards show. The owner has no profile set → his Now page is
+unchanged.
+
+## Family Kitchen
+
+Pool: recipes (name, group, servings, ingredients with amounts, method, notes, source,
+attachment, added by — a display name, onion-free variants) and ratings (stars, made
+it, would make again, a short note). **No health column** (schema test). Everything
+personal — nutrition per serving, adjustments with "modified" badges and reasons, the
+portion — is computed inside each person's own GutLog from their own record
+(`kitchen_measures.json`, `kitchen_rules.json`). The shared recipe is never changed.
+Capture: iPhone Share shortcut → `/kitchen/capture/<slug>` with a capture-only token;
+links (schema.org data read directly; YouTube description and captions;
+Instagram/Facebook ask for a screenshot), photos and PDFs (the owner's Sarvam reader,
+English then Hindi), text (one model call to lay it out — capture, not analysis).
+Everything lands as a draft in the Recipe Inbox; nothing reaches the pool, nutrition,
+adjustments or RxGuard until a person confirms it, after a duplicate check.
+Seeded from the owner's 52 cards (`seed_kitchen.py`): his stage and per-serving
+estimates are not carried; note lines about him (trial, dose …) are dropped.
+The model key is read in place from the file the records worker already reads
+(`/root/wa/.env`); change `KITCHEN_KEYS_ENV` to use another, or remove the key to turn
+the model step off (drafts then go to the manual screen).
+
+## Commands
+
+```
+python3 /root/family/stamp_member.py --slug m3 --name "…" --profile gut|joint|general
+python3 /root/family/stamp_member.py --slug m3 --disable | --enable | --rotate-care | --reset-password
+python3 /root/family/stamp_member.py --slug m3 --rename "…"
+python3 /root/family/stamp_member.py --list
+/root/family/upgrade_all.sh           # after any owner release: build, scratch self-test, migrate, switch, verify
+bash /root/family/install_family.sh   # one-time (done 25-Sep-2026)
+bash /root/family/install_kitchen.sh  # one-time, Phase C
+```
+
+## Tests
+
+`test_family_a.py` (isolation, caretaker, stamping, backup), `test_family_b.py` (joint
+focus), `test_family_c.py` (Kitchen) — server-runnable against scratch members; the
+`test_family_ui*.py` browser suites run offline. Manifests `new_assertions_family_*.json`
+use `NEGATIVE_CONTROL.py` "dir" mutations: each assertion is broken in a COPY of the
+folder that carries it.
+
+## Open items (25-Sep-2026)
+
+* DNS: `family` A record → 93.127.195.49 at GoDaddy (the one owner step). SSL follows by itself.
+* Members m1 and m2 are designed and tested but not stamped: the stamping command was
+  stopped by the session's permission classifier (it creates Linux users and services
+  on the production server). Run it as above.
+* Fat, carbohydrate and calcium per serving need a fuller food table (SR Legacy has
+  them; the bundled file carries protein, kcal, fibre). Rebuild with the owner's
+  go-ahead to download the USDA zip again.
+* Email-forward capture: needs an MX record for the family host and a mailbox; left as
+  a later option.

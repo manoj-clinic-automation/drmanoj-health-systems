@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.35.0)
+# GutLog — DOSSIER (v3.38.0)
 
 Single source of truth. Update after every change.
 
@@ -384,6 +384,48 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## Family Kitchen — v3.38.0 (`GUTLOG_V3380_KITCHEN`, 2026-09-25)
+
+`/kitchen`: the shared Family Kitchen pool (family/kitchen.py, recipes and ratings
+only) read through `kitchen_call()` with this copy's own token. Everything personal
+is worked out here: `recipe_nutrition()` turns each ingredient into grams through
+`kitchen_measures.json` (katori, cup, tbsp, tsp, pinch, sizes — data, editable) and
+matches it to this person's own food library first, then the bundled table's full
+match; anything that cannot be turned into grams or matched is listed as unmatched,
+never guessed. `adjust_recipe()` applies `kitchen_rules.json` against
+`kitchen_context()` — conditions (records profile, or a family member's first-run
+form), HbA1c / sodium / LDL from `rec_labs` and `labs`, the Food Test's limits, BMI,
+and the medicine classes and CYP3A4 substrates this person's RxGuard reports — and
+every rule that fires is a "modified" badge with its reason. The shared recipe is
+never changed. One tap logs a serving with the adjusted nutrition. The Recipe Inbox
+shows a draft's fields with the original beside them and marks uncertain items; a
+draft is never given nutrition or adjustments; Confirm goes through the pool's
+duplicate check. Env: `GUTLOG_KITCHEN_URL`, `_TOKEN_FILE`, `_CAPTURE_FILE`,
+`_CAPTURE_URL`, `_HELP_URL`. A line on the Now tab when the pool answers.
+
+## Joint focus — v3.37.0 (`GUTLOG_V3370_JOINT`, 2026-09-25)
+
+Cards shown only when `settings.now_profile` is `joint` (the Family Edition sets it;
+the owner has none, so his Now page is unchanged): joint pain log (`joint_log`:
+joint, score, start, triggers, morning stiffness, walking tolerance); knee and ankle
+tiles first among the pain sites (`msk_sites()`); pain medicines today from RxGuard
+`/api/feed/dose`; steps and walking minutes from FitLog beside the day's worst joint
+score, with `step_pain_compare()` — next-day pain after the top third of days by
+steps against after the others, counts only — and the weight trend; lipid, liver
+and CK results with repeat dates by a stated rule (`LIPID_GROUPS`), and a weekly
+muscle-ache question (`muscle_check`) when RxGuard lists a statin-class medicine.
+ANALYTES gains total and HDL cholesterol, ALT, AST, CK. Schema 3.3.8.
+
+## Family page — v3.36.0 (`GUTLOG_V3360_FAMILY`, 2026-09-25)
+
+`/family` lists each Family Edition member from `GUTLOG_FAMILY_FILE` (default the
+registry on the server) with the summary their own copy returns from
+`/api/care/status` (bearer, summary fields only, `{"access":"off"}` when they have
+switched caretaker access off); nothing is stored here. `/family/open/<slug>` mints
+the one-use, 60-second caretaker ticket with that member's key. Meal cards may carry
+`slot` (`"auto"` = by the clock) and `aka` (old names still log). See
+`family/DOSSIER_Family.md`.
 
 ## Meals and snacks — v3.35.0 (`GUTLOG_V3350_SNACKS`, 2026-09-24)
 

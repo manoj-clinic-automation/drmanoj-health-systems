@@ -1,0 +1,36 @@
+{
+ "_": [
+  "Phase B browser check: the joint card script broken on purpose."
+ ],
+ "suite": "test_family_ui_b.py",
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3370_joint.py",
+ "assertions": [
+  {
+   "name": "V02 a joint entry saved by tapping",
+   "control": "mutation",
+   "mutation": {
+    "id": "jsbreak",
+    "why": "the joint card script loses its state object",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "const JST={site:'',score:null,trig:[]};",
+    "replace": ""
+   }
+  },
+  {
+   "name": "V04 no page error on the joint page",
+   "control": "mutation",
+   "mutation": {
+    "id": "jsbreak",
+    "why": "the joint card script loses its state object",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "const JST={site:'',score:null,trig:[]};",
+    "replace": ""
+   }
+  }
+ ]
+}

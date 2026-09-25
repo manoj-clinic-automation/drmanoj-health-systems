@@ -441,5 +441,34 @@
     "headache": ["any_recent"],
     "abdominal_pain": ["any_recent"],
     "other": ["any_recent"]
-  }
+  },
+ "falls_rules": {
+  "_note": "RXGUARD_V190_JOINT. Rules that need a condition, an age and the time a medicine is taken together. Generic; no personal data.",
+  "rules": [
+   {
+    "id": "FR001",
+    "title": "Falls risk at night - light on, rise slowly",
+    "conditions_any": [
+     "knee_oa",
+     "ankle_arthritis",
+     "hip_oa"
+    ],
+    "min_age": 60,
+    "sedating_min": 2,
+    "night_slots": [
+     "EVENING",
+     "NIGHT"
+    ],
+    "night_from": "19:00",
+    "night_to": "05:00",
+    "amber_at": 1,
+    "red_at": 2,
+    "consequence": "A sedating medicine at night, a painful knee, ankle or hip, and age together make a fall on the way to the bathroom at night more likely; a fall at this age often means a fracture.",
+    "action": "Light on (or a night light) before getting up; sit on the edge of the bed for a minute, then rise slowly; walking aid and slippers within reach; ask whether the night medicine is still needed at this dose.",
+    "monitoring": "Any fall or near-fall, dizziness on standing, morning drowsiness.",
+    "source": "2023 AGS Beers Criteria (J Am Geriatr Soc 2023;71:2052-81), history of falls or fractures - for benzodiazepines, Z-drugs, antidepressants, antiepileptics, antipsychotics and opioids: 'Avoid unless safer alternatives are not available'; and: minimise the number of CNS-active drugs.",
+    "reviewed": "2026-09-25"
+   }
+  ]
+ }
 }

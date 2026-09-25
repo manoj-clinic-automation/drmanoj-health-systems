@@ -2,103 +2,687 @@
   "version": "1.0",
   "note": "Seeded from plan-tool field conventions. image_path/video_url are enrichment slots; app functional without media.",
   "exercises": [
-    {"id": "E01", "name_en": "Glute Bridge", "name_hi": "ग्लूट ब्रिज", "category": "Glute", "tiers": ["G", "Y", "R"],
-     "dose_g": "3 x 12 (progress: single-leg 2 x 8/side)", "dose_y": "2 x 12", "dose_r": "1 x 10 slow",
-     "purpose": "Glute max activation and endurance; the primary anti-fatigue movement for standing surgery.",
-     "cues": "Ribs down, squeeze at top 2s, push through heels.", "mistakes": "Lumbar hyperextension substituting for glute drive.",
-     "equipment": "", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E02", "name_en": "Clamshell", "name_hi": "क्लैमशेल", "category": "Glute", "tiers": ["G", "Y", "R"],
-     "dose_g": "3 x 15/side with band", "dose_y": "2 x 15/side", "dose_r": "1 x 12/side no band",
-     "purpose": "Glute medius endurance; lateral pelvic stability during weight-shifting at the table.",
-     "cues": "Pelvis stacked, no roll-back; open from hip.", "mistakes": "Rolling pelvis backward to fake range.",
-     "equipment": "theraband", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E03", "name_en": "Hip Extension (standing/prone)", "name_hi": "हिप एक्सटेंशन", "category": "Glute", "tiers": ["G", "Y"],
-     "dose_g": "3 x 12/side", "dose_y": "2 x 10/side",
-     "purpose": "Isolated glute max firing without lumbar load.",
-     "cues": "Move from hip, trunk still; small clean arc.", "mistakes": "Arching the low back to gain height.",
-     "equipment": "", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E04", "name_en": "Monster Walk (lateral band)", "name_hi": "बैंड वॉक", "category": "Glute", "tiers": ["G"],
-     "dose_g": "3 x 10 steps each direction",
-     "purpose": "Glute med under load in standing — directly transfers to OT stance.",
-     "cues": "Athletic half-squat, tension on band throughout.", "mistakes": "Standing tall and letting band go slack.",
-     "equipment": "theraband", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E05", "name_en": "Side Plank (knee -> full)", "name_hi": "साइड प्लैंक", "category": "Core", "tiers": ["G", "Y"],
-     "dose_g": "3 x 20-30s/side", "dose_y": "2 x 15-20s/side (knee version ok)",
-     "purpose": "Lateral core endurance — the McGill marker you also test weekly.",
-     "cues": "Straight line ear-shoulder-hip-knee; breathe.", "mistakes": "Hip sag; holding breath.",
-     "equipment": "", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E06", "name_en": "Bird Dog", "name_hi": "बर्ड डॉग", "category": "Core", "tiers": ["G", "Y", "R"],
-     "dose_g": "3 x 8/side 3s hold", "dose_y": "2 x 8/side", "dose_r": "1 x 6/side slow",
-     "purpose": "Extensor endurance with zero compressive spike; safe on any day.",
-     "cues": "Imagine a glass of water on the low back.", "mistakes": "Trunk rotation; rushing.",
-     "equipment": "", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E07", "name_en": "Dead Bug", "name_hi": "डेड बग", "category": "Core", "tiers": ["G", "Y", "R"],
-     "dose_g": "3 x 8/side", "dose_y": "2 x 8/side", "dose_r": "1 x 6/side",
-     "purpose": "Anterior core control; anti-extension endurance.",
-     "cues": "Low back gently pressed to floor throughout.", "mistakes": "Ribs flaring as the leg lowers.",
-     "equipment": "", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E08", "name_en": "Posterior Pelvic Tilt", "name_hi": "पेल्विक टिल्ट", "category": "Lumbar", "tiers": ["R"],
-     "dose_r": "10 x 5s holds",
-     "purpose": "Gentle lumbar reset on red days; carried over from plan-tool.",
-     "cues": "Flatten low back into floor, no breath-holding.", "mistakes": "Using legs instead of pelvis.",
-     "equipment": "", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E09", "name_en": "Sit-to-Stand (-> Goblet)", "name_hi": "कुर्सी स्क्वाट", "category": "Lower limb", "tiers": ["G", "Y"],
-     "dose_g": "3 x 10 (progress: goblet DB 5-10 kg)", "dose_y": "2 x 10 bodyweight",
-     "purpose": "Functional quad/glute strength; the base pattern of all standing work.",
-     "cues": "Hinge first, stand tall, control the descent.", "mistakes": "Plopping down; knees caving.",
-     "equipment": "dumbbell (optional)", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E10", "name_en": "Step-Up", "name_hi": "स्टेप-अप", "category": "Lower limb", "tiers": ["G"],
-     "dose_g": "3 x 8/side low step",
-     "purpose": "Unilateral strength and balance; stair/travel confidence.",
-     "cues": "Drive through the top-leg heel; no push-off from the floor leg.", "mistakes": "Bouncing off the back leg.",
-     "equipment": "step", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E11", "name_en": "Calf Raise", "name_hi": "काफ रेज़", "category": "Lower limb", "tiers": ["G", "Y", "R"],
-     "dose_g": "3 x 15", "dose_y": "2 x 15", "dose_r": "1 x 15 slow",
-     "purpose": "Venous pump and ankle endurance — long standing and long flights both.",
-     "cues": "Full range, 2s down.", "mistakes": "Tiny bounces at the top.",
-     "equipment": "", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E12", "name_en": "Wall Sit", "name_hi": "वॉल सिट", "category": "OT endurance", "tiers": ["G", "Y"],
-     "dose_g": "3 x 30-45s", "dose_y": "2 x 20-30s",
-     "purpose": "Direct static-standing tolerance training for the operating posture.",
-     "cues": "Back flat on wall, thighs toward parallel, breathe evenly.", "mistakes": "Hands on thighs; shallow angle.",
-     "equipment": "", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E13", "name_en": "Suitcase / Farmer Carry", "name_hi": "फार्मर कैरी", "category": "OT endurance", "tiers": ["G"],
-     "dose_g": "3 x 30m (single DB for suitcase)",
-     "purpose": "Loaded core + grip + posture endurance in one movement.",
-     "cues": "Tall, level shoulders, don't lean away from the load.", "mistakes": "Side-bending toward the weight.",
-     "equipment": "dumbbell", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E14", "name_en": "Hip Hinge (-> light RDL)", "name_hi": "हिप हिंज", "category": "Posture", "tiers": ["G", "Y"],
-     "dose_g": "3 x 10 (progress: light DB RDL)", "dose_y": "2 x 8 unloaded",
-     "purpose": "Grooves the table-lean pattern so the spine stops paying for it.",
-     "cues": "Push hips back, shins vertical, neutral spine.", "mistakes": "Squatting instead of hinging; rounding.",
-     "equipment": "dumbbell (optional)", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E15", "name_en": "Treadmill Zone-2 Walk", "name_hi": "ट्रेडमिल वॉक", "category": "Aerobic", "tiers": ["G", "Y"],
-     "dose_g": "20-30 min, conversational pace, incline 1-3% optional", "dose_y": "10-15 min flat",
-     "purpose": "Aerobic engine block toward 150-200 min/week.",
-     "cues": "Nose-breathing pace; you should be able to speak sentences.", "mistakes": "Turning it into a workout — this is the engine, not the test.",
-     "equipment": "treadmill", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E16", "name_en": "Static Cycle Zone-2", "name_hi": "साइकिल ज़ोन-2", "category": "Aerobic", "tiers": ["G", "Y"],
-     "dose_g": "20-30 min easy-moderate", "dose_y": "10-15 min easy",
-     "purpose": "Zero-impact aerobic alternative; interchangeable with E15.",
-     "cues": "Cadence smooth, conversational effort.", "mistakes": "Chasing resistance.",
-     "equipment": "static cycle", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E17", "name_en": "Cycle Easy Spin", "name_hi": "आसान साइकिल", "category": "Recovery", "tiers": ["R"],
-     "dose_r": "8-10 min, minimal resistance",
-     "purpose": "Zero-impact circulation on red / post-OT days when walking feels heavy.",
-     "cues": "Effort so light it feels pointless — that is the point.", "mistakes": "Adding resistance.",
-     "equipment": "static cycle", "image_path": "", "video_url": "", "active": 1},
-    {"id": "E18", "name_en": "Band Row", "name_hi": "बैंड रो", "category": "Upper body", "tiers": ["G", "Y"],
-     "dose_g": "3 x 12", "dose_y": "2 x 12",
-     "purpose": "Upper-back endurance against the forward operating posture.",
-     "cues": "Squeeze shoulder blades, elbows close, slow return.", "mistakes": "Shrugging; leaning back.",
-     "equipment": "theraband", "image_path": "", "video_url": "", "active": 1}
+    {
+      "id": "E01",
+      "name_en": "Glute Bridge",
+      "name_hi": "ग्लूट ब्रिज",
+      "category": "Glute",
+      "tiers": [
+        "G",
+        "Y",
+        "R"
+      ],
+      "dose_g": "3 x 12 (progress: single-leg 2 x 8/side)",
+      "dose_y": "2 x 12",
+      "dose_r": "1 x 10 slow",
+      "purpose": "Glute max activation and endurance; the primary anti-fatigue movement for standing surgery.",
+      "cues": "Ribs down, squeeze at top 2s, push through heels.",
+      "mistakes": "Lumbar hyperextension substituting for glute drive.",
+      "equipment": "",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E02",
+      "name_en": "Clamshell",
+      "name_hi": "क्लैमशेल",
+      "category": "Glute",
+      "tiers": [
+        "G",
+        "Y",
+        "R"
+      ],
+      "dose_g": "3 x 15/side with band",
+      "dose_y": "2 x 15/side",
+      "dose_r": "1 x 12/side no band",
+      "purpose": "Glute medius endurance; lateral pelvic stability during weight-shifting at the table.",
+      "cues": "Pelvis stacked, no roll-back; open from hip.",
+      "mistakes": "Rolling pelvis backward to fake range.",
+      "equipment": "theraband",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E03",
+      "name_en": "Hip Extension (standing/prone)",
+      "name_hi": "हिप एक्सटेंशन",
+      "category": "Glute",
+      "tiers": [
+        "G",
+        "Y"
+      ],
+      "dose_g": "3 x 12/side",
+      "dose_y": "2 x 10/side",
+      "purpose": "Isolated glute max firing without lumbar load.",
+      "cues": "Move from hip, trunk still; small clean arc.",
+      "mistakes": "Arching the low back to gain height.",
+      "equipment": "",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E04",
+      "name_en": "Monster Walk (lateral band)",
+      "name_hi": "बैंड वॉक",
+      "category": "Glute",
+      "tiers": [
+        "G"
+      ],
+      "dose_g": "3 x 10 steps each direction",
+      "purpose": "Glute med under load in standing — directly transfers to OT stance.",
+      "cues": "Athletic half-squat, tension on band throughout.",
+      "mistakes": "Standing tall and letting band go slack.",
+      "equipment": "theraband",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E05",
+      "name_en": "Side Plank (knee -> full)",
+      "name_hi": "साइड प्लैंक",
+      "category": "Core",
+      "tiers": [
+        "G",
+        "Y"
+      ],
+      "dose_g": "3 x 20-30s/side",
+      "dose_y": "2 x 15-20s/side (knee version ok)",
+      "purpose": "Lateral core endurance — the McGill marker you also test weekly.",
+      "cues": "Straight line ear-shoulder-hip-knee; breathe.",
+      "mistakes": "Hip sag; holding breath.",
+      "equipment": "",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E06",
+      "name_en": "Bird Dog",
+      "name_hi": "बर्ड डॉग",
+      "category": "Core",
+      "tiers": [
+        "G",
+        "Y",
+        "R"
+      ],
+      "dose_g": "3 x 8/side 3s hold",
+      "dose_y": "2 x 8/side",
+      "dose_r": "1 x 6/side slow",
+      "purpose": "Extensor endurance with zero compressive spike; safe on any day.",
+      "cues": "Imagine a glass of water on the low back.",
+      "mistakes": "Trunk rotation; rushing.",
+      "equipment": "",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E07",
+      "name_en": "Dead Bug",
+      "name_hi": "डेड बग",
+      "category": "Core",
+      "tiers": [
+        "G",
+        "Y",
+        "R"
+      ],
+      "dose_g": "3 x 8/side",
+      "dose_y": "2 x 8/side",
+      "dose_r": "1 x 6/side",
+      "purpose": "Anterior core control; anti-extension endurance.",
+      "cues": "Low back gently pressed to floor throughout.",
+      "mistakes": "Ribs flaring as the leg lowers.",
+      "equipment": "",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E08",
+      "name_en": "Posterior Pelvic Tilt",
+      "name_hi": "पेल्विक टिल्ट",
+      "category": "Lumbar",
+      "tiers": [
+        "R"
+      ],
+      "dose_r": "10 x 5s holds",
+      "purpose": "Gentle lumbar reset on red days; carried over from plan-tool.",
+      "cues": "Flatten low back into floor, no breath-holding.",
+      "mistakes": "Using legs instead of pelvis.",
+      "equipment": "",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E09",
+      "name_en": "Sit-to-Stand (-> Goblet)",
+      "name_hi": "कुर्सी स्क्वाट",
+      "category": "Lower limb",
+      "tiers": [
+        "G",
+        "Y"
+      ],
+      "dose_g": "3 x 10 (progress: goblet DB 5-10 kg)",
+      "dose_y": "2 x 10 bodyweight",
+      "purpose": "Functional quad/glute strength; the base pattern of all standing work.",
+      "cues": "Hinge first, stand tall, control the descent.",
+      "mistakes": "Plopping down; knees caving.",
+      "equipment": "dumbbell (optional)",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E10",
+      "name_en": "Step-Up",
+      "name_hi": "स्टेप-अप",
+      "category": "Lower limb",
+      "tiers": [
+        "G"
+      ],
+      "dose_g": "3 x 8/side low step",
+      "purpose": "Unilateral strength and balance; stair/travel confidence.",
+      "cues": "Drive through the top-leg heel; no push-off from the floor leg.",
+      "mistakes": "Bouncing off the back leg.",
+      "equipment": "step",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E11",
+      "name_en": "Calf Raise",
+      "name_hi": "काफ रेज़",
+      "category": "Lower limb",
+      "tiers": [
+        "G",
+        "Y",
+        "R"
+      ],
+      "dose_g": "3 x 15",
+      "dose_y": "2 x 15",
+      "dose_r": "1 x 15 slow",
+      "purpose": "Venous pump and ankle endurance — long standing and long flights both.",
+      "cues": "Full range, 2s down.",
+      "mistakes": "Tiny bounces at the top.",
+      "equipment": "",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E12",
+      "name_en": "Wall Sit",
+      "name_hi": "वॉल सिट",
+      "category": "OT endurance",
+      "tiers": [
+        "G",
+        "Y"
+      ],
+      "dose_g": "3 x 30-45s",
+      "dose_y": "2 x 20-30s",
+      "purpose": "Direct static-standing tolerance training for the operating posture.",
+      "cues": "Back flat on wall, thighs toward parallel, breathe evenly.",
+      "mistakes": "Hands on thighs; shallow angle.",
+      "equipment": "",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E13",
+      "name_en": "Suitcase / Farmer Carry",
+      "name_hi": "फार्मर कैरी",
+      "category": "OT endurance",
+      "tiers": [
+        "G"
+      ],
+      "dose_g": "3 x 30m (single DB for suitcase)",
+      "purpose": "Loaded core + grip + posture endurance in one movement.",
+      "cues": "Tall, level shoulders, don't lean away from the load.",
+      "mistakes": "Side-bending toward the weight.",
+      "equipment": "dumbbell",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E14",
+      "name_en": "Hip Hinge (-> light RDL)",
+      "name_hi": "हिप हिंज",
+      "category": "Posture",
+      "tiers": [
+        "G",
+        "Y"
+      ],
+      "dose_g": "3 x 10 (progress: light DB RDL)",
+      "dose_y": "2 x 8 unloaded",
+      "purpose": "Grooves the table-lean pattern so the spine stops paying for it.",
+      "cues": "Push hips back, shins vertical, neutral spine.",
+      "mistakes": "Squatting instead of hinging; rounding.",
+      "equipment": "dumbbell (optional)",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E15",
+      "name_en": "Treadmill Zone-2 Walk",
+      "name_hi": "ट्रेडमिल वॉक",
+      "category": "Aerobic",
+      "tiers": [
+        "G",
+        "Y"
+      ],
+      "dose_g": "20-30 min, conversational pace, incline 1-3% optional",
+      "dose_y": "10-15 min flat",
+      "purpose": "Aerobic engine block toward 150-200 min/week.",
+      "cues": "Nose-breathing pace; you should be able to speak sentences.",
+      "mistakes": "Turning it into a workout — this is the engine, not the test.",
+      "equipment": "treadmill",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E16",
+      "name_en": "Static Cycle Zone-2",
+      "name_hi": "साइकिल ज़ोन-2",
+      "category": "Aerobic",
+      "tiers": [
+        "G",
+        "Y"
+      ],
+      "dose_g": "20-30 min easy-moderate",
+      "dose_y": "10-15 min easy",
+      "purpose": "Zero-impact aerobic alternative; interchangeable with E15.",
+      "cues": "Cadence smooth, conversational effort.",
+      "mistakes": "Chasing resistance.",
+      "equipment": "static cycle",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E17",
+      "name_en": "Cycle Easy Spin",
+      "name_hi": "आसान साइकिल",
+      "category": "Recovery",
+      "tiers": [
+        "R"
+      ],
+      "dose_r": "8-10 min, minimal resistance",
+      "purpose": "Zero-impact circulation on red / post-OT days when walking feels heavy.",
+      "cues": "Effort so light it feels pointless — that is the point.",
+      "mistakes": "Adding resistance.",
+      "equipment": "static cycle",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E18",
+      "name_en": "Band Row",
+      "name_hi": "बैंड रो",
+      "category": "Upper body",
+      "tiers": [
+        "G",
+        "Y"
+      ],
+      "dose_g": "3 x 12",
+      "dose_y": "2 x 12",
+      "purpose": "Upper-back endurance against the forward operating posture.",
+      "cues": "Squeeze shoulder blades, elbows close, slow return.",
+      "mistakes": "Shrugging; leaning back.",
+      "equipment": "theraband",
+      "image_path": "",
+      "video_url": "",
+      "active": 1
+    },
+    {
+      "id": "E19",
+      "name_en": "Water Walking",
+      "name_hi": "पानी में चलना",
+      "category": "Aerobic (low impact)",
+      "tiers": [
+        "G",
+        "Y"
+      ],
+      "purpose": "Aerobic work with the knees and ankles unloaded by the water.",
+      "cues": "Upright, whole foot down, arms moving.",
+      "mistakes": "Hurrying in shallow water, where the load comes back.",
+      "equipment": "pool",
+      "image_path": "",
+      "video_url": "",
+      "active": 1,
+      "dose_g": "20-30 min, chest-deep water",
+      "dose_y": "10-15 min, waist-deep water"
+    },
+    {
+      "id": "E20",
+      "name_en": "Water Exercise Class",
+      "name_hi": "पानी में व्यायाम",
+      "category": "Aerobic (low impact)",
+      "tiers": [
+        "G"
+      ],
+      "purpose": "Longer aerobic session without impact.",
+      "cues": "Stay in the depth where the joint is comfortable.",
+      "mistakes": "Jumping moves.",
+      "equipment": "pool",
+      "image_path": "",
+      "video_url": "",
+      "active": 1,
+      "dose_g": "30-45 min low-impact class"
+    },
+    {
+      "id": "E21",
+      "name_en": "Seated Knee Extension",
+      "name_hi": "बैठकर घुटना सीधा करना",
+      "category": "Knee strength",
+      "tiers": [
+        "G",
+        "Y",
+        "R"
+      ],
+      "purpose": "Quadriceps strength without weight through the knee.",
+      "cues": "Sit tall, straighten slowly, hold, lower slowly.",
+      "mistakes": "Swinging the leg; locking hard.",
+      "equipment": "chair",
+      "image_path": "",
+      "video_url": "",
+      "active": 1,
+      "dose_g": "3 x 12 each leg, 2-s hold at the top",
+      "dose_y": "2 x 10 each leg",
+      "dose_r": "1 x 10 each leg, small range"
+    },
+    {
+      "id": "E22",
+      "name_en": "Straight-Leg Raise (lying)",
+      "name_hi": "लेटकर सीधी टांग उठाना",
+      "category": "Knee strength",
+      "tiers": [
+        "G",
+        "Y",
+        "R"
+      ],
+      "purpose": "Quadriceps and hip strength with the knee kept straight and unloaded.",
+      "cues": "Other knee bent, tighten the thigh first, lift to the height of the bent knee.",
+      "mistakes": "Arching the back.",
+      "equipment": "mat",
+      "image_path": "",
+      "video_url": "",
+      "active": 1,
+      "dose_g": "3 x 10 each leg",
+      "dose_y": "2 x 8 each leg",
+      "dose_r": "1 x 8 each leg"
+    },
+    {
+      "id": "E23",
+      "name_en": "Seated Marching",
+      "name_hi": "बैठकर कदमताल",
+      "category": "Seated strength",
+      "tiers": [
+        "G",
+        "Y",
+        "R"
+      ],
+      "purpose": "Hip strength and circulation from a chair.",
+      "cues": "Sit tall, lift one knee at a time, steady rhythm.",
+      "mistakes": "Leaning back.",
+      "equipment": "chair",
+      "image_path": "",
+      "video_url": "",
+      "active": 1,
+      "dose_g": "3 x 30 s",
+      "dose_y": "2 x 30 s",
+      "dose_r": "1 x 30 s, slow"
+    },
+    {
+      "id": "E24",
+      "name_en": "Ankle Pumps and Circles (seated)",
+      "name_hi": "टखने घुमाना",
+      "category": "Joint mobility",
+      "tiers": [
+        "G",
+        "Y",
+        "R"
+      ],
+      "purpose": "Keeps the ankle moving without load; eases morning stiffness.",
+      "cues": "Slow, full range the ankle allows today.",
+      "mistakes": "Forcing into pain.",
+      "equipment": "chair",
+      "image_path": "",
+      "video_url": "",
+      "active": 1,
+      "dose_g": "2 x 20 pumps + 10 circles each way",
+      "dose_y": "20 pumps + 10 circles each way",
+      "dose_r": "10 pumps + 5 circles, gently"
+    },
+    {
+      "id": "E25",
+      "name_en": "Heel Slides",
+      "name_hi": "एड़ी खिसकाना",
+      "category": "Joint mobility",
+      "tiers": [
+        "G",
+        "Y",
+        "R"
+      ],
+      "purpose": "Knee bending range without weight.",
+      "cues": "Lying or sitting, slide the heel in, then out.",
+      "mistakes": "Bouncing at the end of range.",
+      "equipment": "mat",
+      "image_path": "",
+      "video_url": "",
+      "active": 1,
+      "dose_g": "2 x 15 each leg",
+      "dose_y": "15 each leg",
+      "dose_r": "10 each leg, small range"
+    },
+    {
+      "id": "E26",
+      "name_en": "Seated Band Row",
+      "name_hi": "बैठकर बैंड रो",
+      "category": "Seated strength",
+      "tiers": [
+        "G",
+        "Y"
+      ],
+      "purpose": "Upper-back strength from a chair.",
+      "cues": "Shoulders down, squeeze the blades.",
+      "mistakes": "Shrugging.",
+      "equipment": "theraband",
+      "image_path": "",
+      "video_url": "",
+      "active": 1,
+      "dose_g": "3 x 12",
+      "dose_y": "2 x 10"
+    }
   ],
   "templates": {
-    "GREEN": {"slots": [["Glute", 2], ["Core", 2], ["Lower limb|OT endurance|Posture|Upper body", 1], ["Aerobic", 1]]},
-    "YELLOW": {"slots": [["Glute", 2], ["Core", 1], ["Lower limb", 1]]},
-    "RED": {"fixed": ["E08", "E06", "E11", "E17"], "pick": 3},
-    "TRAVEL": {"fixed": ["E01", "E06", "E11"], "pick": 3},
-    "DELOAD": {"slots": [["Glute", 1], ["Core", 1], ["Aerobic", 1]]},
-    "RECOVERY": {"checklist": ["Hydration + protein now", "Normatec Legs — 20 min", "Heat to lumbar — 10 min (can run in parallel)", "5-min mobility: pelvic tilt, knee-to-chest, gentle hinge"]}
+    "GREEN": {
+      "slots": [
+        [
+          "Glute",
+          2
+        ],
+        [
+          "Core",
+          2
+        ],
+        [
+          "Lower limb|OT endurance|Posture|Upper body",
+          1
+        ],
+        [
+          "Aerobic",
+          1
+        ]
+      ]
+    },
+    "YELLOW": {
+      "slots": [
+        [
+          "Glute",
+          2
+        ],
+        [
+          "Core",
+          1
+        ],
+        [
+          "Lower limb",
+          1
+        ]
+      ]
+    },
+    "RED": {
+      "fixed": [
+        "E08",
+        "E06",
+        "E11",
+        "E17"
+      ],
+      "pick": 3
+    },
+    "TRAVEL": {
+      "fixed": [
+        "E01",
+        "E06",
+        "E11"
+      ],
+      "pick": 3
+    },
+    "DELOAD": {
+      "slots": [
+        [
+          "Glute",
+          1
+        ],
+        [
+          "Core",
+          1
+        ],
+        [
+          "Aerobic",
+          1
+        ]
+      ]
+    },
+    "RECOVERY": {
+      "checklist": [
+        "Hydration + protein now",
+        "Normatec Legs — 20 min",
+        "Heat to lumbar — 10 min (can run in parallel)",
+        "5-min mobility: pelvic tilt, knee-to-chest, gentle hinge"
+      ]
+    }
+  },
+  "programmes": {
+    "joint": {
+      "label": "Knee- and ankle-sparing",
+      "note": "FITLOG_V180_PROGRAMME. The same verdicts and rotation as the owner's; knees and ankles are never loaded standing or with impact.",
+      "avoid": [
+        "E04",
+        "E09",
+        "E10",
+        "E11",
+        "E12",
+        "E13",
+        "E15"
+      ],
+      "templates": {
+        "GREEN": {
+          "slots": [
+            [
+              "Knee strength",
+              2
+            ],
+            [
+              "Glute",
+              1
+            ],
+            [
+              "Core",
+              1
+            ],
+            [
+              "Seated strength",
+              1
+            ],
+            [
+              "Aerobic (low impact)|Aerobic",
+              1
+            ]
+          ]
+        },
+        "YELLOW": {
+          "slots": [
+            [
+              "Knee strength",
+              1
+            ],
+            [
+              "Joint mobility",
+              1
+            ],
+            [
+              "Core",
+              1
+            ],
+            [
+              "Aerobic (low impact)|Aerobic",
+              1
+            ]
+          ]
+        },
+        "DELOAD": {
+          "slots": [
+            [
+              "Joint mobility",
+              1
+            ],
+            [
+              "Knee strength",
+              1
+            ],
+            [
+              "Aerobic (low impact)|Aerobic",
+              1
+            ]
+          ]
+        },
+        "RED": {
+          "fixed": [
+            "E24",
+            "E25",
+            "E17"
+          ],
+          "pick": 3
+        },
+        "TRAVEL": {
+          "fixed": [
+            "E24",
+            "E23",
+            "E01"
+          ],
+          "pick": 3
+        },
+        "RECOVERY": {
+          "checklist": [
+            "Rest the sore joint; ice or warmth, whichever eases it",
+            "Ankle pumps and heel slides, 5 minutes",
+            "A short easy walk only if the pain is below 4 out of 10",
+            "Night light on; rise slowly from bed"
+          ]
+        }
+      }
+    }
   }
 }

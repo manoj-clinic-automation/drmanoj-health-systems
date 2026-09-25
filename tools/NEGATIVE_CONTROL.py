@@ -69,10 +69,11 @@ import sys
 FAIL_RX = re.compile(r"^\[FAIL\]\s*(.*)$", re.M)
 
 
-def run_suite(suite, app_path, label):
+def run_suite(suite, app_path, label, env=None):
     print("  running %s against %s ..." % (os.path.basename(suite), label))
     proc = subprocess.run([sys.executable, "-B", suite, app_path],
-                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          env=dict(os.environ, **(env or {})))
     out = proc.stdout.decode("utf-8", "replace")
     fails = [m.strip() for m in FAIL_RX.findall(out)]
     passed = "RESULT: ALL PASS" in out
@@ -183,6 +184,39 @@ def main():
         mut = members[0]["mutation"]
         find, repl = mut["find"], mut["replace"]
         module = mut.get("module")
+        # FAMILY_EDITION_V1 -- a module in ANOTHER folder than app.py (the
+        # Family Edition's family/). "dir" names that folder relative to the
+        # manifest and "env" the variable the suite reads to find it. The
+        # folder is copied to a sibling _nc_mod_<id>, the COPY is broken, and
+        # the suite is pointed at the copy; the real folder is never written.
+        if module and mut.get("dir"):
+            src_dir = os.path.normpath(os.path.join(base, mut["dir"]))
+            mod_real = os.path.join(src_dir, module)
+            if not os.path.isfile(mod_real) or not mut.get("env"):
+                print("  MUTATION '%s': %s not found, or no env named." % (gid, mod_real))
+                for e in members:
+                    verdict[id(e)] = ("mutation:" + gid, False)
+                continue
+            tsrc = read(mod_real)
+            if tsrc.count(find) != 1:
+                print("  MUTATION '%s': anchor found %d times in %s, need 1 -- "
+                      "cannot break this property on purpose." % (gid, tsrc.count(find), module))
+                for e in members:
+                    verdict[id(e)] = ("mutation:" + gid, False)
+                continue
+            copy_dir = os.path.join(os.path.dirname(src_dir), "_nc_mod_" + gid)
+            if os.path.exists(copy_dir):
+                shutil.rmtree(copy_dir)
+            shutil.copytree(src_dir, copy_dir, ignore=shutil.ignore_patterns(
+                "__pycache__", "_nc_*", "*.db", "*.db-*", "*.bak", "*.bak.*"))
+            made.append(copy_dir)
+            write(os.path.join(copy_dir, module), tsrc.replace(find, repl, 1))
+            print("  mutation '%s': %s" % (gid, mut.get("why", "")))
+            _, mut_fails, _ = run_suite(suite, app, "the MUTATED module %s [%s]" % (module, gid),
+                                        env={mut["env"]: copy_dir})
+            for e in members:
+                verdict[id(e)] = ("mutation:" + gid, seen(e, mut_fails))
+            continue
         if module:
             mod_real = os.path.join(work, module)
             if (os.path.dirname(os.path.abspath(mod_real)) != work

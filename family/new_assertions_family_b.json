@@ -1,0 +1,218 @@
+{
+ "_": [
+  "Family Edition Phase B -- the joint focus. Every assertion is broken on purpose in a COPY of the folder that carries it (GutLog, RxGuard code and knowledge files, FitLog, the family entries); the suite builds its members from the copy. noprogenv is caught only by the end-to-end half of B07 if the member's plan is checked; it is declared so that it must be."
+ ],
+ "suite": "test_family_b.py",
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3370_joint.py",
+ "assertions": [
+  {
+   "name": "B02 knee / ankle scores save with triggers, stiffness and walking tolerance",
+   "control": "mutation",
+   "mutation": {
+    "id": "dropwalk",
+    "why": "walking tolerance is not saved",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "        walk = _int_in(d.get(\"walk_min\"), 0, 600) if d.get(\"walk_min\") not in (None, \"\") else None\n",
+    "replace": "        walk = None\n"
+   }
+  },
+  {
+   "name": "B02 knee and ankle lead the pain sites under joint",
+   "control": "mutation",
+   "mutation": {
+    "id": "painsites",
+    "why": "knees and ankles are not added to the pain sites",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "    return (PAIN_SITES_JOINT + PAIN_SITES_MSK) if now_profile() == \"joint\" else PAIN_SITES_MSK\n",
+    "replace": "    return PAIN_SITES_MSK\n"
+   }
+  },
+  {
+   "name": "B08 the joint cards show under the joint profile only",
+   "control": "mutation",
+   "mutation": {
+    "id": "jointall",
+    "why": "the joint cards show for everyone",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "return jsonify(profile=now_profile(), show=now_profile() == \"joint\",",
+    "replace": "return jsonify(profile=now_profile(), show=True,"
+   }
+  },
+  {
+   "name": "B03 pain-medicine totals sum a combination into the standalone ingredient's pool",
+   "control": "mutation",
+   "mutation": {
+    "id": "comboskip",
+    "why": "only the first molecule of a combination is counted",
+    "module": "dose_ceiling.py",
+    "dir": "../rxguard",
+    "env": "RX_SRC",
+    "find": "    mols = [m.strip() for m in (med.get(\"molecule\") or \"\").replace(\",\", \"+\").split(\"+\") if m.strip()]",
+    "replace": "    mols = [m.strip() for m in (med.get(\"molecule\") or \"\").replace(\",\", \"+\").split(\"+\")[:1] if m.strip()]"
+   }
+  },
+  {
+   "name": "B03 pain-medicine totals keep a gel apart from the tablet ceiling",
+   "control": "mutation",
+   "mutation": {
+    "id": "topicalin",
+    "why": "a gel is added into the tablet total",
+    "module": "dose_ceiling.py",
+    "dir": "../rxguard",
+    "env": "RX_SRC",
+    "find": "            if known[k].get(\"routes\") and route not in known[k][\"routes\"]:",
+    "replace": "            if False:"
+   }
+  },
+  {
+   "name": "B03 pain-medicine totals show the stomach- and kidney-risk loads",
+   "control": "mutation",
+   "mutation": {
+    "id": "gilimit",
+    "why": "two NSAIDs together are allowed",
+    "module": "knowledge/dose_rules.generic.json",
+    "dir": "../rxguard",
+    "env": "RX_SRC",
+    "find": "\"type\": \"max_distinct\", \"limit\": 1,\n   \"flag\": \"RED\"",
+    "replace": "\"type\": \"max_distinct\", \"limit\": 2,\n   \"flag\": \"RED\""
+   }
+  },
+  {
+   "name": "B04 falls-risk rule FR001 fires exactly on its conditions -- age 59",
+   "control": "mutation",
+   "mutation": {
+    "id": "falls59",
+    "why": "the age limit is 59",
+    "module": "knowledge/rules.json",
+    "dir": "../rxguard",
+    "env": "RX_SRC",
+    "find": "\"min_age\": 60",
+    "replace": "\"min_age\": 59"
+   }
+  },
+  {
+   "name": "B04 falls-risk rule FR001 fires exactly on its conditions -- sedating in the morning only",
+   "control": "mutation",
+   "mutation": {
+    "id": "fallsnight",
+    "why": "a sedating medicine counts at any hour",
+    "module": "app.py",
+    "dir": "../rxguard",
+    "env": "RX_SRC",
+    "find": "        if len(sed_night) < int(rule.get(\"amber_at\") or 1):",
+    "replace": "        if len(sed) < int(rule.get(\"amber_at\") or 1):"
+   }
+  },
+  {
+   "name": "B04 falls-risk rule FR001 fires exactly on its conditions -- two sedating, one at night",
+   "control": "mutation",
+   "mutation": {
+    "id": "fallsred",
+    "why": "two sedating medicines stay AMBER",
+    "module": "app.py",
+    "dir": "../rxguard",
+    "env": "RX_SRC",
+    "find": "        flag = \"RED\" if len(sed) >= int(rule.get(\"red_at\") or 2) else \"AMBER\"",
+    "replace": "        flag = \"AMBER\""
+   }
+  },
+  {
+   "name": "B04 falls-risk rule FR001 fires exactly on its conditions -- no joint condition",
+   "control": "mutation",
+   "mutation": {
+    "id": "fallsnocond",
+    "why": "the joint condition is not required",
+    "module": "app.py",
+    "dir": "../rxguard",
+    "env": "RX_SRC",
+    "find": "        if not joint:\n            continue\n",
+    "replace": ""
+   }
+  },
+  {
+   "name": "B09 conditions and age entered once in GutLog reach the member's RxGuard",
+   "control": "mutation",
+   "mutation": {
+    "id": "nosync",
+    "why": "RxGuard does not mirror the member's conditions",
+    "module": "entry_rx.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "_SYNC_CODES = set(c for c, _l in family_env.MEMBER_CONDITIONS) & set(c for c, _l in rx.CONDITIONS)",
+    "replace": "_SYNC_CODES = set()"
+   }
+  },
+  {
+   "name": "B05 lipid analytes trend with due dates",
+   "control": "mutation",
+   "mutation": {
+    "id": "duefirst",
+    "why": "the repeat date counts from the first result",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "                due = date.fromisoformat(pts[-1][0]) + timedelta(days=int(round(months * 30.44)))",
+    "replace": "                due = date.fromisoformat(pts[0][0]) + timedelta(days=int(round(months * 30.44)))"
+   }
+  },
+  {
+   "name": "B05 the muscle-ache question appears with a statin-class medicine",
+   "control": "mutation",
+   "mutation": {
+    "id": "nostatin",
+    "why": "the statin class is never recognised",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "any(\"statin\" in (c or \"\").lower()",
+    "replace": "any(\"statinx\" in (c or \"\").lower()"
+   }
+  },
+  {
+   "name": "B06 step-vs-pain comparison uses the right days",
+   "control": "mutation",
+   "mutation": {
+    "id": "sameday",
+    "why": "same-day pain is read instead of the next day's",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "        vals = [pain[nxt(d)] for d in sel if nxt(d) in pain]",
+    "replace": "        vals = [pain[d] for d in sel if d in pain]"
+   }
+  },
+  {
+   "name": "B07 the joint programme never loads an avoided exercise",
+   "control": "mutation",
+   "mutation": {
+    "id": "noavoid",
+    "why": "the avoid list is ignored",
+    "module": "app.py",
+    "dir": "../fitlog",
+    "env": "FIT_SRC",
+    "find": "                and e[\"id\"] not in avoid]   # FITLOG_V180_PROGRAMME",
+    "replace": "                ]   # FITLOG_V180_PROGRAMME"
+   }
+  },
+  {
+   "name": "B07 the joint programme never loads an avoided exercise",
+   "control": "mutation",
+   "mutation": {
+    "id": "noprogenv",
+    "why": "the joint profile does not choose the joint programme",
+    "module": "entry_fit.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    \"FITLOG_PROGRAMME\": \"joint\" if M.profile == \"joint\" else \"\",",
+    "replace": "    \"FITLOG_PROGRAMME\": \"\","
+   }
+  }
+ ]
+}

@@ -1,0 +1,36 @@
+{
+ "_": [
+  "Phase C browser check: the Kitchen page's script broken on purpose."
+ ],
+ "suite": "test_family_ui_c.py",
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3380_kitchen.py",
+ "assertions": [
+  {
+   "name": "W01 the Kitchen lists the pool",
+   "control": "mutation",
+   "mutation": {
+    "id": "kjsbreak",
+    "why": "the Kitchen page loses its tab list",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "const TABS=[['browse','Recipes']",
+    "replace": "const TABZ=[['browse','Recipes']"
+   }
+  },
+  {
+   "name": "W05 no page error on the Kitchen page",
+   "control": "mutation",
+   "mutation": {
+    "id": "kjsbreak",
+    "why": "the Kitchen page loses its tab list",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "const TABS=[['browse','Recipes']",
+    "replace": "const TABZ=[['browse','Recipes']"
+   }
+  }
+ ]
+}

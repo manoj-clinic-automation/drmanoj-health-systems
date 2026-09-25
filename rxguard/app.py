@@ -28,7 +28,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # HEALTH_SSO_V1
 import health_sso  # noqa: E402
 
-APP_VERSION = "1.8.4"   # RXGUARD_V184_NASSA RXGUARD_V183_LEMBOREXANT RXGUARD_V182_SECRETFILE RXGUARD_V181_LABELMAX RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST RXGUARD_V180_DOSE
+APP_VERSION = "1.9.0"   # RXGUARD_V190_JOINT RXGUARD_V184_NASSA RXGUARD_V183_LEMBOREXANT RXGUARD_V182_SECRETFILE RXGUARD_V181_LABELMAX RXGUARD_V110_ASTAKEN RXGUARD_V120_SOURCES RXGUARD_V130_REVIEW RXGUARD_V140_CONDITIONS RXGUARD_V150_RECONCILE RXGUARD_V160_KEYCHECK RXGUARD_V170_HONEST RXGUARD_V180_DOSE
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KNOWLEDGE_DIR = os.path.join(BASE_DIR, "knowledge")
 DEFAULT_DB = os.path.join(BASE_DIR, "rxguard.db")
@@ -132,6 +132,9 @@ CONDITIONS = [
     ("conduction_disease", "Conduction disease (e.g. bundle branch block)"),
     ("coronary_disease", "Coronary artery disease"),
     ("narcolepsy", "Narcolepsy"),   # RXGUARD_V183_LEMBOREXANT
+    ("knee_oa", "Knee osteoarthritis"),   # RXGUARD_V190_JOINT
+    ("ankle_arthritis", "Ankle arthritis (including post-traumatic)"),
+    ("hip_oa", "Hip osteoarthritis"),
 ]
 CONDITION_LABELS = dict(CONDITIONS)
 
@@ -1124,6 +1127,66 @@ def dose_view(stack):
     return out
 
 
+# --------------------------------------------------------------------------
+# Falls at night -- RXGUARD_V190_JOINT
+# One named rule (FR001, knowledge/rules.json "falls_rules"). It needs three
+# things at once, each recorded rather than guessed: a lower-limb joint
+# condition, an age, and a sedating medicine taken at night. None of the three
+# alone fires it. Age is free text on /profile; one that cannot be read means
+# the rule stays silent rather than assuming.
+# --------------------------------------------------------------------------
+def _profile_age():
+    m = re.search(r"\d{1,3}", profile_value("age") or "")
+    try:
+        a = int(m.group(0)) if m else None
+    except ValueError:
+        a = None
+    return a if a and 0 < a < 120 else None
+
+
+def _night_keys(data, events, rule):
+    slots = set(s.upper() for s in rule.get("night_slots") or [])
+    start, end = rule.get("night_from", "19:00"), rule.get("night_to", "05:00")
+    out = set()
+    for r in (data or {}).get("regimen") or []:
+        if (r.get("slot") or "").upper() in slots:
+            out.update(_split_molecules(r.get("molecule")))
+    for e in events or []:
+        t = (e.get("time") or "")[:5]
+        if t and (t >= start or t < end):
+            out.update(_split_molecules(e.get("molecule")))
+    return out
+
+
+def falls_findings(data, dosed, conditions, events=None):
+    out = []
+    for rule in (RULES_DOC.get("falls_rules") or {}).get("rules") or []:
+        joint = sorted(set(rule.get("conditions_any") or []) & set(conditions))
+        if not joint:
+            continue
+        age = _profile_age()
+        if age is None or age < int(rule.get("min_age") or 60):
+            continue
+        smin = int(rule.get("sedating_min") or 2)
+        sed = sorted(k for k in dosed
+                     if ((get_drug(k) or {}).get("burden") or {}).get("sedation", 0) >= smin)
+        night = _night_keys(data, events, rule)
+        sed_night = [k for k in sed if k in night]
+        if len(sed_night) < int(rule.get("amber_at") or 1):
+            continue
+        flag = "RED" if len(sed) >= int(rule.get("red_at") or 2) else "AMBER"
+        out.append(finding(
+            flag, "Falls", rule.get("title") or "Falls risk at night",
+            mechanism="Sedating at night: %s. Sedating medicines in all: %s. Age %d, with %s recorded."
+                      % (", ".join(display_name(k) for k in sed_night),
+                         ", ".join(display_name(k) for k in sed), age,
+                         " and ".join(CONDITION_LABELS.get(c, c).lower() for c in joint)),
+            consequence=rule.get("consequence", ""), action=rule.get("action", ""),
+            monitoring=rule.get("monitoring", ""), source=rule.get("source", ""),
+            reviewed=rule.get("reviewed", ""), rule_id=rule.get("id", "FR001")))
+    return out
+
+
 def astaken_view(data):
     listed = {}
     for m in active_meds():
@@ -1172,6 +1235,10 @@ def astaken_view(data):
     # RXGUARD_V180_DOSE -- the daily-dose findings count like any other
     dose = dose_view(data)
     findings.extend(dose["findings"])
+    # RXGUARD_V190_JOINT -- falls at night count like any other finding
+    _fev, _ferr = gutlog_doses(14)
+    findings.extend(falls_findings(data, dosed, conditions,
+                                   (_fev or {}).get("events") if not _ferr else None))
 
     if not_listed:
         findings.append(finding(
@@ -3480,6 +3547,75 @@ def create_app(db_path=None, secret=None):
                  theoretical=ast.get("theoretical", 0),
                  not_checkable=ast.get("unknown", 0), url="https://rx.dr-manoj.in/kb")
         return Response(json.dumps(c), mimetype="application/json")
+
+    # RXGUARD_V190_JOINT -- GutLog's pain-medicine card reads this. Same
+    # bearer as /api/feed/status; totals and loads only, nothing typed.
+    @app.route("/api/feed/dose")
+    def api_feed_dose():
+        import hmac
+        try:
+            with open(GUTLOG_TOKEN_FILE, encoding="utf-8") as fh:
+                tok = fh.read().strip()
+        except OSError:
+            tok = ""
+        got = request.headers.get("Authorization", "")
+        got = got[7:].strip() if got.startswith("Bearer ") else ""
+        if not tok or not got or not hmac.compare_digest(tok, got):
+            return Response('{"ok": false}', status=401, mimetype="application/json")
+        out = {"ok": True, "on": False, "err": "", "rows": [], "outside": [], "classes": [],
+               "findings": [], "med_classes": [], "cyp3a4_major": []}
+        if not gutlog_feed_enabled():
+            out["err"] = "Not connected."
+            return Response(json.dumps(out), mimetype="application/json")
+        data, err = gutlog_stack(14)
+        if err:
+            out["err"] = err
+            return Response(json.dumps(out), mimetype="application/json")
+        keys = set()
+        for r in (data.get("regimen") or []) + (data.get("taken") or []):
+            keys.update(_split_molecules(r.get("molecule")))
+        for k in sorted(keys):
+            d = get_drug(k) or {}
+            if d.get("class"):
+                out["med_classes"].append(d["class"])
+            if ((d.get("cyp") or {}).get("substrate") or {}).get("CYP3A4") == "major":
+                out["cyp3a4_major"].append(display_name(k))
+        out["med_classes"] = sorted(set(out["med_classes"]))
+        dv = dose_view(data)
+        out.update(on=dv["on"], err=dv["err"], version=dv["version"])
+        for r in dv["rows"]:
+            out["rows"].append({"name": r["name"], "unit": r["unit"], "total": round(r["total"], 1),
+                                "ceiling": r["ceiling"], "state": r["state"], "frees": r["frees"],
+                                "routes": r["routes"], "products": r["products"], "doses": r["doses"]})
+        out["findings"] = [{"flag": f["flag"], "title": f["title"], "rule_id": f["rule_id"]}
+                           for f in dv["findings"]]
+        rules = dv.get("rules")
+        if rules and not dv["err"]:
+            ev, e2 = gutlog_doses()
+            if not e2:
+                intakes, _u = dose_ceiling.build_intakes(ev.get("events") or [], data, rules, norm_key)
+                now = dose_now()
+                lab = lambda k: rules["ingredients"].get(k, {}).get("label", display_name(k))
+                side = {}
+                for i in dose_ceiling.window(intakes, now, 24):
+                    if "@" in i["ing"]:
+                        s = side.setdefault(i["ing"], {"name": "%s (%s)" % (lab(i["ing"].split("@")[0]),
+                                                                          i["ing"].split("@")[1]),
+                                                       "total": 0.0, "unit": rules["ingredients"].get(
+                                                           i["ing"].split("@")[0], {}).get("unit", "mg"),
+                                                       "products": []})
+                        s["total"] = round(s["total"] + (i["amount"] or 0.0), 1)
+                        if i["product"] not in s["products"]:
+                            s["products"].append(i["product"])
+                out["outside"] = sorted(side.values(), key=lambda x: x["name"])
+                for c in rules["classes"]:
+                    cur = [i for i in dose_ceiling.window(intakes, now, c["window_h"])
+                           if i["ing"] in c["members"] and (not c["routes"] or i["route"] in c["routes"])]
+                    taken = sorted(set(lab(i["ing"]) for i in cur))
+                    out["classes"].append({"id": c.get("id", ""), "label": c.get("label", ""),
+                                           "taken": taken, "count": len(taken),
+                                           "limit": int(c.get("limit") or 1), "flag": c.get("flag", "AMBER")})
+        return Response(json.dumps(out), mimetype="application/json")
 
     @app.route("/healthz")
     def healthz():

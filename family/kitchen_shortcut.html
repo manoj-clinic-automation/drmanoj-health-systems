@@ -1,0 +1,40 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Share shortcut</title>
+<style>
+:root{--bg:#f6f7f9;--fg:#17202a;--mut:#5b6773;--card:#fff;--line:#d9dee4;--acc:#1f6f5c}
+@media (prefers-color-scheme: dark){:root{--bg:#111821;--fg:#e6edf3;--mut:#9fb0bf;--card:#18222d;--line:#2b3947;--acc:#7ec8a8}}
+body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.6 system-ui,-apple-system,sans-serif}
+main{max-width:36rem;margin:0 auto;padding:16px}h1{font-size:22px}h2{font-size:18px;margin-top:22px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:10px 0}
+li{margin:6px 0}b{color:var(--acc)}.mut{color:var(--mut);font-size:15px}code{font-size:15px}
+</style></head><body><main>
+<h1>&ldquo;Add to Family Kitchen&rdquo; &mdash; the Share button</h1>
+<p>With this shortcut, a recipe that arrives on WhatsApp, a web page, a photo of a handwritten recipe or a PDF goes to your <b>Recipe Inbox</b> with two taps: <b>Share &rarr; Add to Family Kitchen</b>. Nothing enters the Family Kitchen until you (or your caretaker) check it in the Inbox and press Confirm.</p>
+
+<div class="card"><h2>If someone sent you the shortcut link (most people)</h2>
+<ol>
+<li>Open the link on your iPhone and tap <b>Add Shortcut</b>.</li>
+<li>It asks two questions. The answers are in your diary: <b>Family Kitchen &rarr; Share shortcut</b>.
+ Copy the <b>Address</b> into the first and the <b>Key</b> into the second.</li>
+<li>Done. Try it: open any recipe in WhatsApp, tap Share (or hold the message &rarr; Forward &rarr; Share), then <b>Add to Family Kitchen</b>.</li>
+</ol>
+<p class="mut">Your key is yours: it can only add to your own Inbox. If it is ever shared by mistake, your caretaker can issue a new one.</p></div>
+
+<div class="card"><h2>Building it once (the caretaker, about 5 minutes)</h2>
+<ol>
+<li>Open <b>Shortcuts</b> &rarr; <b>+</b>. Name it <b>Add to Family Kitchen</b>.</li>
+<li>Tap the <b>&#9432;</b> (details) &rarr; switch on <b>Show in Share Sheet</b>. Under Share Sheet Types keep <b>Images, PDFs, Text, URLs, Safari web pages, Files</b>.</li>
+<li>The first block now reads &ldquo;Receive <i>Images, PDFs, Text&hellip;</i> from Share Sheet&rdquo;. Set <b>If there's no input</b> to <b>Ask For &rarr; Text</b> (so it also works when opened on its own: type or paste).</li>
+<li>Add the action <b>Text</b>. Type the address (from your Family Kitchen &rarr; Share shortcut). Add another <b>Text</b> action with the key.</li>
+<li>Add <b>Get Contents of URL</b>. URL: the first Text. Tap <b>Show More</b>:
+ <ul><li>Method: <b>POST</b></li>
+ <li>Headers: add <code>Authorization</code> with the value <code>Bearer&nbsp;</code> followed by the second Text (the key)</li>
+ <li>Request Body: <b>Form</b>. Add a field <code>file</code>, type <b>File</b>, value <b>Shortcut Input</b>. Add a field <code>text</code>, type <b>Text</b>, value <b>Shortcut Input</b>.</li></ul></li>
+<li>Add <b>Show Notification</b>: &ldquo;Saved to your Recipe Inbox&rdquo;.</li>
+<li>To share it with the family: <b>&#9432; &rarr; Setup</b> (or &ldquo;Import Questions&rdquo;) &rarr; add a question for the <b>address</b> Text and one for the <b>key</b> Text, so each person answers with their own. Then Share &rarr; <b>Copy iCloud Link</b> and send the link.</li>
+</ol>
+<p class="mut">Instagram and Facebook do not let readers in: the link is kept in the Inbox, and it asks for a screenshot &mdash; share the screenshot the same way. Photos of handwritten recipes, in Hindi or English, are read by the same reader that files your reports.</p></div>
+
+<div class="card"><h2>What happens next</h2>
+<p>The Inbox shows what was read, with the original photo or link beside it, and marks anything uncertain: a word that could not be read, an ingredient with no amount, an ingredient not in the food table. Correct it, tap <b>Confirm</b>, and it joins the Family Kitchen for everyone. If the same recipe is already there, it says so first.</p></div>
+</main></body></html>
