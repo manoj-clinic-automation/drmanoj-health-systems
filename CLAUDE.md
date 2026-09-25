@@ -60,3 +60,10 @@ ops/                 <- cross-app patchers (patch_switcher.py)
 family/              <- the Family Edition: prefix wrapper, caretaker layer, per-app entries, stamp/upgrade/backup tools, Family Kitchen, suites; deployed to /root/family, run from /opt/family/code/current
 ```
 Repo sync rule: after any on-server patch, pull the changed file back into this repo same day. Per-app GAPS.md tracks capture status. NEVER commit: live DBs, .secret/.env files, logs, venv.
+
+## Shared server with the clinic (added 26-Sep-2026 by the Sanjeevni chat, at the owner's request)
+srv1746119 also runs the clinic and pharmacy systems, whose live money records are in `/root/finance/finance.db`.
+From this repository NEVER touch `/root/finance`, `/root/portal`, `/root/marg_ingest`, `/root/state_backup`,
+`/root/deploy/repo`, root's crontab lines not tagged for these apps, or the services `clinic-finance` / `clinic-portal`.
+Before any install step take the server-wide lock `mkdir /root/deploy/.claude_code_build.lock` (fails = another build is
+installing; wait and re-check every 2 minutes), write this repo's name and the brief into `…/owner`, remove it when done.
