@@ -24,9 +24,15 @@ OWNER_APP = sys.argv[1] if len(sys.argv) > 1 else os.path.join(famtest.REPO, "gu
 
 def login(page, rig, slug):
     page.goto(rig.front_url + "/%s/login" % slug)
-    page.fill("input[name=pw]", rig.pw[slug])
-    page.click("button")
+    page.fill("input[name=pin]", rig.pw[slug])
+    page.click("#go")
     page.wait_for_load_state("networkidle")
+    if "/passkey/offer" in page.url:   # the Face ID offer, on a device that has it
+        try:
+            page.click("#no", timeout=4000)
+        except Exception:
+            pass
+        page.wait_for_load_state("networkidle")
     if "/welcome" in page.url:
         page.fill("input[name=age]", "68")
         page.check("input[value=knee_oa]")

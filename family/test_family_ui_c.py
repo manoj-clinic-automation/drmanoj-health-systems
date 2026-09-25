@@ -42,8 +42,8 @@ def run(rig):
         page.on("request", lambda q: outside.append(urlparse(q.url).path)
                 if urlparse(q.url).port == rig.front_port and not urlparse(q.url).path.startswith("/m1/") else None)
         page.goto(rig.front_url + "/m1/login")
-        page.fill("input[name=pw]", rig.pw["m1"])
-        page.click("button")
+        page.fill("input[name=pin]", rig.pw["m1"])
+        page.click("#go")
         page.wait_for_load_state("networkidle")
         page.goto(rig.front_url + "/m1/kitchen")
 

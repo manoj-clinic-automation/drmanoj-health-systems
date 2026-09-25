@@ -1,0 +1,62 @@
+{
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3380_kitchen.py",
+ "_": [
+  "Family sign-in in a real browser with a virtual authenticator."
+ ],
+ "suite": "test_family_ui_auth.py",
+ "assertions": [
+  {
+   "name": "G01 the PIN signs in, then Face ID is offered and set up",
+   "control": "mutation",
+   "mutation": {
+    "id": "nooffer",
+    "why": "the offer never shows",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "  document.getElementById('offer').style.display='';\n",
+    "replace": "\n"
+   }
+  },
+  {
+   "name": "G02 signed out, Face ID signs the member back in",
+   "control": "mutation",
+   "mutation": {
+    "id": "nobutton",
+    "why": "the Face ID button never shows",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "if(pk&&here&&window.PublicKeyCredential){pk.style.display='';}\n",
+    "replace": "\n"
+   }
+  },
+  {
+   "name": "G05 before Face ID is set up on this phone, the sign-in page shows no Face ID button",
+   "control": "mutation",
+   "mutation": {
+    "id": "pkalways",
+    "why": "the Face ID button shows on every phone",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "if(pk&&here&&window.PublicKeyCredential){pk.style.display='';}\n",
+    "replace": "if(pk&&window.PublicKeyCredential){pk.style.display='';}\n"
+   }
+  },
+  {
+   "name": "G05 the eye shows the PIN and hides it again",
+   "control": "mutation",
+   "mutation": {
+    "id": "eyedead",
+    "why": "the eye does nothing",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "pin.type=show?'text':'password';",
+    "replace": "show;"
+   }
+  }
+ ]
+}

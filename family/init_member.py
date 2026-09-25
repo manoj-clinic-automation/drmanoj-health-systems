@@ -38,9 +38,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--app", required=True, choices=("gut", "rx", "fit", "care"))
     a = ap.parse_args()
-    pw = sys.stdin.readline().rstrip("\n") if a.app != "care" else ""
+    # gut / rx / fit: a random secret for the app's own (now unused) password
+    # hash -- family sign-in is the PIN, checked by family_auth. care: the PIN.
+    pw = sys.stdin.readline().rstrip("\n")
     if a.app != "care" and len(pw) < 8:
-        print("FATAL: password missing or too short")
+        print("FATAL: app secret missing or too short")
+        return 1
+    if a.app == "care" and not (len(pw) == 6 and pw.isdigit()):
+        print("FATAL: the PIN must be 6 digits")
         return 1
     os.environ["GUTLOG_NOSPAWN"] = "1"
     if a.app == "gut":
@@ -100,7 +105,9 @@ def main():
         M = family_env.Member()
         c = family_care.Care(M.slug, M.dir, M.base, M.prefixes)
         c.set_access(True, "stamp")
-        print("care: ok (caretaker access on)")
+        import family_auth
+        family_auth.Auth(c).set_pin(pw)
+        print("care: ok (caretaker access on, PIN set)")
     return 0
 
 

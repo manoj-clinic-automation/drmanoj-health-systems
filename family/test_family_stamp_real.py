@@ -31,7 +31,8 @@ import tempfile
 
 FAM = os.path.abspath(os.environ.get("FAMILY_CODE") or os.path.dirname(os.path.abspath(__file__)))
 STAMP = os.path.join(FAM, "stamp_member.py")
-TREE = "/opt/family/code/current"
+# The tree under test: upgrade_all.sh points FAMILY_CODE_TREE at the NEW tree before it switches.
+TREE = os.environ.get("FAMILY_CODE_TREE") or "/opt/family/code/current"
 RES = []
 
 
@@ -53,6 +54,8 @@ def stamp(root, slug, *extra):
            "--name", "Member R", "--profile", "gut", "--port-base", "18000"] + list(extra)
     env = dict((k, v) for k, v in os.environ.items()
                if not k.startswith(("GUTLOG_", "RXGUARD_", "FITLOG_", "FAMILY_", "HEALTH_SSO_")))
+    if os.environ.get("FAMILY_CODE_TREE"):
+        env["FAMILY_CODE_TREE"] = os.environ["FAMILY_CODE_TREE"]
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
     return r.returncode, r.stdout.decode("utf-8", "replace")
 
@@ -100,9 +103,9 @@ def run(root):
           ok and owned and stat.S_IMODE(os.stat(mdir).st_mode) == 0o700,
           "rc %s owned %s\n%s" % (rc, owned, out[-700:]))
     pw_line = open(pwf).read() if os.path.exists(pwf) else ""
-    pw = pw_line.split("\t")[-1].strip() if pw_line else ""
+    pw = pw_line.split("\t")[-1].strip().replace("PIN ", "") if pw_line else ""
     check("R01 the first-login password goes to a root-only file and is never printed",
-          pw and len(pw) >= 8 and pw not in out and stat.S_IMODE(os.stat(pwf).st_mode) == 0o600
+          pw and len(pw) == 6 and pw.isdigit() and pw not in out and stat.S_IMODE(os.stat(pwf).st_mode) == 0o600
           and os.stat(pwf).st_uid == 0, "mode %s" % (oct(os.stat(pwf).st_mode) if os.path.exists(pwf) else "-"))
     reg = json.load(open(os.path.join(root, "root", "family", "members.local.json")))
     check("R01 the member is in the registry", any(m["slug"] == "m990" for m in reg["members"]), reg)

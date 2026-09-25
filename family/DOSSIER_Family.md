@@ -62,6 +62,47 @@ credentials page or the switch. **The member can switch caretaker access off**; 
 means every caretaker request is refused, tickets are refused, and the status endpoint
 answers `{"access":"off"}` only. Missing/unreadable switch = off.
 
+## Signing in (family copies only — `family_auth.py`, `family_webauthn.py`)
+
+* **PIN.** Six digits, one scrypt hash in the member's `care.db`; the apps' own
+  password hashes are random and unused (FitLog's is unsalted SHA-256, which a PIN
+  must never sit behind). The owner's apps keep their password pages.
+* **Lockout.** 5 wrong PINs in a row → 15 minutes; each further lock doubles (30, 60 …
+  at most 24 h) until a PIN or Face ID sign-in succeeds. Shared by the member's three
+  apps. While locked even the right PIN is refused. Every attempt (wrong, locked,
+  refused, signed in, Face ID, PIN changed, reset) is logged in `care.db` with IST
+  time, app and address, and listed on the member's `/care` page.
+* **Face ID / Touch ID (passkeys).** Offered once after a PIN sign-in on a device that
+  has it; the button is on GutLog's sign-in page. WebAuthn verified in pure Python
+  (the server has no `cryptography`): ES256 and RS256, origin, RP ID, user presence
+  AND verification, single-use 3-minute challenges, signature counter. Cross-checked
+  against `cryptography` offline (`test_family_webauthn_crypto.py`). Works during a PIN
+  lockout and ends it. Only the member can add or remove one.
+* **Sessions.** 12 months, sliding, on the member's own device, until they sign out.
+  "Sign out on all devices" (on `/care`) and a PIN reset end every session (an epoch in
+  `care.db`). Caretaker sessions are browser-session only and end after 12 hours.
+* **Reset / first PIN:** `stamp_member.py --slug mN --reset-pin --password-file F`.
+  The member changes it on `/care` (not all one digit, not a straight run).
+* **The sign-in page says whose it is** ("<Name>'s health diary" / "…'s medicines" /
+  "…'s fitness", plus "Not <Name>? Ask <caretaker> for your own link"). 25-Sep-2026:
+  the owner typed m1's PIN on m2's then-unlabelled page; three wrong PINs landed on m2,
+  none on m1, and the file PINs were right all along. Numeric keypad, a Show/Hide eye,
+  "Wrong PIN — N tries left", "Paused until HH:MM IST — call <caretaker>"
+  (`FAMILY_CARETAKER` in the member env, from the registry's `caretaker`; after adding
+  a setting like it run `stamp_member.py --refresh-env`). The Face ID button appears
+  only on a phone where Face ID was set up (a flag the offer page leaves in that
+  phone's storage; dropped if the server has none). The sign-in page carries the
+  diary's manifest and icon, and the manifest is named "<Name>'s health diary", so
+  Add to Home Screen from the sign-in page or the diary gives the member's name.
+* **Before handing over a link:** `python3 /root/family/readiness.py --slug mN`.
+  Checks the PIN in the root-only file offline first (a stale file costs no attempt;
+  it will not try a member one miss from a lock), then signs in once over the real
+  address and checks: sign-in page, Now page (or the first-run form), a medicine +
+  salt, a meal and a symptom saved and removed, the Kitchen, Face ID offered, RxGuard
+  and FitLog through the ring, sign out, and that nothing was left behind. Never
+  prints the PIN. Its one sign-in shows in the member's "Recent sign-in attempts"
+  from the server's own address.
+
 ## Profiles
 
 `gut` (the owner's Now order), `joint` (joint pain log, pain-medicine totals, steps
@@ -97,6 +138,8 @@ python3 /root/family/stamp_member.py --slug m3 --name "…" --profile gut|joint|
 python3 /root/family/stamp_member.py --slug m3 --disable | --enable | --rotate-care | --reset-password
 python3 /root/family/stamp_member.py --slug m3 --rename "…"
 python3 /root/family/stamp_member.py --list
+python3 /root/family/stamp_member.py --refresh-env   # rewrite every member env from the registry, restart
+python3 /root/family/readiness.py --slug m3           # before giving anyone their link
 /root/family/upgrade_all.sh           # after any owner release: build, scratch self-test, migrate, switch, verify
 bash /root/family/install_family.sh   # one-time (done 25-Sep-2026)
 bash /root/family/install_kitchen.sh  # one-time, Phase C
@@ -112,7 +155,6 @@ folder that carries it.
 
 ## Open items (25-Sep-2026)
 
-* DNS: `family` A record → 93.127.195.49 at GoDaddy (the one owner step). SSL follows by itself.
 * Members m1 (`gut`) and m2 (`joint`) stamped 25-Sep-2026 13:37 IST. The first attempt
   failed: with no `--code`, the tool took the folder above itself (`/root`) as the code
   tree, and the member's own user could not open `/root/family/init_member.py`. Fixed:

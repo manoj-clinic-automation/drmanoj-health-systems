@@ -98,12 +98,22 @@ LABELS = {"checkin": "Did the daily check-in", "session_close": "Closed a sessio
           "tests": "Recorded a capacity test", "epochs": "Recorded a medicine period"}
 
 CARE = family_care.Care(M.slug, M.dir, M.base, M.prefixes)
+import family_auth  # noqa: E402
+
 family_care.install(flask_app, CARE, "fit", _stamp,
                     what_for=lambda ep, p, m: LABELS.get(ep) or ep.replace("_", " "),
-                    blocked=("setup", "login"), health_sso=fit.health_sso,
+                    blocked=("setup", "login") + family_auth.CARETAKER_BLOCKED, health_sso=fit.health_sso,
                     write_gets=("events_del", "meds_toggle"))
+
+
+def _fit_stamp(s):
+    s["auth"] = True
+    s.pop(fit.health_sso.HOLD, None)
+
+
+family_auth.install(flask_app, "fit", M, CARE, _fit_stamp, lambda s: bool(s.get("auth")))
 
 application = family_prefix.PrefixApp(
     flask_app.wsgi_app, M.prefixes["fit"],
     family_prefix.route_segments(flask_app.url_map),
-    host_map=M.host_map(), manifest_label=M.name)
+    host_map=M.host_map(), manifest_label=M.name, manifest_name=family_auth.title_for("fit", M.name))

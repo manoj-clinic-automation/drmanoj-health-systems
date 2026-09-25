@@ -40,9 +40,15 @@ def run(rig):
                     outside.append(u.path)
             page.on("request", on_req)
             page.goto(rig.front_url + "/%s/login" % slug)
-            page.fill("input[name=pw]", rig.pw[slug])
-            page.click("button")
+            page.fill("input[name=pin]", rig.pw[slug])
+            page.click("#go")
             page.wait_for_load_state("networkidle")
+            if "/passkey/offer" in page.url:   # the Face ID offer, on a device that has it
+                try:
+                    page.click("#no", timeout=4000)
+                except Exception:
+                    pass
+                page.wait_for_load_state("networkidle")
             if "/welcome" in page.url:
                 check("U01 first run opens the setup form -- %s" % slug,
                       page.locator("input[name=age]").count() == 1, page.url)

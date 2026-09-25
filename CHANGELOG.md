@@ -3,6 +3,33 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-25 (evening) — family sign-in says whose it is; a readiness check
+
+A PIN typed on the wrong member's page looked like a broken PIN: the owner entered
+m1's PIN on m2's sign-in page, which carried no name, and three wrong PINs landed on
+m2 while m1 never saw an attempt. The file PINs were right throughout. Each family
+sign-in page now names its member and app, says whom to ask otherwise, counts down
+"Wrong PIN — N tries left", and says "Paused until HH:MM IST — call <caretaker>". The
+PIN has a numeric keypad and a Show/Hide eye; the Face ID button appears only on a
+phone where Face ID was set up; the sign-in page carries the diary's manifest and icon,
+named for the member, so Add to Home Screen gives the right name. `readiness.py`
+checks a member's copy end to end before a link is handed over, signing in once and
+only after the file PIN has verified offline. m2's three failed attempts were cleared.
+
+## 2026-09-25 (later) — family sign-in: a PIN, Face ID, a year on the phone
+
+Family copies only. A member signs in with a 6-digit PIN (one scrypt hash; the apps'
+own hashes made random and unused); 5 wrong PINs in a row pause sign-in for 15
+minutes, doubling each time, across all three of their apps, and every attempt is
+logged and shown to them. After a PIN sign-in a phone with Face ID or Touch ID is
+offered a passkey, verified on the server in pure Python (no new package) and
+cross-checked against the `cryptography` library. A member stays signed in for 12
+months on their own device until they sign out; "sign out on all devices" and a PIN
+reset end every session; caretaker sessions are never kept. The first real stamp had
+failed because the tool used `/root` as its code tree; it now uses the member-readable
+tree, refuses one the member cannot read, rolls back fully on failure, and a new suite
+stamps through the real per-user path.
+
 ## 2026-09-25 — the Family Edition, the joint focus, the Family Kitchen
 
 **Phase A — one copy per relative.** The same GutLog, RxGuard and FitLog code runs

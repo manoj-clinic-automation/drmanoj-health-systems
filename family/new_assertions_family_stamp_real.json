@@ -15,7 +15,7 @@
     "module": "stamp_member.py",
     "dir": ".",
     "env": "FAMILY_CODE",
-    "find": "        code = a.code or \"/opt/family/code/current\"",
+    "find": "        code = a.code or os.environ.get(\"FAMILY_CODE_TREE\") or \"/opt/family/code/current\"",
     "replace": "        code = a.code or os.path.dirname(HERE)"
    }
   },

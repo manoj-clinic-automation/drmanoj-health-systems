@@ -54,6 +54,7 @@ from urllib.parse import urlencode
 
 MARKER = "FAMILY_EDITION_V1"
 TTL = 60
+CARE_SESSION_S = 12 * 3600
 IST = timezone(timedelta(hours=5, minutes=30))
 WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 APPS = ("gut", "rx", "fit")
@@ -256,6 +257,9 @@ def install(app, care, appname, stamp, what_for=None, blocked=(), health_sso=Non
         session.clear()
         stamp(session)
         session["care"] = p["who"]
+        # A caretaker session is never kept: browser-session only, 12 hours at most.
+        session.permanent = False
+        session["care_at"] = int(time.time())
         return redirect(safe_next(request.args.get("next")))
 
     @app.before_request
@@ -266,6 +270,9 @@ def install(app, care, appname, stamp, what_for=None, blocked=(), health_sso=Non
         if not care.access_on():
             session.clear()
             return refuse("Caretaker access has been switched off. You have been signed out.")
+        if int(time.time()) - int(session.get("care_at") or 0) > CARE_SESSION_S:
+            session.clear()
+            return refuse("The caretaker session has ended (12 hours). Open it again from your Family page.")
         ep = request.endpoint or ""
         if ep in blocked:
             return refuse("This is for the person themselves, not the caretaker.")

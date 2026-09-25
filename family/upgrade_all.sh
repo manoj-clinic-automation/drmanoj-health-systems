@@ -31,9 +31,10 @@ chmod -R a+rX,go-w "$NEW"
 echo "== self-test against scratch members (log: $LOG)"
 : > "$LOG"
 for suite in /root/family/test_family_*.py; do
-  case "$suite" in *_ui*.py) continue ;; esac   # browser suites run offline only
+  # browser suites and the crypto cross-check (needs the `cryptography` package) run offline only
+  case "$suite" in *_ui*.py|*_crypto.py) continue ;; esac
   echo "-- $(basename "$suite")" | tee -a "$LOG"
-  /usr/bin/python3 -B "$suite" /root/gutlog/app.py >> "$LOG" 2>&1
+  FAMILY_CODE_TREE="$NEW" /usr/bin/python3 -B "$suite" /root/gutlog/app.py >> "$LOG" 2>&1
   if ! tail -3 "$LOG" | grep -q "RESULT: ALL PASS"; then
     echo "self-test FAILED in $(basename "$suite") -- nothing switched. Tail:"
     grep -E "^\[FAIL\]" "$LOG" | tail -20

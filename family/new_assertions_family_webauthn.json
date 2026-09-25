@@ -1,0 +1,36 @@
+{
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3380_kitchen.py",
+ "_": [
+  "The hand-written ES256 / RS256 checks against the cryptography package (offline)."
+ ],
+ "suite": "test_family_webauthn_crypto.py",
+ "assertions": [
+  {
+   "name": "K02 ES256: changed message, signature, key",
+   "control": "mutation",
+   "mutation": {
+    "id": "anyx",
+    "why": "only a valid point is required",
+    "module": "family_webauthn.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    return pnt is not None and pnt[0] % N == r\n",
+    "replace": "    return pnt is not None\n"
+   }
+  },
+  {
+   "name": "K03 RS256: valid signatures verify, tampered ones and 1024-bit keys do not",
+   "control": "mutation",
+   "mutation": {
+    "id": "rsa1024",
+    "why": "1024-bit RSA keys are accepted",
+    "module": "family_webauthn.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if len(sig) != k or n.bit_length() < 2048:\n",
+    "replace": "    if len(sig) != k or n.bit_length() < 1024:\n"
+   }
+  }
+ ]
+}

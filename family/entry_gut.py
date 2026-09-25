@@ -140,9 +140,15 @@ def what_for(endpoint, path, method):
     return LABELS.get(endpoint) or (endpoint or path).replace("_", " ").strip()
 
 
+import family_auth  # noqa: E402
+
 family_care.install(flask_app, CARE, "gut", lambda s: gut.stamp_session(),
-                    what_for=what_for, blocked=("account", "setup", "care_switch"),
+                    what_for=what_for,
+                    blocked=("account", "setup", "care_switch", "login") + family_auth.CARETAKER_BLOCKED,
                     health_sso=gut.health_sso)
+# PIN sign-in with lockout, Face ID / Touch ID, 12 months on the member's own device.
+AUTH = family_auth.install(flask_app, "gut", M, CARE, lambda s: gut.stamp_session(),
+                           lambda s: bool(s.get("ok")), passkeys=True)
 
 
 def signed_in():
@@ -273,10 +279,39 @@ def care_page():
                % ("ON" if on else "OFF", "0" if on else "1",
                   "Switch caretaker access off" if on else "Switch caretaker access on"))
         CARE.mark_seen()
-    body = ("<h1>Caretaker</h1>%s<div class='card'><p><b>Changes by your caretaker</b></p>%s</div>"
+    body = ("<h1>Caretaker</h1>%s<div class='card'><p><b>Changes by your caretaker</b></p>%s</div>%s"
             "<a class='btn ghost' href='/welcome'>Your details</a> <a class='btn ghost' href='/'>Back</a>"
-            % (top, items))
+            % (top, items, signin_card(is_care)))
     return page("Caretaker", body)
+
+
+def signin_card(is_care):
+    """Sign-in: every attempt (wrong PIN, locked out, signed in), the Face ID
+    devices, change the PIN, sign out everywhere. The caretaker sees, never changes."""
+    esc = html.escape
+    log = "".join("<div class='log'>%s IST &middot; %s<span class='hint'> &middot; %s &middot; %s</span></div>"
+                  % (esc(r["at"][:16]), esc(r["result"]), esc(r["app"]), esc(r["ip"] or ""))
+                  for r in AUTH.entries(15)) or "<p class='hint'>No sign-ins yet.</p>"
+    pks = AUTH.passkeys()
+    dev = "".join("<div class='log'>%s &middot; set up %s%s%s</div>"
+                  % (esc(p["label"] or "a device"), esc(p["created"] or ""),
+                     (" &middot; last used " + esc(p["last_used"])) if p["last_used"] else "",
+                     "" if is_care else (" <form method='post' action='/passkey/remove/%d' style='display:inline'>"
+                                         "<button class='ghost' style='padding:4px 10px;margin:0'>Remove</button>"
+                                         "</form>" % p["id"]))
+                  for p in pks) or "<p class='hint'>No Face ID / Touch ID yet. It is offered after a PIN sign-in.</p>"
+    msg = {"changed": "<p><b>PIN changed.</b></p>",
+           "refused": "<p class='tag'>PIN not changed: check the current PIN, and choose 6 digits that are not "
+                      "all the same or in a straight run.</p>"}.get(request.args.get("pin"), "")
+    own = "" if is_care else (
+        "<p><b>Change your PIN</b></p>%s<form method='post' action='/pin/change'>"
+        "<div class='row'><div><label>Current PIN</label><input name='old' type='password' inputmode='numeric' "
+        "maxlength='6'></div><div><label>New PIN</label><input name='new' type='password' inputmode='numeric' "
+        "maxlength='6'></div></div><button>Change PIN</button></form>"
+        "<form method='post' action='/signout-all'><button class='ghost'>Sign out on all devices</button></form>" % msg)
+    return ("<div class='card'><p><b>Sign-in</b></p><p class='hint'>You stay signed in on your own phone for a "
+            "year unless you sign out. Five wrong PINs pause sign-in for 15 minutes, longer each time.</p>"
+            "<p><b>Face ID / Touch ID</b></p>%s%s<p><b>Recent sign-in attempts</b></p>%s</div>" % (dev, own, log))
 
 
 @flask_app.route("/care/switch", methods=["POST"])
@@ -411,6 +446,7 @@ NOW_SNIPPET = """
 </script>
 """
 _NOW_ANCHOR = '<section class="tab sel" id="tab-now">'
+_APPLE_TITLE = '<meta name="apple-mobile-web-app-title" content="GutLog">'
 
 
 @flask_app.after_request
@@ -421,6 +457,9 @@ def _inject_now(resp):
             t = resp.get_data(as_text=True)
             if _NOW_ANCHOR in t and "famBar" not in t:
                 t = t.replace(_NOW_ANCHOR, _NOW_ANCHOR + NOW_SNIPPET, 1)
+                # Add to Home Screen from the diary names the member, as the sign-in page does.
+                t = t.replace(_APPLE_TITLE, '<meta name="apple-mobile-web-app-title" content="%s">'
+                              % html.escape(M.name[:30], quote=True), 1)
                 resp.set_data(t)
     except Exception:
         pass
@@ -430,4 +469,4 @@ def _inject_now(resp):
 application = family_prefix.PrefixApp(
     flask_app.wsgi_app, M.prefixes["gut"],
     family_prefix.route_segments(flask_app.url_map),
-    host_map=M.host_map(), manifest_label=M.name)
+    host_map=M.host_map(), manifest_label=M.name, manifest_name=family_auth.title_for("gut", M.name))

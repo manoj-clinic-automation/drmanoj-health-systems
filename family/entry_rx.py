@@ -132,11 +132,21 @@ LABELS = {"meds": "Changed the medicine list", "med_event": "Recorded a medicine
           "analyse_view": "Checked a proposed change", "symptom_view": "Checked a symptom"}
 
 CARE = family_care.Care(M.slug, M.dir, M.base, M.prefixes)
+import family_auth  # noqa: E402
+
 family_care.install(flask_app, CARE, "rx", _stamp,
                     what_for=lambda ep, p, m: LABELS.get(ep) or ep.replace("_", " "),
-                    blocked=("login",), health_sso=rx.health_sso)
+                    blocked=("login",) + family_auth.CARETAKER_BLOCKED, health_sso=rx.health_sso)
+
+
+def _rx_stamp(s):
+    _stamp(s)
+    s.pop(rx.health_sso.HOLD, None)
+
+
+family_auth.install(flask_app, "rx", M, CARE, _rx_stamp, lambda s: bool(s.get("auth")))
 
 application = family_prefix.PrefixApp(
     flask_app.wsgi_app, M.prefixes["rx"],
     family_prefix.route_segments(flask_app.url_map),
-    host_map=M.host_map(), manifest_label=M.name)
+    host_map=M.host_map(), manifest_label=M.name, manifest_name=family_auth.title_for("rx", M.name))

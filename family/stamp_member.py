@@ -115,6 +115,23 @@ def new_password():
     return "%s-%s-%04d" % (r.choice(WORDS), r.choice(WORDS), r.randrange(10000))
 
 
+def new_pin():
+    """Six digits, never all one digit or a straight run (family_auth.weak_pin)."""
+    r = secrets.SystemRandom()
+    while True:
+        pin = "%06d" % r.randrange(1000000)
+        if len(set(pin)) > 1 and pin not in "01234567890" and pin not in "09876543210":
+            return pin
+
+
+def write_pin_file(path, slug, name, url, pin):
+    """Root-only, appended, never echoed: the owner hands it over and deletes it."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a") as fh:
+        fh.write("%s\t%s\t%s\tPIN %s\n" % (slug, name, url, pin))
+    os.chmod(path, 0o600)
+
+
 def run(cmd, **kw):
     return subprocess.run(cmd, check=True, **kw)
 
@@ -123,7 +140,8 @@ def env_text(reg, m):
     lines = ["# /etc/family/%s.env -- written by stamp_member.py. Root only." % m["slug"],
              "FAMILY_SLUG=" + m["slug"], "FAMILY_DIR=/srv/family/" + m["slug"],
              "FAMILY_BASE=" + reg["base"], "FAMILY_NAME=" + m["name"].replace("\n", " "),
-             "FAMILY_PROFILE=" + m["profile"]]
+             "FAMILY_PROFILE=" + m["profile"],
+             "FAMILY_CARETAKER=" + str(reg.get("caretaker") or "your caretaker").replace("\n", " ")]
     for a in APPS:
         lines.append("FAMILY_PORT_%s=%d" % (a.upper(), m["ports"][a]))
     return "\n".join(lines) + "\n"
@@ -301,6 +319,12 @@ def stamp(P, a, system):
             run(["useradd", "--system", "--no-create-home", "--home-dir", "/nonexistent",
                  "--shell", "/sbin/nologin", "--user-group", user])
             made_user = True
+    # The member's user must be able to pass through every parent: under a
+    # root umask of 077 a freshly made parent would be 700 (25-Sep-2026).
+    parent = os.path.dirname(P.srv)
+    if not os.path.isdir(parent):
+        os.makedirs(parent)
+        os.chmod(parent, 0o755)
     os.makedirs(P.srv, exist_ok=True)
     os.chmod(P.srv, 0o755)
     os.makedirs(mdir)
@@ -331,7 +355,8 @@ def stamp(P, a, system):
         for f in files:
             os.chmod(os.path.join(root_, f), 0o600)
     # -- databases, as the member ------------------------------------------
-    pw = new_password()
+    pin = new_pin()                       # the member signs in with this
+    app_secret = secrets.token_urlsafe(24)  # the apps' own hashes: random, unused
     env = dict(os.environ)
     for k in list(env):
         if k.startswith(("GUTLOG_", "RXGUARD_", "FITLOG_", "HEALTH_SSO_", "FAMILY_")):
@@ -349,7 +374,8 @@ def stamp(P, a, system):
         cmd = [sys.executable, "-B", init, "--app", app]
         if system:
             cmd = ["runuser", "-u", user, "--"] + cmd
-        r = subprocess.run(cmd, input=(pw + "\n").encode(), env=env, cwd="/" if system else None,
+        secret = pin if app == "care" else app_secret
+        r = subprocess.run(cmd, input=(secret + "\n").encode(), env=env, cwd="/" if system else None,
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         out = r.stdout.decode("utf-8", "replace").strip().splitlines()
         print("  " + (out[-1] if out else "(no output)"))
@@ -372,14 +398,10 @@ def stamp(P, a, system):
     print("")
     print("  address : %s/%s/" % (reg["base"], slug))
     if a.password_file:
-        # Root-only, appended, never echoed: the owner hands it over and deletes it.
-        fd = os.open(a.password_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        with os.fdopen(fd, "a") as fh:
-            fh.write("%s\t%s\t%s/%s/\t%s\n" % (slug, name, reg["base"], slug, pw))
-        os.chmod(a.password_file, 0o600)
-        print("  first-login password: written to %s (root only)" % a.password_file)
+        write_pin_file(a.password_file, slug, name, "%s/%s/" % (reg["base"], slug), pin)
+        print("  first-login PIN: written to %s (root only)" % a.password_file)
     else:
-        print("  first-login password (shown once, written nowhere): " + pw)
+        print("  first-login PIN (shown once, written nowhere): " + pin)
     return 0
 
 
@@ -435,9 +457,11 @@ def rename(P, slug, name, system):
     return 0
 
 
-def reset_password(P, slug, system):
-    """A member has no owner key, so cannot change their own password in the
-    apps; this is the way back in. New password for all three apps, shown once."""
+def reset_pin(P, slug, system, pin_file=None):
+    """The way back in for a member who forgot their PIN (or the first switch to
+    PINs): a new 6-digit PIN, the lockout cleared, every device signed out, and
+    the apps' old password hashes replaced with random ones nothing checks.
+    Face ID / Touch ID devices stay; the member can remove them on /care."""
     import hashlib
     import sqlite3
     reg = load_registry(P)
@@ -445,32 +469,44 @@ def reset_password(P, slug, system):
     if not m:
         print("No member %s." % slug)
         return 2
-    try:
-        from werkzeug.security import generate_password_hash
-    except ImportError:
-        print("werkzeug is needed.")
-        return 2
-    pw = new_password()
+    from werkzeug.security import generate_password_hash
+    sys.path.insert(0, HERE)
+    import family_care
+    import family_auth
     mdir = P.member(slug)
-    for db, key, val in ((os.path.join(mdir, "gutlog", "health.db"), "pw_hash", generate_password_hash(pw)),
+    pin, junk = new_pin(), secrets.token_urlsafe(24)
+    care = family_care.Care(slug, mdir, reg["base"], {})
+    au = family_auth.Auth(care)
+    au.set_pin(pin)
+    au.rotate_epoch()
+    au.log("tool", "server", "PIN reset by the caretaker's server tool; every device signed out")
+    for db, key, val in ((os.path.join(mdir, "gutlog", "health.db"), "pw_hash", generate_password_hash(junk)),
                          (os.path.join(mdir, "rxguard", "rxguard.db"), "password_hash",
-                          generate_password_hash(pw)),
+                          generate_password_hash(junk)),
                          (os.path.join(mdir, "fitlog", "fitlog.db"), "password_hash",
-                          hashlib.sha256(pw.encode()).hexdigest())):
+                          hashlib.sha256(junk.encode()).hexdigest())):
         con = sqlite3.connect(db)
         con.execute("UPDATE settings SET value=? WHERE key=?", (val, key))
-        if key == "pw_hash":   # GutLog: sign every device out
+        if key == "pw_hash":   # GutLog's own epoch too
             con.execute("UPDATE settings SET value=? WHERE key='auth_epoch'", (secrets.token_hex(16),))
         con.commit()
         con.close()
-    print("%s: new first-login password (shown once, written nowhere): %s" % (slug, pw))
+    if system:
+        u = m.get("user", "fam_" + slug)
+        run(["chown", "-R", "%s:%s" % (u, u), mdir])
+    if pin_file:
+        write_pin_file(pin_file, slug, m["name"], "%s/%s/" % (reg["base"], slug), pin)
+        print("%s: new PIN written to %s (root only); every device signed out." % (slug, pin_file))
+    else:
+        print("%s: new PIN (shown once, written nowhere): %s" % (slug, pin))
     return 0
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rename", metavar="NAME")
-    ap.add_argument("--reset-password", action="store_true")
+    ap.add_argument("--reset-password", action="store_true", help="same as --reset-pin")
+    ap.add_argument("--reset-pin", action="store_true")
     ap.add_argument("--slug")
     ap.add_argument("--name")
     ap.add_argument("--profile", choices=("gut", "joint", "general"), default="general")
@@ -478,6 +514,8 @@ def main():
     ap.add_argument("--enable", action="store_true")
     ap.add_argument("--rotate-care", action="store_true")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--refresh-env", action="store_true",
+                    help="rewrite every member's /etc/family env from the registry and restart them")
     ap.add_argument("--kitchen-sync", action="store_true",
                     help="issue Family Kitchen tokens to the owner and every member; rewrite routes")
     ap.add_argument("--root", default="/")
@@ -498,7 +536,8 @@ def main():
         # /root/family/init_member.py. A real stamp runs the setup as the member,
         # so it always uses the member-readable family tree unless told
         # otherwise, and stamp() refuses a tree the member cannot read.
-        code = a.code or "/opt/family/code/current"
+        # FAMILY_CODE_TREE: the NEW tree while upgrade_all.sh tests it before switching.
+        code = a.code or os.environ.get("FAMILY_CODE_TREE") or "/opt/family/code/current"
     else:
         code = a.code or os.environ.get("FAMILY_CODE_TREE") or os.path.dirname(HERE)
     P = Paths(a.root, code)
@@ -519,6 +558,17 @@ def main():
         write_vhost(P, reg, system)
         print("kitchen tokens: owner + %d member(s)" % len(reg["members"]))
         return 0
+    if a.refresh_env:
+        # A release added a member setting (FAMILY_CARETAKER, 2026-09-25):
+        # rewrite every member's env from the registry and restart them.
+        reg = load_registry(P)
+        for m in reg["members"]:
+            write_secret(os.path.join(P.etc, m["slug"] + ".env"), env_text(reg, m).rstrip("\n"), excl=False)
+            if system and m.get("enabled", True):
+                run(["systemctl", "restart"] + units(m["slug"]), stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL)
+        print("env refreshed: %d member(s)" % len(reg["members"]))
+        return 0
     if a.list:
         for m in load_registry(P)["members"]:
             print("%-5s %-8s %-8s %s %s" % (m["slug"], m["profile"],
@@ -534,8 +584,8 @@ def main():
         return rotate_care(P, a.slug, system)
     if a.rename:
         return rename(P, a.slug, a.rename, system)
-    if a.reset_password:
-        return reset_password(P, a.slug, system)
+    if a.reset_password or a.reset_pin:
+        return reset_pin(P, a.slug, system, a.password_file)
     return stamp(P, a, system)
 
 

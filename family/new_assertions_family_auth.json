@@ -1,0 +1,387 @@
+{
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3380_kitchen.py",
+ "_": [
+  "Family sign-in: PIN, lockout, logging, 12-month sessions, Face ID. Every assertion broken on purpose in a COPY of family/."
+ ],
+ "suite": "test_family_auth.py",
+ "assertions": [
+  {
+   "name": "F01 a family member signs in with a 6-digit PIN",
+   "control": "mutation",
+   "mutation": {
+    "id": "nopin",
+    "why": "the apps' own password pages stay",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    app.view_functions[\"login\"] = login\n",
+    "replace": "    pass\n"
+   }
+  },
+  {
+   "name": "F02 five wrong PINs lock sign-in for 15 minutes",
+   "control": "mutation",
+   "mutation": {
+    "id": "lock6",
+    "why": "the lock comes after 6 wrong PINs",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "LOCK_AFTER = 5\n",
+    "replace": "LOCK_AFTER = 6\n"
+   }
+  },
+  {
+   "name": "F02 five wrong PINs lock sign-in for 15 minutes; even the right PIN is refused while locked",
+   "control": "mutation",
+   "mutation": {
+    "id": "lockedpass",
+    "why": "the right PIN is accepted during a lock",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            if now < until:\n",
+    "replace": "            if False:\n"
+   }
+  },
+  {
+   "name": "F04 the lockout is shared",
+   "control": "mutation",
+   "mutation": {
+    "id": "perapplock",
+    "why": "each app keeps its own lock",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            until = int(self.kv(c, \"lock_until\", 0) or 0)\n",
+    "replace": "            until = int(self.kv(c, \"lock_until_\" + app, 0) or 0)\n"
+   }
+  },
+  {
+   "name": "F03 each repeat lock doubles",
+   "control": "mutation",
+   "mutation": {
+    "id": "nodouble",
+    "why": "every lock is 15 minutes",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "                mins = min(LOCK_BASE_MIN * (2 ** (level - 1)), LOCK_MAX_MIN)\n",
+    "replace": "                mins = LOCK_BASE_MIN\n"
+   }
+  },
+  {
+   "name": "F05 every attempt is logged",
+   "control": "mutation",
+   "mutation": {
+    "id": "nolog",
+    "why": "attempts are not logged",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        c.execute(\"INSERT INTO auth_log(at, app, ip, result) VALUES(?,?,?,?)\",\n",
+    "replace": "        return\n        c.execute(\"INSERT INTO auth_log(at, app, ip, result) VALUES(?,?,?,?)\",\n"
+   }
+  },
+  {
+   "name": "F06 a member stays signed in for 12 months",
+   "control": "mutation",
+   "mutation": {
+    "id": "shortsession",
+    "why": "sessions last 30 days",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "SESSION_DAYS = 365\n",
+    "replace": "SESSION_DAYS = 30\n"
+   }
+  },
+  {
+   "name": "F06 a member stays signed in for 12 months on their device; a caretaker session is never kept",
+   "control": "mutation",
+   "mutation": {
+    "id": "carekept",
+    "why": "the caretaker session is kept like a member's",
+    "module": "family_care.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        session.permanent = False\n        session[\"care_at\"]",
+    "replace": "        session.permanent = True\n        session[\"care_at\"]"
+   }
+  },
+  {
+   "name": "F07 signing out ends that device; 'sign out on all devices' ends every other one",
+   "control": "mutation",
+   "mutation": {
+    "id": "noepoch",
+    "why": "the session epoch is never checked",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if signed_in(session) and session.get(\"fam_ep\") != auth.epoch():\n",
+    "replace": "        if False:\n"
+   }
+  },
+  {
+   "name": "F08 the member can change the PIN (not to 123456 or 777777)",
+   "control": "mutation",
+   "mutation": {
+    "id": "weakpin",
+    "why": "weak PINs are allowed",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if not (len(new) == 6 and new.isdigit()) or weak_pin(new):\n",
+    "replace": "        if not (len(new) == 6 and new.isdigit()):\n"
+   }
+  },
+  {
+   "name": "F08 the member can change the PIN (not to 123456 or 777777); the caretaker cannot",
+   "control": "mutation",
+   "mutation": {
+    "id": "carepin",
+    "why": "the caretaker is not blocked from the PIN page",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "CARETAKER_BLOCKED = (\"signout_all\", \"pin_change\",",
+    "replace": "CARETAKER_BLOCKED = (\"signout_all\","
+   }
+  },
+  {
+   "name": "F09 Face ID refuses a forged signature",
+   "control": "mutation",
+   "mutation": {
+    "id": "nosig",
+    "why": "the signature is not checked",
+    "module": "family_webauthn.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if not verify_sig(key, raw_ad + hashlib.sha256(raw_cd).digest(), unb64u(resp.get(\"signature\"))):\n",
+    "replace": "    if False:\n"
+   }
+  },
+  {
+   "name": "F09 Face ID refuses a forged signature, another origin",
+   "control": "mutation",
+   "mutation": {
+    "id": "noorigin",
+    "why": "the origin is not checked",
+    "module": "family_webauthn.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if cd.get(\"origin\") != origin:\n",
+    "replace": "    if False:\n"
+   }
+  },
+  {
+   "name": "F09 Face ID refuses a forged signature, another origin, no Face ID check",
+   "control": "mutation",
+   "mutation": {
+    "id": "nouv",
+    "why": "user verification is not required",
+    "module": "family_webauthn.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if not ad[\"flags\"] & FLAG_UV:\n",
+    "replace": "    if False:\n"
+   }
+  },
+  {
+   "name": "F09 Face ID refuses a forged signature, another origin, no Face ID check, a replayed challenge",
+   "control": "mutation",
+   "mutation": {
+    "id": "replay",
+    "why": "any challenge is accepted, again and again",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            return cur.rowcount == 1\n",
+    "replace": "            return True\n"
+   }
+  },
+  {
+   "name": "F10 Face ID still signs in during a PIN lockout, and ends the lockout",
+   "control": "mutation",
+   "mutation": {
+    "id": "pkkeepslock",
+    "why": "a Face ID sign-in leaves the lock in place",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        auth.cleared(appname, ip(), \"signed in (Face ID / Touch ID)\")\n",
+    "replace": "        auth.log(appname, ip(), \"signed in (Face ID / Touch ID)\")\n"
+   }
+  },
+  {
+   "name": "F11 a PIN reset writes the new PIN only to the root-only file",
+   "control": "mutation",
+   "mutation": {
+    "id": "resetprint",
+    "why": "the reset also prints the PIN",
+    "module": "stamp_member.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        print(\"%s: new PIN written to %s (root only); every device signed out.\" % (slug, pin_file))\n",
+    "replace": "        print(\"%s: new PIN %s written to %s\" % (slug, pin, pin_file))\n"
+   }
+  },
+  {
+   "name": "F11 a PIN reset writes the new PIN only to the root-only file, ends every session",
+   "control": "mutation",
+   "mutation": {
+    "id": "resetkeeps",
+    "why": "a reset leaves sessions alive",
+    "module": "stamp_member.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    au.rotate_epoch()\n",
+    "replace": ""
+   }
+  },
+  {
+   "name": "F12 the sign-in page says whose it is",
+   "control": "mutation",
+   "mutation": {
+    "id": "noname",
+    "why": "every sign-in page is the same generic one",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    title = title or title_for(appname, M.name)\n",
+    "replace": "    title = title or \"Family health diary\"\n"
+   }
+  },
+  {
+   "name": "F12 the PIN field has a numeric keypad and a show/hide eye",
+   "control": "mutation",
+   "mutation": {
+    "id": "noeye",
+    "why": "the eye is gone",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "\"<button type='button' class='eye' id='eye' ",
+    "replace": "\"<button type='button' class='eye' id='eyex' "
+   }
+  },
+  {
+   "name": "F12 wrong PINs count down the tries left",
+   "control": "mutation",
+   "mutation": {
+    "id": "nocount",
+    "why": "the count never moves",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            return \"wrong\", LOCK_AFTER - fails\n",
+    "replace": "            return \"wrong\", LOCK_AFTER\n"
+   }
+  },
+  {
+   "name": "F12 the pause says until when, in IST, and whom to call",
+   "control": "mutation",
+   "mutation": {
+    "id": "utcpause",
+    "why": "the time is shown in UTC",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    ist = timezone(timedelta(hours=5, minutes=30))\n",
+    "replace": "    ist = timezone.utc\n"
+   }
+  },
+  {
+   "name": "F12 Add to Home Screen from the sign-in page gives the member's name and icon",
+   "control": "mutation",
+   "mutation": {
+    "id": "nohead",
+    "why": "the sign-in page has no manifest or icon",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        return page(title, body, js, 200 if not err else 401, head=pwa_head)\n",
+    "replace": "        return page(title, body, js, 200 if not err else 401)\n"
+   }
+  },
+  {
+   "name": "F12 Add to Home Screen from the sign-in page gives the member's name and icon",
+   "control": "mutation",
+   "mutation": {
+    "id": "nomanifestname",
+    "why": "the manifest keeps 'GutLog · name'",
+    "module": "family_prefix.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if self.manifest_name:\n",
+    "replace": "        if False:\n"
+   }
+  },
+  {
+   "name": "F12 the diary's own Add to Home Screen title is the member's name",
+   "control": "mutation",
+   "mutation": {
+    "id": "gutlogtitle",
+    "why": "the diary still installs as GutLog",
+    "module": "entry_gut.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "                t = t.replace(_APPLE_TITLE, ",
+    "replace": "                t = t.replace(\"@never@\", "
+   }
+  },
+  {
+   "name": "F13 the readiness check passes on a ready member",
+   "control": "mutation",
+   "mutation": {
+    "id": "readynofaceid",
+    "why": "Face ID is not offered after sign-in",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    @app.route(\"/passkey/offer\")\n",
+    "replace": "    @app.route(\"/passkey/offer-gone\")\n"
+   }
+  },
+  {
+   "name": "F13 the readiness check passes on a ready member, signs in once, and leaves nothing behind",
+   "control": "mutation",
+   "mutation": {
+    "id": "readyleaves",
+    "why": "the test medicine is left behind",
+    "module": "readiness.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "                con.execute(\"DELETE FROM prnmeds WHERE id=?\", (i,))\n",
+    "replace": "                pass\n"
+   }
+  },
+  {
+   "name": "F13 a stale PIN in the file costs no attempt",
+   "control": "mutation",
+   "mutation": {
+    "id": "readytries",
+    "why": "the file PIN is tried without checking",
+    "module": "readiness.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        good = bool(pin) and check_password_hash(state.get(\"pin_hash\") or \"\", pin)\n",
+    "replace": "        good = bool(pin)\n"
+   }
+  },
+  {
+   "name": "F13 the readiness check will not try a member one wrong PIN from a lock",
+   "control": "mutation",
+   "mutation": {
+    "id": "readynear",
+    "why": "it tries a member one miss from a lock",
+    "module": "readiness.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if locked or fails >= LOCK_AFTER - 1:\n",
+    "replace": "    if locked:\n"
+   }
+  }
+ ]
+}

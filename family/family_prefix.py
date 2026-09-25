@@ -76,7 +76,7 @@ def route_segments(url_map):
 
 class PrefixApp(object):
     def __init__(self, wsgi_app, prefix, segments, host_map=None,
-                 manifest_label=None):
+                 manifest_label=None, manifest_name=None):
         p = "/" + prefix.strip("/")
         if p == "/":
             raise ValueError("a family prefix cannot be the root")
@@ -87,6 +87,9 @@ class PrefixApp(object):
         # Longest source first, so a host is never mapped by a shorter one.
         self.host_map.sort(key=lambda kv: len(kv[0]), reverse=True)
         self.manifest_label = manifest_label
+        # The home-screen name in full ("<Name>'s health diary"); the label
+        # alone becomes the short name under the icon.
+        self.manifest_name = manifest_name
         alt = "|".join(re.escape(s) for s in self.segments) or "(?!)"
         # A quoted/attribute/space-led absolute path whose first segment is
         # one of ours, followed by the end of that segment.
@@ -146,6 +149,8 @@ class PrefixApp(object):
                 if isinstance(j.get(k), str):
                     j[k] = (j[k] + " · " + self.manifest_label) if k == "name" \
                         else self.manifest_label[:12]
+        if self.manifest_name:
+            j["name"] = self.manifest_name
         return json.dumps(j, indent=2)
 
     # ------------------------------------------------------------ WSGI

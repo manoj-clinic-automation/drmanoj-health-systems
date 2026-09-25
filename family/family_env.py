@@ -14,6 +14,7 @@ about where that member's files are, and nothing can default to the owner's
     FAMILY_DIR       /srv/family/m1        (owned by the member's own user)
     FAMILY_BASE      https://family.dr-manoj.in
     FAMILY_NAME      display name          (server-side only)
+    FAMILY_CARETAKER who to call when sign-in is paused
     FAMILY_PROFILE   gut | joint | general
     FAMILY_PORT_GUT / _RX / _FIT           loopback ports
 
@@ -41,6 +42,8 @@ class Member(object):
             raise SystemExit("family: a member folder may not live under /root")
         self.base = (e.get("FAMILY_BASE") or "https://family.dr-manoj.in").rstrip("/")
         self.name = (e.get("FAMILY_NAME") or self.slug).strip()[:40]
+        # Who to call when sign-in is paused (the registry's caretaker).
+        self.caretaker = (e.get("FAMILY_CARETAKER") or "your caretaker").strip()[:40]
         self.profile = e.get("FAMILY_PROFILE", "general")
         if self.profile not in PROFILES:
             self.profile = "general"

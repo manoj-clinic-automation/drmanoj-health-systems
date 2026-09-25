@@ -226,7 +226,8 @@ class Rig(object):
     """One scratch Family Edition: code tree, owner app, members, front."""
 
     def __init__(self, owner_app, members=(("m1", "Member A", "gut"), ("m2", "Member B", "joint")),
-                 extra_member_env=None):
+                 extra_member_env=None, host="127.0.0.1"):
+        # host: "localhost" for browser passkey tests (WebAuthn refuses an IP as its RP ID).
         # Under a negative control that broke a COPY of GutLog, the owner's GutLog
         # runs from that copy as well, or an owner-side assertion could never fail.
         self.owner_app = os.path.join(app_src("gut"), "app.py") if os.environ.get("GUT_SRC") \
@@ -245,7 +246,7 @@ class Rig(object):
         sys.path.insert(0, fam_src())
         import build_code  # noqa
         build_code.build(app_src("gut"), app_src("rx"), app_src("fit"), fam_src(), self.code)
-        self.front_url = "http://127.0.0.1:%d" % self.front_port
+        self.front_url = "http://%s:%d" % (host, self.front_port)
         # -- owner ----------------------------------------------------------
         od = os.path.join(self.work, "owner")
         os.makedirs(od)
@@ -323,7 +324,7 @@ class Rig(object):
                "--base-url", self.front_url, "--slug", slug, "--name", name, "--profile", prof]
         r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         out = r.stdout.decode("utf-8", "replace")
-        m = re.search(r"first-login password \(shown once, written nowhere\): (\S+)", out)
+        m = re.search(r"first-login PIN \(shown once, written nowhere\): (\d{6})", out)
         if m:
             self.pw[slug] = m.group(1)
         if expect_ok and r.returncode != 0:
@@ -411,8 +412,7 @@ class Rig(object):
     def member_client(self, slug, app="gut"):
         c = Client(self.front_url)
         pre = "/" + slug if app == "gut" else "/%s/%s" % (slug, app)
-        field = {"gut": "pw", "rx": "password", "fit": "pw"}[app]
-        c.post(pre + "/login", {field: self.pw[slug]})
+        c.post(pre + "/login", {"pin": self.pw[slug]})   # family sign-in is the PIN
         return c
 
     def kitchen_tokens(self):

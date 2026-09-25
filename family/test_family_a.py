@@ -16,6 +16,7 @@ traversal; a caretaker with access switched off; a member ticket presented
 to the owner. Synthetic names only ("Member A", "Medicine A").
 Python 3.9.
 """
+import html
 import json
 import os
 import re
@@ -106,8 +107,12 @@ def run(rig):
     check("A11 a family copy starts with no owner data -- no Health Mirror warning",
           (r.json() or {}).get("ok") is True, r.text[:120])
     r = famtest.Client(rig.front_url).get("/m1/login")
-    check("A11 a family copy starts with no owner data -- the sign-in page names nobody",
-          r.status == 200 and "Manoj" not in r.text and "Family health diary" in r.text, r.text[:200])
+    # The page names its member, and the caretaker only as whom to ask/call (by design,
+    # 25-Sep-2026); the owner's own diary title and full name appear nowhere.
+    lt = html.unescape(r.text).replace("Ask Manoj for your own link", "")
+    check("A11 a family copy starts with no owner data -- the sign-in page names only its member",
+          r.status == 200 and "Manoj" not in lt and "Personal health diary" not in lt
+          and "Member A's health diary" in lt, r.text[:200])
     r = m1.get("/m1/api/family/has")
     check("A11 a family copy starts with no owner data -- no Family page inside a member's copy",
           (r.json() or {}).get("n") == 0 and m1.get("/m1/family").status == 404, r.text[:100])
