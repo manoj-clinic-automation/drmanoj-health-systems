@@ -60,17 +60,46 @@ for s in $SLUGS; do
       || { echo "  $s: fitlog migration FAILED -- nothing switched"; exit 1; }
 done
 
+# The Family Kitchen runs from the same tree; its database is backed up before
+# the new code can migrate it (Kitchen 1.1.0 added columns and a table).
+KITCHEN=0
+if systemctl is-enabled --quiet family-kitchen.service 2>/dev/null; then
+  KITCHEN=1
+  mkdir -p /root/backups/family/kitchen && chmod 700 /root/backups/family/kitchen
+  /usr/bin/python3 - "$TS" <<'PY' || { echo "kitchen backup FAILED -- nothing switched"; exit 1; }
+import sqlite3, sys, os
+src = "/srv/family/kitchen/kitchen.db"
+dst = "/root/backups/family/kitchen/kitchen-pre-upgrade-%s.db" % sys.argv[1]
+if os.path.exists(src):
+    s = sqlite3.connect("file:%s?mode=ro" % src, uri=True); d = sqlite3.connect(dst)
+    with d:
+        s.backup(d)
+    ok = d.execute("PRAGMA integrity_check").fetchone()[0]
+    s.close(); d.close(); os.chmod(dst, 0o600)
+    print("  kitchen: %s -> %s (%s)" % (src, os.path.basename(dst), ok))
+    sys.exit(0 if ok == "ok" else 1)
+print("  kitchen: no database yet")
+PY
+fi
+
 echo "== switch"
 PREV=$(readlink -f "$CODE/current" 2>/dev/null || true)
 ln -sfn "$NEW" "$CODE/current.new" && mv -T "$CODE/current.new" "$CODE/current"
 for s in $SLUGS; do
   systemctl restart "family-gut@$s" "family-rx@$s" "family-fit@$s"
 done
+[ "$KITCHEN" = 1 ] && systemctl restart family-kitchen.service
 sleep 4
 BAD=0
 GV=$(grep -o 'APP_VERSION = "[0-9.]*"' "$NEW/gutlog/app.py" | grep -o '[0-9.]*')
 RV=$(grep -o 'APP_VERSION = "[0-9.]*"' "$NEW/rxguard/app.py" | grep -o '[0-9.]*')
 FV=$(grep -o 'APP_VERSION = "[0-9.]*"' "$NEW/fitlog/app.py" | grep -o '[0-9.]*')
+KV=$(grep -o 'APP_VERSION = "[0-9.]*"' "$NEW/family/kitchen.py" | grep -o '[0-9.]*')
+if [ "$KITCHEN" = 1 ]; then
+  k=$(curl -s "http://127.0.0.1:8199/kitchen/healthz")
+  echo "  kitchen: '$k'"
+  [ "$k" = "ok $KV" ] || BAD=1
+fi
 for s in $SLUGS; do
   P=$(/usr/bin/python3 -c "import json;m=[x for x in json.load(open('/root/family/members.local.json'))['members'] if x['slug']=='$s'][0];print(m['ports']['gut'],m['ports']['rx'],m['ports']['fit'])")
   set -- $P
@@ -81,8 +110,8 @@ for s in $SLUGS; do
 done
 if [ "$BAD" = 1 ]; then
   echo "A member did not come back on the new version. Previous tree: $PREV"
-  echo "Go back:  ln -sfn $PREV $CODE/current && systemctl restart 'family-*@*'"
+  echo "Go back:  ln -sfn $PREV $CODE/current && systemctl restart 'family-*@*' family-kitchen"
   exit 1
 fi
 ls -1dt "$CODE"/20* 2>/dev/null | tail -n +4 | xargs -r rm -rf
-echo "== done: every member on gut $GV / rx $RV / fit $FV (tree $TS)"
+echo "== done: every member on gut $GV / rx $RV / fit $FV, kitchen $KV (tree $TS)"

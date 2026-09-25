@@ -3,6 +3,25 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-25 (night) — Family Kitchen: recipes-only members, self-publishing, "Recipe by"
+
+Kitchen 1.1.0, GutLog v3.39.0. The Family Kitchen opens to relatives who need only the
+recipe book: a **kitchen member** (`k1`, `k2` …) is an account inside the Kitchen service
+— no Linux user, no processes, no GutLog/RxGuard/FitLog, no health data anywhere — at
+`family.dr-manoj.in/kitchen/k1/`, installing as "Family Kitchen". Sign-in is the family
+rules exactly (PIN, lockout, IST log, Face ID, 12 months, sign-out-all), on a cookie
+scoped to their own path that satisfies nothing else. **Nobody approves recipes any
+more**: a capture is a draft for its sender until they tap Publish; a duplicate offers
+"Publish as <Name>'s version"; only the contributor edits or unpublishes; the owner can
+hide, never delete. Every card, list, search result and logged meal says **"Recipe by
+<Name>"**, with the date, the source site or the original photo, versions side by side,
+and raters' names; a "By person" view. Kitchen members may set plain food preferences
+(Vegetarian / Eggetarian / No onion-garlic / Jain) that only filter. New: `stamp_member.py
+--kitchen-only` (+ rename / reset-pin / disable), `readiness.py --slug k1`,
+`kitchen_members.py`, `kitchen_nutrition.py`, `test_family_d.py` (33 checks) with 17
+negative controls, a 300 px browser suite; `upgrade_all.sh` now backs up the Kitchen DB,
+restarts the Kitchen and checks its health route.
+
 ## 2026-09-25 (evening) — family sign-in says whose it is; a readiness check
 
 A PIN typed on the wrong member's page looked like a broken PIN: the owner entered

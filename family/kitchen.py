@@ -3,18 +3,21 @@
 """
 kitchen.py -- the Family Kitchen: one shared pool of recipes and ratings.
 
-FAMILY_EDITION_V1 (Phase C). Runs as its own Linux user (fam_kitchen) at
-https://family.dr-manoj.in/kitchen/, database /srv/family/kitchen/kitchen.db.
+FAMILY_EDITION_V1 (Phase C; kitchen members in 1.1.0). Runs as its own Linux
+user (fam_kitchen) at https://family.dr-manoj.in/kitchen/, database
+/srv/family/kitchen/kitchen.db.
 
 WHAT IS IN THE POOL, AND WHAT NEVER IS
   Recipes (name, group, servings, ingredients with amounts, method, source,
-  an attachment, who added it -- a display name), ratings 1-5, "made it",
-  "would make again", a short note. That is all. No condition, medicine,
-  lab, symptom, weight or anything else about a person has a column here, and
-  test_family_c.py fails if one ever appears (SCHEMA_FORBIDDEN).
-  Everything personal -- the adjusted card, the portion, the nutrition for
-  THIS person, the "modified" badges -- is worked out inside each person's
-  own GutLog from their own record. The shared recipe is never altered.
+  an attachment, who added it, a status), ratings 1-5, "made it", "would
+  make again", a short note; and kitchen members (a slug, a display name,
+  plain food preferences such as "no onion-garlic"). That is all. No
+  condition, medicine, lab, symptom, weight or anything else about a person
+  has a column here, and test_family_c.py / test_family_d.py fail if one
+  ever appears (SCHEMA_FORBIDDEN). Everything personal -- the adjusted card,
+  the portion, the nutrition for THIS person, the "modified" badges -- is
+  worked out inside each full member's own GutLog from their own record. The
+  shared recipe is never altered.
 
 WHO CAN CALL IT
   * each copy's GutLog, server to server, with that copy's API token
@@ -22,11 +25,24 @@ WHO CAN CALL IT
     acting, so a copy cannot rate or confirm as someone else;
   * the iPhone Share shortcut, with a CAPTURE token, at /capture/<slug>
     only: a capture token can add a draft for its own slug and do nothing
-    else -- not read, not confirm, not capture for anyone else.
-  Drafts are private to their slug until confirmed. Nothing in a draft
-  reaches the pool (and so nutrition, adjustments or RxGuard) until a person
-  confirms it; confirmation checks for a duplicate first.
+    else -- not read, not confirm, not capture for anyone else;
+  * a KITCHEN MEMBER (slug k1, k2 ...: an account inside this service, no
+    Linux user, no other database), through the pages under /<kslug>/
+    (kitchen_members.py) with the family PIN sign-in. A kitchen member's
+    session never satisfies the bearer routes above, and the bearer routes
+    never read a session.
 
+WHO OWNS A RECIPE
+  The person who published it (added_slug). Only they can edit or unpublish
+  it; everyone else can rate, mark made / again, and add a note. The owner
+  ('owner') can HIDE a recipe from the pool (never delete); a hidden or
+  unpublished recipe stays visible to its contributor, with a note. Every
+  capture lands as a draft for its sender and reaches the pool only when
+  that person publishes it, after a duplicate check ("publish as <Name>'s
+  version" keeps the two side by side, linked as versions).
+
+Names are resolved when read (tokens.json api names for GutLog copies,
+kmembers for kitchen members), so a rename shows everywhere at once.
 Python 3.9.
 """
 import hashlib
@@ -39,22 +55,40 @@ import sys
 import time
 import uuid
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 from flask import Flask, Response, abort, g, jsonify, request, send_from_directory
 
 MARKER = "FAMILY_EDITION_V1"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 KDIR = os.environ.get("KITCHEN_DIR", "/srv/family/kitchen")
 DB_PATH = os.path.join(KDIR, "kitchen.db")
 ATTACH = os.path.join(KDIR, "attach")
 TOKENS = os.environ.get("KITCHEN_TOKENS", os.path.join(KDIR, "tokens.json"))
 MAX_MB = 20
 ALLOWED = {".jpg", ".jpeg", ".png", ".pdf", ".heic", ".webp", ".txt"}
+IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp")
 GROUPS = ["Dal & curry", "Sabzi", "Rice & roti", "Breakfast", "Snack", "Sweet", "Drink", "Salad",
           "Egg, paneer & fish", "Other"]
+SLUG_RX = re.compile(r"^(m[0-9]{1,3}|k[0-9]{1,3}|owner)$")
+KSLUG_RX = re.compile(r"^k[0-9]{1,3}$")
+STATUSES = ("published", "unpublished", "hidden")
 # A pool column may never be named for health data. The schema test reads this.
 SCHEMA_FORBIDDEN = ("condition", "medicine", "medic", "drug", "dose", "lab", "symptom", "pain", "weight",
                     "bmi", "diagnos", "allerg", "bp", "sugar", "hba1c", "sodium", "health", "patient")
+# Food preferences (kitchen members): plain words about food, filter only.
+PREFS = (("veg", "Vegetarian"), ("egg", "Eggetarian"), ("noonion", "No onion-garlic"), ("jain", "Jain"))
+PREF_WORDS = {
+    "nonveg": ("chicken", "mutton", "lamb", "goat", "fish", "prawn", "prawns", "shrimp", "crab", "meat",
+               "beef", "pork", "keema", "murgh", "machli", "gosht"),
+    "egg": ("egg", "eggs", "anda", "omelette", "omelet"),
+    "onion": ("onion", "onions", "garlic", "pyaz", "lehsun", "lasun", "lahsun", "spring onion", "shallot"),
+    "root": ("potato", "potatoes", "aloo", "carrot", "carrots", "gajar", "radish", "mooli", "beetroot",
+             "beet", "ginger", "adrak", "turnip", "shalgam", "sweet potato", "shakarkandi", "yam", "arbi",
+             "colocasia", "mushroom", "mushrooms"),
+}
+PREF_EXCLUDES = {"veg": ("nonveg", "egg"), "egg": ("nonveg",), "noonion": ("onion",),
+                 "jain": ("nonveg", "egg", "onion", "root")}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS recipes (
@@ -72,7 +106,13 @@ CREATE TABLE IF NOT EXISTS drafts (
   extracted TEXT DEFAULT '', flags TEXT DEFAULT '[]', note TEXT DEFAULT '', tries INTEGER DEFAULT 0,
   created TEXT, updated TEXT, recipe_id INTEGER);
 CREATE INDEX IF NOT EXISTS ix_drafts_who ON drafts(who, status);
+CREATE TABLE IF NOT EXISTS kmembers (
+  slug TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER DEFAULT 1, created TEXT,
+  last_seen TEXT DEFAULT '', food_prefs TEXT DEFAULT '');
 """
+# Columns added after 1.0.0 -- guarded ALTERs, run on any connection (migrate()).
+ADDED_COLUMNS = (("recipes", "status", "TEXT DEFAULT 'published'"),
+                 ("recipes", "hidden_note", "TEXT DEFAULT ''"))
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_MB * 1024 * 1024
@@ -82,11 +122,22 @@ def now_s():
     return datetime.now().isoformat(timespec="seconds")
 
 
+def migrate(con):
+    """The schema, and the columns 1.1.0 added to a 1.0.0 database. Safe to
+    run every time; the stamp tool runs it on its own connection too."""
+    con.executescript(SCHEMA)
+    for table, col, decl in ADDED_COLUMNS:
+        have = [r[1] for r in con.execute('PRAGMA table_info("%s")' % table).fetchall()]
+        if col not in have:
+            con.execute('ALTER TABLE "%s" ADD COLUMN %s %s' % (table, col, decl))
+    con.commit()
+
+
 def db():
     if "db" not in g:
         g.db = sqlite3.connect(DB_PATH, timeout=10)
         g.db.row_factory = sqlite3.Row
-        g.db.executescript(SCHEMA)
+        migrate(g.db)
     return g.db
 
 
@@ -113,7 +164,8 @@ def _bearer():
 
 
 def api_who():
-    """(slug, display name) for a valid API token, else (None, None)."""
+    """(slug, display name) for a valid API token, else (None, None). Reads
+    the Authorization header and nothing else -- never a session."""
     got = _bearer()
     if len(got) < 32:
         return None, None
@@ -136,6 +188,32 @@ def capture_ok(slug):
     return len(got) >= 32 and isinstance(v, dict) and hmac.compare_digest(str(v.get("token", "")), got)
 
 
+# ------------------------------------------------------------------ people
+def people():
+    """slug -> display name, for everyone who can act here: GutLog copies
+    (tokens.json api names) and kitchen members (kmembers). Resolved when
+    read, so a rename shows on every card at once."""
+    out = {}
+    for s, v in (tokens().get("api") or {}).items():
+        if isinstance(v, dict):
+            out[s] = str(v.get("name") or s)
+    for r in db().execute("SELECT slug, name FROM kmembers").fetchall():
+        out[r["slug"]] = r["name"]
+    return out
+
+
+def name_of(slug, fallback="someone", names=None):
+    names = names if names is not None else people()
+    return names.get(slug) or fallback or slug
+
+
+def kmember(slug):
+    if not KSLUG_RX.match(slug or ""):
+        return None
+    r = db().execute("SELECT * FROM kmembers WHERE slug=?", (slug,)).fetchone()
+    return dict(r) if r else None
+
+
 # ------------------------------------------------------------------ helpers
 def norm_name(s):
     s = re.sub(r"[^a-z0-9 ]+", " ", (s or "").lower())
@@ -154,19 +232,23 @@ def ing_words(ings):
 def find_duplicate(name, ings, exclude=None):
     """A recipe already in the pool that this one repeats: the same name once
     punctuation and case are set aside, or 70% of the same ingredient words
-    with a name that shares a word. Returns {id, name, why} or None."""
+    with a name that shares a word. Returns {id, name, why, by} or None."""
     n = norm_name(name)
     w = ing_words(ings)
-    for r in db().execute("SELECT id, name, ingredients FROM recipes").fetchall():
+    names = people()
+    for r in db().execute("SELECT id, name, ingredients, added_slug, added_by FROM recipes "
+                          "WHERE status='published'").fetchall():
         if exclude and r["id"] == exclude:
             continue
+        by = name_of(r["added_slug"], r["added_by"], names)
         if norm_name(r["name"]) == n and n:
-            return {"id": r["id"], "name": r["name"], "why": "same name"}
+            return {"id": r["id"], "name": r["name"], "why": "same name", "by": by}
         other = ing_words(json.loads(r["ingredients"] or "[]"))
         if w and other:
             j = len(w & other) / float(len(w | other))
             if j >= 0.7 and set(n.split()) & set(norm_name(r["name"]).split()):
-                return {"id": r["id"], "name": r["name"], "why": "%d%% of the same ingredients" % int(j * 100)}
+                return {"id": r["id"], "name": r["name"], "why": "%d%% of the same ingredients" % int(j * 100),
+                        "by": by}
     return None
 
 
@@ -196,30 +278,151 @@ def clean_lines(v, n=40, width=400):
     return [str(x).strip()[:width] for x in (v or [])[:n] if str(x).strip()]
 
 
-def recipe_json(r, who=None, full=False):
+def _kw_any(text, words):
+    t = (text or "").lower()
+    return any(re.search(r"\b" + re.escape(w) + r"\b", t) for w in words)
+
+
+def food_flags(ings):
+    """Which plain food groups a recipe carries, from its ingredient names:
+    nonveg, egg, onion (onion or garlic), root. Words, nothing else."""
+    out = set()
+    items = [str(i.get("item") or "") for i in ings or [] if isinstance(i, dict)]
+    for k, words in PREF_WORDS.items():
+        if any(_kw_any(it, words) for it in items):
+            out.add(k)
+    return out
+
+
+def prefs_of(text):
+    return [p for p in (text or "").split(",") if p in dict(PREFS)]
+
+
+def fits_prefs(flags, prefs):
+    for p in prefs:
+        if flags & set(PREF_EXCLUDES.get(p, ())):
+            return False
+    return True
+
+
+def source_bits(source):
+    """('site name', url) for a web source, else ('', '')."""
+    s = (source or "").strip()
+    if not s.startswith(("http://", "https://")):
+        return "", ""
+    host = (urlparse(s).hostname or "").lower()
+    host = host[4:] if host.startswith("www.") else host
+    site = {"youtube.com": "YouTube", "youtu.be": "YouTube", "instagram.com": "Instagram",
+            "facebook.com": "Facebook"}.get(host, host)
+    return site, s
+
+
+def root_of(r):
+    return r["variant_of"] or r["id"]
+
+
+def versions_of(rid, names):
+    """Every published recipe that is a version of the same dish (the root and
+    its variants), oldest first: [{id, name, by, label}]."""
+    r = db().execute("SELECT id, variant_of FROM recipes WHERE id=?", (rid,)).fetchone()
+    if not r:
+        return []
+    root = root_of(r)
+    rows = db().execute("SELECT id, name, added_slug, added_by, variant_label FROM recipes "
+                        "WHERE (id=? OR variant_of=?) AND status='published' ORDER BY id", (root, root)).fetchall()
+    return [{"id": x["id"], "name": x["name"], "by": name_of(x["added_slug"], x["added_by"], names),
+             "label": x["variant_label"] or ""} for x in rows]
+
+
+def can_see(r, who):
+    return r["status"] == "published" or (who is not None and r["added_slug"] == who)
+
+
+def recipe_json(r, who=None, full=False, names=None):
+    names = names if names is not None else people()
     d = dict(r)
     for k in ("ingredients", "method", "notes"):
         d[k] = json.loads(d[k] or "[]")
+    d["added_by"] = name_of(d.get("added_slug"), d.get("added_by"), names)
+    d["added_date"] = (d.get("added_at") or "")[:10]
+    d["source_site"], d["source_url"] = source_bits(d.get("source"))
+    d["has_photo"] = bool(d.get("attach")) and str(d["attach"]).lower().endswith(IMAGE_EXT)
+    d["mine"] = None
+    d["own"] = who is not None and d.get("added_slug") == who
+    d["food_flags"] = sorted(food_flags(d["ingredients"]))
     rt = db().execute("SELECT COUNT(stars) AS n, AVG(stars) AS avg, SUM(made) AS made, SUM(again) AS again "
                       "FROM ratings WHERE recipe_id=?", (r["id"],)).fetchone()
     d["rating"] = {"n": rt["n"] or 0, "avg": round(rt["avg"], 1) if rt["avg"] else None,
                    "made": rt["made"] or 0, "again": rt["again"] or 0}
     d["new"] = (d.get("added_at") or "") >= (datetime.now() - timedelta(days=7)).isoformat()
+    vs = versions_of(r["id"], names)
+    d["versions"] = vs if len(vs) > 1 else []
     if who:
         mine = db().execute("SELECT stars, made, again, note FROM ratings WHERE recipe_id=? AND who=?",
                             (r["id"], who)).fetchone()
         d["mine"] = dict(mine) if mine else None
     if full:
-        names = dict((s, (v or {}).get("name", s)) for s, v in (tokens().get("api") or {}).items())
-        d["ratings"] = [dict(x, who=names.get(x["who"], "someone")) for x in db().execute(
+        d["ratings"] = [dict(x, who=name_of(x["who"], "someone", names)) for x in db().execute(
             "SELECT who, stars, made, again, note, at FROM ratings WHERE recipe_id=? ORDER BY at DESC",
             (r["id"],)).fetchall()]
-        d["variants"] = [dict(x) for x in db().execute(
-            "SELECT id, name, variant_label FROM recipes WHERE variant_of=? ORDER BY id", (r["id"],)).fetchall()]
+        d["variants"] = [dict(x, by=name_of(x["added_slug"], x["added_by"], names)) for x in db().execute(
+            "SELECT id, name, variant_label, added_slug, added_by FROM recipes WHERE variant_of=? "
+            "AND status='published' ORDER BY id", (r["id"],)).fetchall()]
+        d["can_hide"] = who == "owner"
     else:
         d.pop("method", None)
         d.pop("notes", None)
     return d
+
+
+def list_recipes(who, args, prefs=()):
+    """The pool as one person sees it. q / grp / sort / by, as before; plus
+    'show=hidden' (owner only) and the person's food preferences."""
+    q = norm_name(args.get("q"))
+    grp = args.get("grp") or ""
+    sort = args.get("sort") or "az"
+    by = args.get("by") or ""
+    show_hidden = args.get("show") == "hidden" and who == "owner"
+    names = people()
+    rows = db().execute("SELECT * FROM recipes ORDER BY name").fetchall()
+    out = []
+    for r in rows:
+        if r["status"] != "published":
+            # a contributor sees their own unpublished / hidden cards under their name
+            if not ((by == who and r["added_slug"] == who) or (show_hidden and r["status"] == "hidden")):
+                continue
+        elif show_hidden:
+            continue
+        if grp and r["grp"] != grp:
+            continue
+        if by and r["added_slug"] != by:
+            continue
+        ings = json.loads(r["ingredients"] or "[]")
+        if q and q not in norm_name(r["name"]) and not any(q in norm_name(i.get("item")) for i in ings):
+            continue
+        if prefs and not fits_prefs(food_flags(ings), prefs):
+            continue
+        out.append(recipe_json(r, who, names=names))
+    if sort == "top":
+        out = [x for x in out if x["rating"]["n"]]
+        out.sort(key=lambda x: (-(x["rating"]["avg"] or 0), -x["rating"]["n"], x["name"]))
+    elif sort == "new":
+        out = [x for x in out if x["new"]]
+        out.sort(key=lambda x: x.get("added_at") or "", reverse=True)
+    elif sort == "fav":
+        out = [x for x in out if x["rating"]["again"] >= 2 or (x["rating"]["made"] >= 2 and (x["rating"]["avg"] or 0) >= 4)]
+        out.sort(key=lambda x: (-x["rating"]["again"], -x["rating"]["made"], x["name"]))
+    return out
+
+
+def people_list():
+    """Everyone with a published recipe, most recipes first: [{slug, name, n}]."""
+    names = people()
+    counts = dict((r["added_slug"], r["n"]) for r in db().execute(
+        "SELECT added_slug, COUNT(*) AS n FROM recipes WHERE status='published' GROUP BY added_slug").fetchall())
+    out = [{"slug": s, "name": name_of(s, "someone", names), "n": n} for s, n in counts.items() if s]
+    out.sort(key=lambda x: (-x["n"], x["name"]))
+    return out
 
 
 # ------------------------------------------------------------------ routes
@@ -234,28 +437,13 @@ def api_recipes():
     if request.method == "POST":
         d = request.get_json(silent=True) or {}
         return add_recipe(d, who, name, force=bool(d.get("force")))
-    q = norm_name(request.args.get("q"))
-    grp = request.args.get("grp") or ""
-    sort = request.args.get("sort") or "az"
-    rows = db().execute("SELECT * FROM recipes ORDER BY name").fetchall()
-    out = []
-    for r in rows:
-        if grp and r["grp"] != grp:
-            continue
-        if q and q not in norm_name(r["name"]) and not any(q in norm_name(i.get("item"))
-                                                           for i in json.loads(r["ingredients"] or "[]")):
-            continue
-        out.append(recipe_json(r, who))
-    if sort == "top":
-        out = [x for x in out if x["rating"]["n"]]
-        out.sort(key=lambda x: (-(x["rating"]["avg"] or 0), -x["rating"]["n"], x["name"]))
-    elif sort == "new":
-        out = [x for x in out if x["new"]]
-        out.sort(key=lambda x: x.get("added_at") or "", reverse=True)
-    elif sort == "fav":
-        out = [x for x in out if x["rating"]["again"] >= 2 or (x["rating"]["made"] >= 2 and (x["rating"]["avg"] or 0) >= 4)]
-        out.sort(key=lambda x: (-x["rating"]["again"], -x["rating"]["made"], x["name"]))
-    return jsonify(ok=True, recipes=out, groups=GROUPS)
+    return jsonify(ok=True, recipes=list_recipes(who, request.args), groups=GROUPS, can_hide=who == "owner")
+
+
+@app.route("/api/people")
+def api_people():
+    need_api()
+    return jsonify(ok=True, people=people_list())
 
 
 def add_recipe(d, who, name, force=False, draft_id=None):
@@ -274,17 +462,24 @@ def add_recipe(d, who, name, force=False, draft_id=None):
         serv = 2.0
     slug = re.sub(r"[^a-z0-9]+", "-", nm.lower()).strip("-")[:60] + "-" + uuid.uuid4().hex[:6]
     variant_of = d.get("variant_of")
+    label = str(d.get("variant_label") or "")[:40]
     try:
         variant_of = int(variant_of) if variant_of not in (None, "") else None
     except (TypeError, ValueError):
         variant_of = None
+    if variant_of is None and dup and force and d.get("as_version"):
+        # "Publish as <Name>'s version": kept beside the one it repeats.
+        variant_of, label = dup["id"], label or "version"
+    if variant_of is not None:
+        base = db().execute("SELECT id, variant_of FROM recipes WHERE id=?", (variant_of,)).fetchone()
+        variant_of = root_of(base) if base else None
     db().execute("INSERT INTO recipes(slug, name, grp, servings, serving_text, ingredients, method, notes, "
-                 "source, attach, added_by, added_slug, added_at, updated, variant_of, variant_label) "
-                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                 "source, attach, added_by, added_slug, added_at, updated, variant_of, variant_label, status) "
+                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'published')",
                  (slug, nm, grp, serv, str(d.get("serving_text") or "")[:80], json.dumps(ings),
                   json.dumps(method), json.dumps(clean_lines(d.get("notes"), 20)),
                   str(d.get("source") or "")[:200], str(d.get("attach") or "")[:80], name, who,
-                  now_s(), now_s(), variant_of, str(d.get("variant_label") or "")[:40]))
+                  now_s(), now_s(), variant_of, label))
     rid = db().execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
     if draft_id:
         db().execute("UPDATE drafts SET status='confirmed', recipe_id=?, updated=? WHERE id=?",
@@ -293,21 +488,74 @@ def add_recipe(d, who, name, force=False, draft_id=None):
     return jsonify(ok=True, id=rid, duplicate=dup)
 
 
-@app.route("/api/recipes/<int:rid>")
-def api_recipe(rid):
-    who, _n = need_api()
+def _recipe_or_404(rid, who):
+    r = db().execute("SELECT * FROM recipes WHERE id=?", (rid,)).fetchone()
+    if not r or not can_see(r, who):
+        abort(Response('{"ok": false, "err": "Not found."}', status=404, mimetype="application/json"))
+    return r
+
+
+def _own_recipe(rid, who):
+    """The contributor's own recipe, or 403: nobody else edits or unpublishes it."""
+    r = db().execute("SELECT * FROM recipes WHERE id=?", (rid,)).fetchone()
+    if not r:
+        abort(Response('{"ok": false, "err": "Not found."}', status=404, mimetype="application/json"))
+    if r["added_slug"] != who:
+        abort(Response('{"ok": false, "err": "Only the person who added a recipe can change it."}',
+                       status=403, mimetype="application/json"))
+    return r
+
+
+def edit_recipe(rid, who, d):
+    r = _own_recipe(rid, who)
+    nm = str(d.get("name") or r["name"]).strip()[:120]
+    ings = clean_ings(d["ingredients"]) if "ingredients" in d else json.loads(r["ingredients"] or "[]")
+    method = clean_lines(d["method"]) if "method" in d else json.loads(r["method"] or "[]")
+    if not nm or not ings or not method:
+        return jsonify(ok=False, err="A recipe needs a name, its ingredients and its method."), 400
+    grp = d.get("grp") if d.get("grp") in GROUPS else r["grp"]
+    try:
+        serv = max(1.0, min(40.0, float(d.get("servings") or r["servings"] or 2)))
+    except (TypeError, ValueError):
+        serv = r["servings"] or 2.0
+    notes = clean_lines(d["notes"], 20) if "notes" in d else json.loads(r["notes"] or "[]")
+    db().execute("UPDATE recipes SET name=?, grp=?, servings=?, serving_text=?, ingredients=?, method=?, "
+                 "notes=?, updated=? WHERE id=?",
+                 (nm, grp, serv, str(d.get("serving_text", r["serving_text"]) or "")[:80], json.dumps(ings),
+                  json.dumps(method), json.dumps(notes), now_s(), rid))
+    db().commit()
+    return jsonify(ok=True, id=rid)
+
+
+def set_published(rid, who, publish):
+    r = _own_recipe(rid, who)
+    if r["status"] == "hidden":
+        return jsonify(ok=False, err="This recipe was hidden by the owner; ask them to show it again."), 400
+    db().execute("UPDATE recipes SET status=?, updated=? WHERE id=?",
+                 ("published" if publish else "unpublished", now_s(), rid))
+    db().commit()
+    return jsonify(ok=True, status="published" if publish else "unpublished")
+
+
+def set_hidden(rid, who, hide, note):
+    """The owner's safety valve: hide from the pool, never delete. Nobody else."""
+    if who != "owner":
+        return jsonify(ok=False, err="Only the owner can hide a recipe."), 403
     r = db().execute("SELECT * FROM recipes WHERE id=?", (rid,)).fetchone()
     if not r:
         return jsonify(ok=False, err="Not found."), 404
-    return jsonify(ok=True, recipe=recipe_json(r, who, full=True))
+    if hide:
+        db().execute("UPDATE recipes SET status='hidden', hidden_note=?, updated=? WHERE id=?",
+                     (str(note or "")[:200], now_s(), rid))
+    else:
+        db().execute("UPDATE recipes SET status='published', hidden_note='', updated=? WHERE id=?", (now_s(), rid))
+    db().commit()
+    return jsonify(ok=True, status="hidden" if hide else "published")
 
 
-@app.route("/api/recipes/<int:rid>/rate", methods=["POST"])
-def api_rate(rid):
-    who, _n = need_api()
-    if not db().execute("SELECT 1 FROM recipes WHERE id=?", (rid,)).fetchone():
+def rate_recipe(rid, who, d):
+    if not db().execute("SELECT 1 FROM recipes WHERE id=? AND status='published'", (rid,)).fetchone():
         return jsonify(ok=False, err="Not found."), 404
-    d = request.get_json(silent=True) or {}
     cur = db().execute("SELECT stars, made, again, note FROM ratings WHERE recipe_id=? AND who=?",
                        (rid, who)).fetchone()
     stars = d.get("stars", cur["stars"] if cur else None)
@@ -326,6 +574,54 @@ def api_rate(rid):
                  (rid, who, stars, made, again, note, now_s()))
     db().commit()
     return jsonify(ok=True)
+
+
+@app.route("/api/recipes/<int:rid>")
+def api_recipe(rid):
+    who, _n = need_api()
+    r = _recipe_or_404(rid, who)
+    return jsonify(ok=True, recipe=recipe_json(r, who, full=True))
+
+
+@app.route("/api/recipes/<int:rid>/rate", methods=["POST"])
+def api_rate(rid):
+    who, _n = need_api()
+    return rate_recipe(rid, who, request.get_json(silent=True) or {})
+
+
+@app.route("/api/recipes/<int:rid>/edit", methods=["POST"])
+def api_edit(rid):
+    who, _n = need_api()
+    return edit_recipe(rid, who, request.get_json(silent=True) or {})
+
+
+@app.route("/api/recipes/<int:rid>/unpublish", methods=["POST"])
+def api_unpublish(rid):
+    who, _n = need_api()
+    d = request.get_json(silent=True) or {}
+    return set_published(rid, who, bool(d.get("publish")))
+
+
+@app.route("/api/recipes/<int:rid>/hide", methods=["POST"])
+def api_hide(rid):
+    who, _n = need_api()
+    d = request.get_json(silent=True) or {}
+    return set_hidden(rid, who, d.get("hide", True), d.get("note"))
+
+
+@app.route("/api/members")
+def api_members():
+    """Kitchen members for the owner's Family page: name, last visit, recipes
+    added. The owner's token only; nothing else about them exists here."""
+    who, _n = need_api()
+    if who != "owner":
+        return jsonify(ok=False, err="owner only"), 403
+    counts = dict((r["added_slug"], r["n"]) for r in db().execute(
+        "SELECT added_slug, COUNT(*) AS n FROM recipes WHERE status='published' GROUP BY added_slug").fetchall())
+    out = [{"slug": r["slug"], "name": r["name"], "enabled": bool(r["enabled"]), "created": r["created"],
+            "last_seen": r["last_seen"] or "", "recipes": counts.get(r["slug"], 0)}
+           for r in db().execute("SELECT * FROM kmembers ORDER BY slug").fetchall()]
+    return jsonify(ok=True, members=out)
 
 
 # ------------------------------------------------------------------ drafts
@@ -351,24 +647,34 @@ def new_draft(who, text="", url="", attach="", kind=None):
 URL_RX = re.compile(r"https?://\S+")
 
 
-@app.route("/capture/<slug>", methods=["POST"])
-def capture(slug):
-    """The Share shortcut. Text, a link, a photo or a PDF -- lands as a draft."""
-    if not re.match(r"^(m[0-9]{1,3}|owner)$", slug) or not capture_ok(slug):
-        return jsonify(ok=False, err="unauthorised"), 401
+def capture_files(who, files, text):
+    """Files from a Share or an upload, each a draft; shared text arrives as
+    a .txt file too -- read it, never file it. (ids, text, error)."""
     ids = []
-    text = (request.form.get("text") or "").strip()
-    for f in request.files.getlist("file")[:10]:
+    for f in files[:10]:
         if f and f.filename:
             if os.path.splitext(f.filename)[1].lower() == ".txt" or (f.mimetype or "").startswith("text/"):
-                # Shared text arrives as a .txt file too; read it, never file it.
                 if not text:
                     text = f.read(200000).decode("utf-8", "replace").strip()
                 continue
             stored, err = _save_upload(f)
             if not stored:
-                return jsonify(ok=False, err=err), 400
-            ids.append(new_draft(slug, attach=stored))
+                return ids, text, err
+            ids.append(new_draft(who, attach=stored))
+    return ids, text, ""
+
+
+@app.route("/capture/<slug>", methods=["POST"])
+def capture(slug):
+    """The Share shortcut. Text, a link, a photo or a PDF -- lands as a draft."""
+    if not SLUG_RX.match(slug) or not capture_ok(slug):
+        return jsonify(ok=False, err="unauthorised"), 401
+    if KSLUG_RX.match(slug) and not (kmember(slug) or {}).get("enabled"):
+        return jsonify(ok=False, err="unauthorised"), 401
+    text = (request.form.get("text") or "").strip()
+    ids, text, err = capture_files(slug, request.files.getlist("file"), text)
+    if err:
+        return jsonify(ok=False, err=err), 400
     if not text and request.is_json:
         text = str((request.get_json(silent=True) or {}).get("text") or "").strip()
     if not text and not ids and request.data and not request.form:
@@ -387,6 +693,19 @@ def capture(slug):
     return jsonify(ok=True, drafts=ids, message="Saved to your Recipe Inbox.")
 
 
+def drafts_of(who):
+    rows = db().execute("SELECT id, kind, url, attach, status, note, created, updated, extracted, flags "
+                        "FROM drafts WHERE who=? AND status NOT IN ('confirmed','discarded') "
+                        "ORDER BY id DESC", (who,)).fetchall()
+    out = []
+    for r in rows:
+        x = dict(r)
+        x["extracted"] = json.loads(x["extracted"] or "null")
+        x["flags"] = json.loads(x["flags"] or "[]")
+        out.append(x)
+    return out
+
+
 @app.route("/api/drafts", methods=["GET", "POST"])
 def api_drafts():
     who, _n = need_api()
@@ -397,16 +716,7 @@ def api_drafts():
         if not text and not url:
             return jsonify(ok=False, err="Paste a recipe or a link."), 400
         return jsonify(ok=True, id=new_draft(who, text=text, url=url))
-    rows = db().execute("SELECT id, kind, url, attach, status, note, created, updated, extracted, flags "
-                        "FROM drafts WHERE who=? AND status NOT IN ('confirmed','discarded') "
-                        "ORDER BY id DESC", (who,)).fetchall()
-    out = []
-    for r in rows:
-        x = dict(r)
-        x["extracted"] = json.loads(x["extracted"] or "null")
-        x["flags"] = json.loads(x["flags"] or "[]")
-        out.append(x)
-    return jsonify(ok=True, drafts=out)
+    return jsonify(ok=True, drafts=drafts_of(who))
 
 
 def _own_draft(did, who):
@@ -416,15 +726,19 @@ def _own_draft(did, who):
     return r
 
 
-@app.route("/api/drafts/<int:did>")
-def api_draft(did):
-    who, _n = need_api()
+def draft_json(did, who):
     r = dict(_own_draft(did, who))
     r["extracted"] = json.loads(r["extracted"] or "null")
     r["flags"] = json.loads(r["flags"] or "[]")
     if r["extracted"]:
         r["duplicate"] = find_duplicate(r["extracted"].get("name"), r["extracted"].get("ingredients"))
-    return jsonify(ok=True, draft=r)
+    return r
+
+
+@app.route("/api/drafts/<int:did>")
+def api_draft(did):
+    who, _n = need_api()
+    return jsonify(ok=True, draft=draft_json(did, who))
 
 
 @app.route("/api/drafts/<int:did>/attach")
@@ -438,34 +752,42 @@ def api_draft_attach(did):
 
 @app.route("/api/recipes/<int:rid>/attach")
 def api_recipe_attach(rid):
-    need_api()
-    r = db().execute("SELECT attach FROM recipes WHERE id=?", (rid,)).fetchone()
-    if not r or not r["attach"]:
+    who, _n = need_api()
+    r = _recipe_or_404(rid, who)
+    if not r["attach"]:
         abort(404)
     return send_from_directory(ATTACH, r["attach"])
 
 
-@app.route("/api/drafts/<int:did>/confirm", methods=["POST"])
-def api_draft_confirm(did):
+def publish_draft(did, who, name, d):
     """A person has read the draft and says this is the recipe. Only now does
     it enter the pool -- after a duplicate check, which 'force' overrides."""
-    who, name = need_api()
     r = _own_draft(did, who)
     if r["status"] in ("confirmed", "discarded"):
         return jsonify(ok=False, err="Already %s." % r["status"]), 400
-    d = request.get_json(silent=True) or {}
+    d = dict(d or {})
     d.setdefault("source", r["url"] or ("shared %s" % r["kind"]))
     d.setdefault("attach", r["attach"])
     return add_recipe(d, who, name, force=bool(d.get("force")), draft_id=did)
 
 
-@app.route("/api/drafts/<int:did>/discard", methods=["POST"])
-def api_draft_discard(did):
-    who, _n = need_api()
+@app.route("/api/drafts/<int:did>/confirm", methods=["POST"])
+def api_draft_confirm(did):
+    who, name = need_api()
+    return publish_draft(did, who, name, request.get_json(silent=True) or {})
+
+
+def discard_draft(did, who):
     _own_draft(did, who)
     db().execute("UPDATE drafts SET status='discarded', updated=? WHERE id=?", (now_s(), did))
     db().commit()
     return jsonify(ok=True)
+
+
+@app.route("/api/drafts/<int:did>/discard", methods=["POST"])
+def api_draft_discard(did):
+    who, _n = need_api()
+    return discard_draft(did, who)
 
 
 @app.route("/help")
@@ -480,4 +802,6 @@ def help_page():
 
 def make_app():
     os.makedirs(ATTACH, exist_ok=True)
+    import kitchen_members
+    kitchen_members.install(app)
     return app

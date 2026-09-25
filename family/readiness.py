@@ -26,6 +26,12 @@ also refuses to try when the member is locked or one wrong PIN from a lock.
 The PIN is never printed. Everything the check writes is named
 "Readiness check <random>" and removed before it ends, whether a step passed
 or not. Exit 0 = READY, 1 = NOT READY, 2 = stopped before signing in.
+
+A KITCHEN MEMBER (--slug k1) is checked the same way, against the Kitchen:
+sign-in page ("<Name> — Family Kitchen", manifest named "Family Kitchen"),
+the file PIN verified offline, one sign-in, Face ID offered, the recipe
+book, a draft captured, published as "Recipe by <Name>", rated, the test
+recipe and its draft removed, sign out, and the pool's counts as before.
 Python 3.9.
 """
 import argparse
@@ -145,6 +151,161 @@ def member_in(b, pre):
     return code == 200 and isinstance(j, dict) and "access" in j and j.get("care") is None
 
 
+def kitchen_counts(db):
+    c = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
+    try:
+        return dict((t, c.execute("SELECT COUNT(*) FROM %s" % t).fetchone()[0])
+                    for t in ("recipes", "ratings", "drafts"))
+    finally:
+        c.close()
+
+
+def kitchen_readiness(a):
+    """A kitchen member: the Kitchen service only, through the real address."""
+    import time
+    kdir = os.path.join(a.srv, "kitchen")
+    kdb = os.path.join(kdir, "kitchen.db")
+    auth_db = os.path.join(kdir, "members", a.slug, "auth.db")
+    try:
+        c = sqlite3.connect("file:%s?mode=ro" % kdb, uri=True)
+        row = c.execute("SELECT name, enabled FROM kmembers WHERE slug=?", (a.slug,)).fetchone()
+        c.close()
+    except sqlite3.Error:
+        row = None
+    base = a.base
+    if not base:
+        try:
+            base = json.load(open(a.registry, encoding="utf-8")).get("base")
+        except (OSError, ValueError):
+            base = None
+    base = (base or "https://family.dr-manoj.in").rstrip("/")
+    host = urllib.parse.urlparse(base).hostname
+    pre = "/kitchen/" + a.slug
+    print("Readiness of kitchen member %s at %s%s/" % (a.slug, base, pre))
+    if not row or not os.path.exists(auth_db):
+        print("  No such kitchen member here (kmembers row or auth.db missing).")
+        return 2
+    name = row[0]
+    if not row[1]:
+        print("  This kitchen member is disabled.")
+        return 2
+    b = Browser(base)
+    # ---------------------------------------------------------------- 1
+    code, _, t, _ = b.req(pre + "/login")
+    tu = html.unescape(t)
+    step("sign-in page opens and names the member", code == 200 and ("%s — Family Kitchen" % name) in tu,
+         "HTTP %s" % code)
+    step("PIN field: numeric keypad, 6 digits, show/hide eye",
+         "inputmode='numeric'" in t and "maxlength='6'" in t and "id='eye'" in t)
+    mani = "%s%s/manifest.webmanifest" % (base, pre)
+    icon = "%s%s/icon-192.png" % (base, pre)
+    mc, _, _, mj = b.req(mani)
+    ic, _, _, _ = Browser(base).req(icon)
+    step("Add to Home Screen: manifest named Family Kitchen, with the Kitchen icon",
+         (pre + "/manifest.webmanifest") in t and (pre + "/icon-192.png") in t and mc == 200
+         and (mj or {}).get("name") == "Family Kitchen"
+         and (mj or {}).get("scope") == pre + "/" and ic == 200, "manifest %s (%s), icon %s"
+         % (mc, (mj or {}).get("name"), ic))
+    # ---------------------------------------------------------------- 2
+    pin = file_pin(a.pin_file, a.slug)
+    state = kv(auth_db)
+    locked = int(state.get("lock_until") or 0) > time.time()
+    fails = int(state.get("fails") or 0)
+    if locked or fails >= LOCK_AFTER - 1:
+        step("not locked, and more than one try left", False,
+             "locked" if locked else "%d wrong PINs already; one more would lock -- not trying" % fails)
+        return 2
+    try:
+        from werkzeug.security import check_password_hash
+        good = bool(pin) and check_password_hash(state.get("pin_hash") or "", pin)
+    except ImportError:
+        good = None
+    if not step("the PIN in %s verifies (checked offline, no attempt used)" % a.pin_file, good,
+                "no PIN line for %s" % a.slug if not pin else "stale PIN -- reset with stamp_member.py"):
+        return 2
+    before = kitchen_counts(kdb)
+    code, final, t, _ = b.req(pre + "/login", data={"pin": pin})
+    pin = None
+    mc_, _, _, me = b.req(pre + "/j/me")
+    if not step("one real sign-in with the PIN", code == 200 and mc_ == 200 and (me or {}).get("slug") == a.slug
+                and "/login" not in urllib.parse.urlparse(final).path, "HTTP %s at %s, me %s" % (code, final, mc_)):
+        print("NOT READY")
+        return 1
+    tag = "Readiness check " + secrets.token_hex(3)
+    rid = None
+    try:
+        # ------------------------------------------------------------ 3 Face ID
+        oc, _, ot, _ = b.req(pre + "/passkey/offer?next=%2F")
+        rc, _, _, rj = b.req(pre + "/passkey/register/begin", js={})
+        step("Face ID / Touch ID offered after sign-in, for %s" % host,
+             oc == 200 and "id='yes'" in ot and rc == 200 and (rj or {}).get("ok")
+             and (rj.get("rp") or {}).get("id") == host, "offer %s, begin %s" % (oc, rc))
+        # ------------------------------------------------------------ 4 the book
+        hc, _, ht, _ = b.req(pre + "/")
+        lc, _, _, lj = b.req(pre + "/j/recipes")
+        pc, _, _, pj = b.req(pre + "/j/people")
+        step("the recipe book opens, lists the pool and its people",
+             hc == 200 and "Family Kitchen" in ht and lc == 200 and isinstance((lj or {}).get("recipes"), list)
+             and pc == 200 and isinstance((pj or {}).get("people"), list), "page %s, recipes %s, people %s"
+             % (hc, lc, pc))
+        step("the Share-shortcut key is issued (address and key on the Me tab)",
+             bool(((me or {}).get("capture") or {}).get("token")) and pre.split("/")[-1] in
+             (((me or {}).get("capture") or {}).get("url") or ""), "")
+        # ------------------------------------------------------------ 5 capture -> publish
+        dc, _, _, dj = b.req(pre + "/j/drafts", js={"text": tag + "\n1 cup rice\nCook it."})
+        did = (dj or {}).get("id")
+        gc_, _, _, gj = b.req(pre + "/j/drafts/%s" % did) if did else (0, "", "", None)
+        step("a draft captured and private (in the Inbox, not in the pool)",
+             dc == 200 and did and gc_ == 200 and (gj or {}).get("ok")
+             and kitchen_counts(kdb)["recipes"] == before["recipes"], "draft %s, open %s" % (dc, gc_))
+        pc_, _, _, pj_ = b.req(pre + "/j/drafts/%s/publish" % did,
+                               js={"name": tag, "grp": "Other", "servings": 1,
+                                   "ingredients": [{"item": "rice", "qty": 1, "unit": "cup"}],
+                                   "method": ["Cook it."]}) if did else (0, "", "", None)
+        rid = (pj_ or {}).get("id")
+        cc, _, _, cj = b.req(pre + "/j/recipe/%s" % rid) if rid else (0, "", "", None)
+        rec = (cj or {}).get("recipe") or {}
+        step("published by the member, credited 'Recipe by %s', with nutrition per serving" % name,
+             pc_ == 200 and rid and cc == 200 and rec.get("added_by") == name and rec.get("status") == "published"
+             and isinstance((cj or {}).get("nutrition"), dict), "publish %s, card %s, by %r" % (pc_, cc, rec.get("added_by")))
+        # ------------------------------------------------------------ 6 rate
+        rr, _, _, _ = b.req(pre + "/j/recipe/%s/rate" % rid, js={"stars": 5, "made": True}) if rid else (0, "", "", None)
+        _, _, _, cj2 = b.req(pre + "/j/recipe/%s" % rid) if rid else (0, "", "", None)
+        rs = ((cj2 or {}).get("recipe") or {}).get("ratings") or []
+        step("rated, and the rating shows the rater's name", rr == 200 and rs and rs[0].get("who") == name
+             and rs[0].get("stars") == 5, "rate %s, %s" % (rr, rs[:1]))
+        # ------------------------------------------------------------ 7 the member's own remove
+        uc, _, _, _ = b.req(pre + "/j/recipe/%s/unpublish" % rid, js={"publish": False}) if rid else (0, "", "", None)
+        _, _, _, lj2 = b.req(pre + "/j/recipes?q=" + urllib.parse.quote(tag))
+        step("the member can unpublish their own recipe (gone from the pool)",
+             uc == 200 and not [x for x in (lj2 or {}).get("recipes") or [] if x.get("id") == rid], "unpublish %s" % uc)
+    finally:
+        # ------------------------------------------------------------ cleanup (always)
+        con = sqlite3.connect(kdb, timeout=10)
+        try:
+            for (i,) in con.execute("SELECT id FROM recipes WHERE name=?", (tag,)).fetchall():
+                con.execute("DELETE FROM ratings WHERE recipe_id=?", (i,))
+                con.execute("DELETE FROM recipes WHERE id=?", (i,))
+            con.execute("DELETE FROM drafts WHERE text LIKE ?", (tag + "%",))
+            con.commit()
+        finally:
+            con.close()
+            keep_owner(kdb)
+    # ---------------------------------------------------------------- 8
+    lc, lf, _, _ = b.req(pre + "/signout", data={})
+    mc2, _, _, _ = b.req(pre + "/j/me")
+    step("sign out works (back at the sign-in page, and signed out)",
+         lc == 200 and urllib.parse.urlparse(lf).path == pre + "/login" and mc2 == 401,
+         "HTTP %s at %s, me %s" % (lc, lf, mc2))
+    # ---------------------------------------------------------------- 9
+    after = kitchen_counts(kdb)
+    step("nothing left behind (recipes, ratings, drafts as before)", after == before,
+         "before %s, after %s" % (before, after))
+    bad = [n for n, ok in RESULTS if not ok]
+    print("READY" if not bad else "NOT READY (%d failed)" % len(bad))
+    return 0 if not bad else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description="Is a member's copy ready to hand over?")
     ap.add_argument("--slug", required=True)
@@ -152,9 +313,12 @@ def main():
     ap.add_argument("--pin-file", default="/root/family/first-login.local.txt")
     ap.add_argument("--etc", default="/etc/family")
     ap.add_argument("--srv", default="/srv/family")
+    ap.add_argument("--registry", default="/root/family/members.local.json")
     a = ap.parse_args()
+    if re.match(r"^k[0-9]{1,3}$", a.slug):
+        return kitchen_readiness(a)
     if not re.match(r"^m[0-9]{1,3}$", a.slug):
-        print("--slug must look like m1.")
+        print("--slug must look like m1 (or k1 for a kitchen member).")
         return 2
     env = read_env(os.path.join(a.etc, a.slug + ".env"))
     name = env.get("FAMILY_NAME") or ""

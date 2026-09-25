@@ -11,7 +11,20 @@ FAMILY_EDITION_V1. Run as root on the server:
   python3 /root/family/stamp_member.py --slug m3 --rotate-care  (new caretaker key + status token)
   python3 /root/family/stamp_member.py --list
 
-A new member gets:
+  A KITCHEN MEMBER (recipes only -- no GutLog, RxGuard or FitLog, no health data):
+  python3 /root/family/stamp_member.py --kitchen-only --slug k1 --name "…" --password-file /root/family/first-login.local.txt
+  python3 /root/family/stamp_member.py --slug k1 --rename "…" | --reset-pin | --disable | --enable
+  python3 /root/family/stamp_member.py --kitchen-sync --owner-name "…"   (the name on the owner's cards)
+
+A kitchen member is an account inside the Kitchen service: a row in
+kitchen.db (slug, display name, enabled, plain food preferences), a PIN in
+/srv/family/kitchen/members/<slug>/auth.db (family_auth, the same rules as
+every family sign-in), and a capture-only token for the Share shortcut. No
+Linux user, no folder of their own, no registry entry, no routes: the
+/kitchen/ context already proxies /kitchen/k1/. --disable keeps their
+recipes. There is no delete.
+
+A new (full) member gets:
   * a Linux user fam_<slug> (no login shell, no home) and /srv/family/<slug>,
     mode 700, owned by that user -- the member's three processes run as it and
     cannot open /root, the owner's apps' folders, or another member's folder;
@@ -50,6 +63,7 @@ from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SLUG_RX = re.compile(r"^m([0-9]{1,3})$")
+KSLUG_RX = re.compile(r"^k[0-9]{1,3}$")
 WORDS = ("amber", "basil", "cedar", "delta", "ember", "fable", "grove", "harbor", "indigo",
          "juniper", "kestrel", "lotus", "maple", "nectar", "orchid", "pebble", "quartz",
          "river", "saffron", "tulip", "umber", "velvet", "willow", "yarrow", "zephyr",
@@ -150,29 +164,23 @@ def env_text(reg, m):
 KITCHEN_PORT = 8199
 
 
-def kitchen_register(P, slug, name, system, member_dir=None, files=None):
-    """Give one member (or 'owner') their Family Kitchen tokens: an API token
-    for their GutLog and a capture-only token for the Share shortcut. The
-    Kitchen's copy is tokens.json (fam_kitchen, 600); the member's copy sits
-    in their own folder. Nothing happens when the Kitchen is not installed."""
-    kdir = os.path.join(P.srv, "kitchen")
-    if not os.path.isdir(kdir):
-        return False
-    tpath = os.path.join(kdir, "tokens.json")
+def kitchen_tokens_path(P):
+    return os.path.join(P.srv, "kitchen", "tokens.json")
+
+
+def load_kitchen_tokens(P):
     try:
-        with open(tpath, encoding="utf-8") as fh:
+        with open(kitchen_tokens_path(P), encoding="utf-8") as fh:
             t = json.load(fh)
     except (OSError, ValueError):
         t = {}
     t.setdefault("api", {})
     t.setdefault("capture", {})
-    if member_dir:
-        files = (os.path.join(member_dir, "kitchen.token"), os.path.join(member_dir, "kitchen.capture"))
-    if slug in t["api"] and (not files or os.path.exists(files[0])):
-        return True
-    api, cap = secrets.token_hex(32), secrets.token_hex(32)
-    t["api"][slug] = {"token": api, "name": name}
-    t["capture"][slug] = {"token": cap}
+    return t
+
+
+def save_kitchen_tokens(P, t, system):
+    tpath = kitchen_tokens_path(P)
     tmp = tpath + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -180,11 +188,196 @@ def kitchen_register(P, slug, name, system, member_dir=None, files=None):
     os.replace(tmp, tpath)
     if system:
         run(["chown", "fam_kitchen:fam_kitchen", tpath])
+
+
+def kitchen_register(P, slug, name, system, member_dir=None, files=None):
+    """Give one member (or 'owner') their Family Kitchen tokens: an API token
+    for their GutLog and a capture-only token for the Share shortcut. The
+    Kitchen's copy is tokens.json (fam_kitchen, 600); the member's copy sits
+    in their own folder. Nothing happens when the Kitchen is not installed.
+    An existing entry keeps its tokens; its display name is brought up to date."""
+    kdir = os.path.join(P.srv, "kitchen")
+    if not os.path.isdir(kdir):
+        return False
+    t = load_kitchen_tokens(P)
+    if member_dir:
+        files = (os.path.join(member_dir, "kitchen.token"), os.path.join(member_dir, "kitchen.capture"))
+    if slug in t["api"] and (not files or os.path.exists(files[0])):
+        if t["api"][slug].get("name") != name:
+            t["api"][slug]["name"] = name
+            save_kitchen_tokens(P, t, system)
+        return True
+    api, cap = secrets.token_hex(32), secrets.token_hex(32)
+    t["api"][slug] = {"token": api, "name": name}
+    t["capture"][slug] = {"token": cap}
+    save_kitchen_tokens(P, t, system)
     for p, v in zip(files or (), (api, cap)):
         write_secret(p, v, excl=False)
         if system and slug != "owner":
             run(["chown", "fam_%s:fam_%s" % (slug, slug), p])
     return True
+
+
+# ------------------------------------------------------------------ kitchen members
+def kitchen_modules(P):
+    """kitchen.py / kitchen_members.py from the code tree, pointed at THIS
+    root's Kitchen folder (they read KITCHEN_DIR at import)."""
+    os.environ["KITCHEN_DIR"] = os.path.join(P.srv, "kitchen")
+    fam = os.path.join(P.code, "family")
+    for d in (fam, HERE):
+        if d not in sys.path:
+            sys.path.insert(0, d)
+    import kitchen
+    import kitchen_members
+    return kitchen, kitchen_members
+
+
+def kitchen_con(P, K):
+    import sqlite3
+    con = sqlite3.connect(os.path.join(P.srv, "kitchen", "kitchen.db"), timeout=10)
+    con.row_factory = sqlite3.Row
+    K.migrate(con)
+    return con
+
+
+def kitchen_own(P, system):
+    """Everything under the Kitchen folder belongs to fam_kitchen -- including
+    what root just wrote (auth.db, -wal/-shm, tokens.json)."""
+    if system:
+        run(["chown", "-R", "fam_kitchen:fam_kitchen", os.path.join(P.srv, "kitchen")])
+
+
+def kitchen_members_list(P):
+    kdb = os.path.join(P.srv, "kitchen", "kitchen.db")
+    if not os.path.exists(kdb):
+        return []
+    import sqlite3
+    con = sqlite3.connect("file:%s?mode=ro" % kdb, uri=True)
+    try:
+        if not con.execute("SELECT 1 FROM sqlite_master WHERE name='kmembers'").fetchone():
+            return []
+        return [dict(zip(("slug", "name", "enabled", "created", "last_seen"), r)) for r in
+                con.execute("SELECT slug, name, enabled, created, last_seen FROM kmembers ORDER BY slug")]
+    finally:
+        con.close()
+
+
+def stamp_kitchen(P, a, system):
+    slug = a.slug
+    kdir = os.path.join(P.srv, "kitchen")
+    if not os.path.isdir(kdir):
+        print("REFUSED: the Family Kitchen is not installed here (%s). Nothing changed." % kdir)
+        return 2
+    name = (a.name or "").strip()
+    if not name or len(name) > 40 or "\n" in name:
+        print("REFUSED: --name is required (1-40 characters).")
+        return 2
+    K, KM = kitchen_modules(P)
+    con = kitchen_con(P, K)
+    try:
+        if con.execute("SELECT 1 FROM kmembers WHERE slug=?", (slug,)).fetchone():
+            print("REFUSED: %s is already a kitchen member. Nothing changed." % slug)
+            return 2
+        mdir = os.path.join(kdir, "members", slug)
+        if os.path.exists(mdir):
+            print("REFUSED: %s already exists on disk. Nothing changed." % mdir)
+            return 2
+        reg = load_registry(P)
+        if a.base_url:
+            reg["base"] = a.base_url.rstrip("/")
+            save_registry(P, reg)
+        print("stamping kitchen member %s (%s)" % (slug, name))
+        os.makedirs(os.path.join(kdir, "members"), exist_ok=True)
+        os.chmod(os.path.join(kdir, "members"), 0o700)
+        pin = new_pin()
+        au = KM.auth_for(slug)          # creates members/<slug>/auth.db, mode 700 folder
+        au.set_pin(pin)
+        au.log("tool", "server", "account created by the owner's server tool")
+        con.execute("INSERT INTO kmembers(slug, name, enabled, created, last_seen, food_prefs) "
+                    "VALUES(?,?,1,?,'','')", (slug, name, datetime.now().strftime("%Y-%m-%d %H:%M")))
+        con.commit()
+    finally:
+        con.close()
+    t = load_kitchen_tokens(P)
+    t["capture"][slug] = {"token": secrets.token_hex(32)}
+    save_kitchen_tokens(P, t, system)
+    kitchen_own(P, system)
+    print("  kitchen: account, PIN and Share-shortcut key issued (no Linux user, no other database)")
+    url = "%s/kitchen/%s/" % (reg["base"], slug)
+    print("")
+    print("  address : " + url)
+    if a.password_file:
+        write_pin_file(a.password_file, slug, name, url, pin)
+        print("  first-login PIN: written to %s (root only)" % a.password_file)
+    else:
+        print("  first-login PIN (shown once, written nowhere): " + pin)
+    return 0
+
+
+def kitchen_member_row(P, K, con, slug):
+    r = con.execute("SELECT * FROM kmembers WHERE slug=?", (slug,)).fetchone()
+    if not r:
+        print("No kitchen member %s." % slug)
+    return r
+
+
+def kitchen_set_enabled(P, slug, on, system):
+    K, _KM = kitchen_modules(P)
+    con = kitchen_con(P, K)
+    try:
+        if not kitchen_member_row(P, K, con, slug):
+            return 2
+        con.execute("UPDATE kmembers SET enabled=? WHERE slug=?", (1 if on else 0, slug))
+        con.commit()
+    finally:
+        con.close()
+    kitchen_own(P, system)
+    print("%s %s. Their recipes stay in the Kitchen." % (slug, "enabled" if on else "disabled (cannot sign in)"))
+    return 0
+
+
+def kitchen_rename(P, slug, name, system):
+    name = (name or "").strip()
+    if not name or len(name) > 40 or "\n" in name:
+        print("The name is not 1-40 characters.")
+        return 2
+    K, _KM = kitchen_modules(P)
+    con = kitchen_con(P, K)
+    try:
+        if not kitchen_member_row(P, K, con, slug):
+            return 2
+        con.execute("UPDATE kmembers SET name=? WHERE slug=?", (name, slug))
+        con.commit()
+    finally:
+        con.close()
+    kitchen_own(P, system)
+    print("%s renamed; every card they added now says so." % slug)
+    return 0
+
+
+def kitchen_reset_pin(P, slug, system, pin_file=None):
+    K, KM = kitchen_modules(P)
+    con = kitchen_con(P, K)
+    try:
+        r = kitchen_member_row(P, K, con, slug)
+        if not r:
+            return 2
+        name = r["name"]
+    finally:
+        con.close()
+    pin = new_pin()
+    au = KM.auth_for(slug)
+    au.set_pin(pin)
+    au.rotate_epoch()
+    au.log("tool", "server", "PIN reset by the owner's server tool; every device signed out")
+    kitchen_own(P, system)
+    reg = load_registry(P)
+    if pin_file:
+        write_pin_file(pin_file, slug, name, "%s/kitchen/%s/" % (reg["base"], slug), pin)
+        print("%s: new PIN written to %s (root only); every device signed out." % (slug, pin_file))
+    else:
+        print("%s: new PIN (shown once, written nowhere): %s" % (slug, pin))
+    return 0
 
 
 def vhost_block(reg, P=None):
@@ -451,6 +644,7 @@ def rename(P, slug, name, system):
     m["name"] = name
     save_registry(P, reg)
     write_secret(os.path.join(P.etc, slug + ".env"), env_text(reg, m).rstrip("\n"), excl=False)
+    kitchen_register(P, slug, name, system, member_dir=P.member(slug))   # the name on their cards
     if system and m.get("enabled", True):
         run(["systemctl", "restart"] + units(slug), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print("%s renamed." % slug)
@@ -518,6 +712,10 @@ def main():
                     help="rewrite every member's /etc/family env from the registry and restart them")
     ap.add_argument("--kitchen-sync", action="store_true",
                     help="issue Family Kitchen tokens to the owner and every member; rewrite routes")
+    ap.add_argument("--kitchen-only", action="store_true",
+                    help="stamp a recipes-only kitchen member (--slug k1 --name ...)")
+    ap.add_argument("--owner-name", default=None,
+                    help="with --kitchen-sync: the name shown on the owner's own recipe cards")
     ap.add_argument("--root", default="/")
     ap.add_argument("--code", default=None,
                     help="family code tree (default: the folder above this script's)")
@@ -550,7 +748,12 @@ def main():
         reg = load_registry(P)
         os.makedirs(P.kitchen_owner, exist_ok=True)
         os.chmod(P.kitchen_owner, 0o700)
-        kitchen_register(P, "owner", reg.get("caretaker") or "Owner", system,
+        if a.owner_name:
+            # The name on the owner's own cards ("Recipe by ..."): kept in the
+            # registry, resolved by the Kitchen when a card is read.
+            reg["owner_name"] = a.owner_name.strip()[:40]
+            save_registry(P, reg)
+        kitchen_register(P, "owner", reg.get("owner_name") or reg.get("caretaker") or "Owner", system,
                          files=(os.path.join(P.kitchen_owner, "owner.token"),
                                 os.path.join(P.kitchen_owner, "owner.capture")))
         for m in reg["members"]:
@@ -574,7 +777,24 @@ def main():
             print("%-5s %-8s %-8s %s %s" % (m["slug"], m["profile"],
                                             "on" if m.get("enabled", True) else "disabled",
                                             "/".join(str(m["ports"][x]) for x in APPS), m["name"]))
+        for k in kitchen_members_list(P):
+            print("%-5s %-8s %-8s %s %s" % (k["slug"], "kitchen", "on" if k["enabled"] else "disabled",
+                                            "last visit " + (k["last_seen"] or "never"), k["name"]))
         return 0
+    if a.kitchen_only or (a.slug and KSLUG_RX.match(a.slug)):
+        if not a.slug or not KSLUG_RX.match(a.slug):
+            print("--slug must look like k1, k2 ... for a kitchen member (a neutral slug, never a name).")
+            return 2
+        if a.disable or a.enable:
+            return kitchen_set_enabled(P, a.slug, a.enable, system)
+        if a.rename:
+            return kitchen_rename(P, a.slug, a.rename, system)
+        if a.reset_password or a.reset_pin:
+            return kitchen_reset_pin(P, a.slug, system, a.password_file)
+        if a.rotate_care:
+            print("A kitchen member has no caretaker access: nothing to rotate.")
+            return 2
+        return stamp_kitchen(P, a, system)
     if not a.slug or not SLUG_RX.match(a.slug):
         print("--slug must look like m1, m2 ... (a neutral slug, never a name).")
         return 2

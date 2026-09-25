@@ -296,7 +296,8 @@ class Rig(object):
             print(r.stdout.decode("utf-8", "replace"))
             raise SystemExit("kitchen-sync failed")
         self._spawn([sys.executable, "-B", os.path.join(self.code, "family", "_serve.py"), "entry_kitchen",
-                     str(self.kitchen_port)], dict(os.environ, KITCHEN_DIR=self.kitchen_dir), "kitchen")
+                     str(self.kitchen_port)], dict(os.environ, KITCHEN_DIR=self.kitchen_dir,
+                                                   KITCHEN_BASE=self.front_url, KITCHEN_INSECURE="1"), "kitchen")
         if not wait_port(self.kitchen_port, "/kitchen/healthz"):
             self.dump_logs()
             raise SystemExit("kitchen did not start")
@@ -418,6 +419,29 @@ class Rig(object):
     def kitchen_tokens(self):
         with open(os.path.join(self.kitchen_dir, "tokens.json"), encoding="utf-8") as fh:
             return json.load(fh)
+
+    def kitchen_db(self):
+        return os.path.join(self.kitchen_dir, "kitchen.db")
+
+    def stamp_kitchen(self, slug, name, extra=(), expect_ok=True):
+        """A kitchen member (k1 ...): an account inside the Kitchen only."""
+        cmd = [sys.executable, "-B", os.path.join(fam_src(), "stamp_member.py"), "--no-system",
+               "--root", self.root, "--code", self.code, "--base-url", self.front_url,
+               "--kitchen-only", "--slug", slug, "--name", name] + list(extra)
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out = r.stdout.decode("utf-8", "replace")
+        m = re.search(r"PIN \(shown once, written nowhere\): (\d{6})", out)
+        if m:
+            self.pw[slug] = m.group(1)
+        if expect_ok and r.returncode != 0:
+            print(out)
+            raise SystemExit("stamp %s failed" % slug)
+        return r.returncode, out
+
+    def kitchen_client(self, slug):
+        c = Client(self.front_url)
+        c.post("/kitchen/%s/login" % slug, {"pin": self.pw[slug]})
+        return c
 
     def secret(self, slug, name):
         with open(os.path.join(self.member_dir(slug), name)) as fh:

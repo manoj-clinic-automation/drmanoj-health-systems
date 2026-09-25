@@ -1,0 +1,213 @@
+{
+ "_": [
+  "Family Edition Phase D -- kitchen members, self-publishing, attribution. Every assertion is broken on purpose in a COPY of the folder that carries it (the Kitchen service, the family sign-in, GutLog). The five the brief names: draftinpool (a draft visible in the pool before its contributor publishes), anyedit (another member able to edit someone's recipe), noattrib + noattriblog (attribution missing from a card / a logged meal), kreach (a kitchen member reaching /m1/ and the health endpoints), healthcol (a health field in the Kitchen schema)."
+ ],
+ "suite": "test_family_d.py",
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3390_kitchenby.py",
+ "assertions": [
+  {
+   "name": "D03 a capture lands as a draft for its sender only; nothing is in the pool before they publish",
+   "control": "mutation",
+   "mutation": {
+    "id": "draftinpool",
+    "why": "a new draft is written into the pool at once, before anyone publishes it",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "                 \"VALUES(?,?,?,?,?,'new',?,?)\", (who, kind, text[:20000], url[:600], attach, now_s(), now_s()))\n    db().commit()\n",
+    "replace": "                 \"VALUES(?,?,?,?,?,'new',?,?)\", (who, kind, text[:20000], url[:600], attach, now_s(), now_s()))\n    db().execute(\"INSERT INTO recipes(slug, name, ingredients, method, added_slug, status) VALUES(?,?,?,?,?,'published')\", (uuid.uuid4().hex, (text.split(chr(10))[0] or 'shared')[:120], '[]', '[]', who))\n    db().commit()\n"
+   }
+  },
+  {
+   "name": "D05 only the contributor can edit their recipe",
+   "control": "mutation",
+   "mutation": {
+    "id": "anyedit",
+    "why": "anyone signed in can edit or unpublish anyone's recipe",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if r[\"added_slug\"] != who:\n        abort(Response('{\"ok\": false, \"err\": \"Only the person who added a recipe can change it.\"}',\n                       status=403, mimetype=\"application/json\"))\n",
+    "replace": "    if False:\n        abort(Response('{\"ok\": false, \"err\": \"Only the person who added a recipe can change it.\"}',\n                       status=403, mimetype=\"application/json\"))\n"
+   }
+  },
+  {
+   "name": "D03 Publish puts it in the pool at once, credited to the contributor on the list, the card and every view",
+   "control": "mutation",
+   "mutation": {
+    "id": "noattrib",
+    "why": "the card carries no name for who added it",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    d[\"added_by\"] = name_of(d.get(\"added_slug\"), d.get(\"added_by\"), names)\n",
+    "replace": "    d[\"added_by\"] = \"\"\n"
+   }
+  },
+  {
+   "name": "D03 a logged serving carries the attribution",
+   "control": "mutation",
+   "mutation": {
+    "id": "noattriblog",
+    "why": "the meal is logged under the dish name alone",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "    item = {\"n\": (\"Family Kitchen: \" + j[\"recipe\"][\"name\"] + \" \\u00b7 recipe by \"\n                  + (j[\"recipe\"].get(\"added_by\") or \"someone\"))[:120], \"q\": n,\n",
+    "replace": "    item = {\"n\": (\"Family Kitchen: \" + j[\"recipe\"][\"name\"])[:80], \"q\": n,\n"
+   }
+  },
+  {
+   "name": "D03 a logged serving carries the attribution",
+   "control": "version"
+  },
+  {
+   "name": "D06 a kitchen member's session reaches no /m1/ page, no health endpoint",
+   "control": "mutation",
+   "mutation": {
+    "id": "kreach",
+    "why": "a member app treats any request that carries a cookie as signed in",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if session.get(\"care\"):\n            return None\n        if signed_in(session) and session.get(\"fam_ep\") != auth.epoch():\n            session.clear()\n        return None\n",
+    "replace": "        if session.get(\"care\"):\n            return None\n        if request.cookies and not signed_in(session):\n            start(\"cookie\")\n        return None\n"
+   }
+  },
+  {
+   "name": "D06 a kitchen member's session reaches no /m1/ page, no health endpoint, not the owner's app, not the bearer API",
+   "control": "mutation",
+   "mutation": {
+    "id": "kapi",
+    "why": "the bearer API accepts a kitchen member's session as if it were a token",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    got = _bearer()\n    if len(got) < 32:\n        return None, None\n    for slug, v in (tokens().get(\"api\") or {}).items():",
+    "replace": "    from flask import session as _s\n    if _s.get(\"kslug\"):\n        return _s[\"kslug\"], _s[\"kslug\"]\n    got = _bearer()\n    if len(got) < 32:\n        return None, None\n    for slug, v in (tokens().get(\"api\") or {}).items():"
+   }
+  },
+  {
+   "name": "D07 the Kitchen holds no health field",
+   "control": "mutation",
+   "mutation": {
+    "id": "healthcol",
+    "why": "kitchen members gain a conditions column",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "  last_seen TEXT DEFAULT '', food_prefs TEXT DEFAULT '');",
+    "replace": "  last_seen TEXT DEFAULT '', food_prefs TEXT DEFAULT '', conditions TEXT DEFAULT '');"
+   }
+  },
+  {
+   "name": "D07 the Kitchen holds no health field",
+   "control": "mutation",
+   "mutation": {
+    "id": "healthcolauth",
+    "why": "a member's auth.db gains a medicines table",
+    "module": "family_auth.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            \"CREATE TABLE IF NOT EXISTS auth_challenge (c TEXT PRIMARY KEY, kind TEXT, exp INTEGER);\")",
+    "replace": "            \"CREATE TABLE IF NOT EXISTS auth_challenge (c TEXT PRIMARY KEY, kind TEXT, exp INTEGER);\"\n            \"CREATE TABLE IF NOT EXISTS medicines (id INTEGER PRIMARY KEY, name TEXT);\")"
+   }
+  },
+  {
+   "name": "D07 food preferences only filter, and show the matching version",
+   "control": "mutation",
+   "mutation": {
+    "id": "nopref",
+    "why": "a preference is saved but never applied",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if prefs and not fits_prefs(food_flags(ings), prefs):\n            continue\n",
+    "replace": "        if False:\n            continue\n"
+   }
+  },
+  {
+   "name": "D05 only the owner can hide (never delete)",
+   "control": "mutation",
+   "mutation": {
+    "id": "anyhide",
+    "why": "any GutLog copy can hide a recipe",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if who != \"owner\":\n        return jsonify(ok=False, err=\"Only the owner can hide a recipe.\"), 403\n",
+    "replace": "    if False:\n        return jsonify(ok=False, err=\"Only the owner can hide a recipe.\"), 403\n"
+   }
+  },
+  {
+   "name": "D04 a duplicate is caught before publishing, naming whose it is",
+   "control": "mutation",
+   "mutation": {
+    "id": "noversion",
+    "why": "'publish as my version' publishes a copy with no link to the original",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if variant_of is None and dup and force and d.get(\"as_version\"):\n",
+    "replace": "    if False:\n"
+   }
+  },
+  {
+   "name": "D02 five wrong PINs pause sign-in",
+   "control": "mutation",
+   "mutation": {
+    "id": "nolock",
+    "why": "the kitchen sign-in never pauses",
+    "module": "kitchen_members.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if res == \"locked\":\n        return login_page(A.paused_text(info, caretaker_text()))\n    if res != \"ok\":\n        return login_page(A.wrong_text(info))\n    start()\n    return redirect(here(\"/passkey/offer?next=%2F\"))",
+    "replace": "    if res == \"locked\":\n        res = \"ok\"\n    if res != \"ok\":\n        return login_page(A.wrong_text(info))\n    start()\n    return redirect(here(\"/passkey/offer?next=%2F\"))"
+   }
+  },
+  {
+   "name": "D11 --disable stops sign-in, capture and the live session",
+   "control": "mutation",
+   "mutation": {
+    "id": "disabledin",
+    "why": "a disabled kitchen member's session keeps working",
+    "module": "kitchen_members.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        g.kin = bool(g.km.get(\"enabled\")) and session.get(\"kslug\") == g.kslug \\\n",
+    "replace": "        g.kin = session.get(\"kslug\") == g.kslug \\\n"
+   }
+  },
+  {
+   "name": "D09 the owner's Family page lists kitchen members",
+   "control": "version"
+  },
+  {
+   "name": "D08 nutrition per serving for a kitchen member equals a full member's unadjusted card",
+   "control": "mutation",
+   "mutation": {
+    "id": "kcup",
+    "why": "the Kitchen's own sum takes a cup as 200 ml",
+    "module": "kitchen_nutrition.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        return q * m[\"volume_ml\"][unit] * dens, \"%s at %s g/ml\" % (unit, dens)\n",
+    "replace": "        return q * (200.0 if unit == \"cup\" else m[\"volume_ml\"][unit]) * dens, \"%s at %s g/ml\" % (unit, dens)\n"
+   }
+  },
+  {
+   "name": "D10 readiness.py checks a kitchen member end to end",
+   "control": "mutation",
+   "mutation": {
+    "id": "readinessleft",
+    "why": "the readiness check leaves its test recipe behind",
+    "module": "readiness.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            for (i,) in con.execute(\"SELECT id FROM recipes WHERE name=?\", (tag,)).fetchall():\n",
+    "replace": "            for (i,) in []:\n"
+   }
+  }
+ ]
+}

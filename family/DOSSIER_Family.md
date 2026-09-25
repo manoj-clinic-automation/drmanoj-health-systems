@@ -12,10 +12,11 @@ not in code, fixtures, docs or commit messages. Tests use "Member A", "Medicine 
 |---|---|
 | Host | `https://family.dr-manoj.in` (CyberPanel website; SSL issued automatically by `ssl_when_ready.sh` once the DNS record exists) |
 | Member *n* | `/m<n>/` GutLog · `/m<n>/rx/` RxGuard · `/m<n>/fit/` FitLog — ports `8200+10n+{1,2,3}` on loopback |
-| Family Kitchen | `/kitchen/` — port 8199; Share-shortcut guide at `/kitchen/help` |
+| Family Kitchen | `/kitchen/` — port 8199 (Kitchen 1.1.0); Share-shortcut guide at `/kitchen/help` |
+| Kitchen member *n* | `/kitchen/k<n>/` — an account inside the Kitchen service (no user, no processes, no other database); installs as "Family Kitchen" |
 | Code | `/opt/family/code/<stamp>/{gutlog,rxguard,fitlog,family}`, `current` → the live tree (root-owned, read-only to members) |
 | Member data | `/srv/family/m<n>/` (owner `fam_m<n>`, mode 700): `gutlog/ rxguard/ fitlog/ care.db care.key status.token feed.token sso.key kitchen.token kitchen.capture` |
-| Kitchen data | `/srv/family/kitchen/` (owner `fam_kitchen`, 700): `kitchen.db attach/ tokens.json` |
+| Kitchen data | `/srv/family/kitchen/` (owner `fam_kitchen`, 700): `kitchen.db attach/ tokens.json session.key members/k<n>/auth.db` |
 | Member env | `/etc/family/m<n>.env` (root 600): slug, folder, base, display name, profile, ports |
 | Registry | `/root/family/members.local.json` (root 600) — slug, display name, profile, ports, enabled |
 | Owner-side secrets | `/root/family/care/m<n>.key` + `.status`; `/root/family/kitchen/owner.token` + `.capture` |
@@ -131,6 +132,60 @@ The model key is read in place from the file the records worker already reads
 (`/root/wa/.env`); change `KITCHEN_KEYS_ENV` to use another, or remove the key to turn
 the model step off (drafts then go to the manual screen).
 
+### Kitchen members, self-publishing, attribution (Kitchen 1.1.0, 25-Sep-2026)
+
+* **A kitchen member** (`k1`, `k2` …) needs only the recipe book: an account inside the
+  Kitchen service — a `kmembers` row (slug, display name, enabled, plain food
+  preferences, last visit) and `members/k<n>/auth.db` (PIN hash, IST sign-in log,
+  passkeys). No Linux user, no processes, no GutLog/RxGuard/FitLog, no registry entry,
+  no vhost change (the `/kitchen/` context already proxies `/kitchen/k1/`). Nothing
+  about their health exists anywhere. Address `https://family.dr-manoj.in/kitchen/k1/`;
+  the sign-in page says "<Name> — Family Kitchen"; Add to Home Screen installs "Family
+  Kitchen" with the Kitchen icon (drawn by `kitchen_members.py` — no binary in the repo).
+* **Sign-in = the family rules exactly**, from `family_auth.py`: 6-digit PIN (not all one
+  digit, not a straight run), keypad + Show, "Wrong PIN — N tries left", 5 wrong → 15 min
+  doubling to 24 h (per member), every attempt logged in IST and shown on the Me tab,
+  Face ID / Touch ID offered after the first PIN sign-in (button only where set up),
+  12-month session, "sign out on all devices", PIN change. The session cookie is named
+  `kitchen`, scoped to `/kitchen/k<n>/`, signed with the Kitchen's own `session.key`.
+  **It satisfies nothing else**: the bearer routes read only the Authorization header,
+  and each member app has its own secret — `test_family_d.py` D06 sends the cookie to
+  `/m1/…`, the owner's app, `/kitchen/api/…` and k2's book and expects refusal.
+* **Nobody approves.** Every capture (Share shortcut, paste, link, photo, PDF) is a draft
+  for its sender; they review it (uncertain items highlighted, the original beside) and
+  tap **Publish**; it is in the pool at once. A duplicate is named ("…" by <Name>, why)
+  and offers "Publish as <Name>'s version" (kept beside the original, linked as versions)
+  or Cancel. **Only the contributor** edits or unpublishes (others get 403; they can
+  rate, mark made / again, note). **The owner can hide** (never delete): hidden stays
+  visible to its contributor with the note; a "Hidden" chip shows the owner what is
+  hidden. Recipe status: `published` / `unpublished` / `hidden`.
+* **Attribution everywhere.** "Recipe by <Name>" under the title on cards, lists, search,
+  By person; date added; "Shared by <Name> · source: <site>" with the link for a web
+  capture; "Shared by <Name> · from a photo" with the photo viewable; "N versions — by A,
+  B, C"; ratings and notes with the rater's name; a logged serving is "<dish> · recipe by
+  <Name>". Names are resolved when read (`tokens.json` api names for GutLog copies,
+  `kmembers` for kitchen members), so `--rename` shows on every card at once. The owner's
+  own cards say "Recipe by <owner's name>" once `--kitchen-sync --owner-name "…"` has been
+  run (kept in the registry, never in code).
+* **Food preferences** (kitchen members, Me tab): Vegetarian / Eggetarian / No
+  onion-garlic / Jain — plain words in `kmembers.food_prefs` that only filter the list
+  (word rules in `kitchen.PREF_WORDS`); the onion recipe drops out and its onion-free
+  version stays. Full members' health-based adjustments stay inside their own copies.
+* **Nutrition per serving for a kitchen member** is summed by the Kitchen itself
+  (`kitchen_nutrition.py`: the same measures file and bundled USDA table, read from the
+  code tree's `gutlog/`), no adjustments, unmatched items listed never guessed; D08
+  checks it equals a full member's unadjusted card.
+* **Tools:** `stamp_member.py --kitchen-only --slug k1 --name "…" --password-file …`;
+  `--slug k1 --rename "…" | --reset-pin | --disable | --enable` (disable stops sign-in,
+  capture and live sessions, keeps their recipes; no delete); `--list` shows kitchen
+  members with their last visit; `readiness.py --slug k1` (sign-in page, PIN offline,
+  one sign-in, Face ID, the book, a draft captured → published → rated → unpublished, the
+  test items removed, sign out, counts as before). The owner's `/family` page lists
+  kitchen members (name, last visit, recipes added) from the Kitchen's `/api/members`
+  (owner token only) — no caretaker access, there is nothing of theirs to care for.
+* **Upgrades:** `upgrade_all.sh` backs up the Kitchen DB before switching (the 1.1.0
+  columns/table migrate on first use), restarts the Kitchen and checks `/kitchen/healthz`.
+
 ## Commands
 
 ```
@@ -139,7 +194,10 @@ python3 /root/family/stamp_member.py --slug m3 --disable | --enable | --rotate-c
 python3 /root/family/stamp_member.py --slug m3 --rename "…"
 python3 /root/family/stamp_member.py --list
 python3 /root/family/stamp_member.py --refresh-env   # rewrite every member env from the registry, restart
-python3 /root/family/readiness.py --slug m3           # before giving anyone their link
+python3 /root/family/stamp_member.py --kitchen-only --slug k1 --name "…" --password-file /root/family/first-login.local.txt
+python3 /root/family/stamp_member.py --slug k1 --rename "…" | --reset-pin | --disable | --enable
+python3 /root/family/stamp_member.py --kitchen-sync --owner-name "…"   # once: the name on the owner's cards
+python3 /root/family/readiness.py --slug m3           # before giving anyone their link (k1 for a kitchen member)
 /root/family/upgrade_all.sh           # after any owner release: build, scratch self-test, migrate, switch, verify
 bash /root/family/install_family.sh   # one-time (done 25-Sep-2026)
 bash /root/family/install_kitchen.sh  # one-time, Phase C
@@ -148,10 +206,13 @@ bash /root/family/install_kitchen.sh  # one-time, Phase C
 ## Tests
 
 `test_family_a.py` (isolation, caretaker, stamping, backup), `test_family_b.py` (joint
-focus), `test_family_c.py` (Kitchen) — server-runnable against scratch members; the
-`test_family_ui*.py` browser suites run offline. Manifests `new_assertions_family_*.json`
-use `NEGATIVE_CONTROL.py` "dir" mutations: each assertion is broken in a COPY of the
-folder that carries it.
+focus), `test_family_c.py` (Kitchen), `test_family_d.py` (kitchen members,
+self-publishing, attribution, preferences, readiness) — server-runnable against scratch
+members; the `test_family_ui*.py` browser suites run offline (`ui_d`: a kitchen member at
+300 px). Manifests `new_assertions_family_*.json` use `NEGATIVE_CONTROL.py` "dir"
+mutations: each assertion is broken in a COPY of the folder that carries it. The D
+manifest's named controls: `draftinpool`, `anyedit`, `noattrib` + `noattriblog`,
+`kreach` + `kapi`, `healthcol` + `healthcolauth`.
 
 ## Open items (25-Sep-2026)
 

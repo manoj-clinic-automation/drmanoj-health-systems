@@ -16,6 +16,7 @@ GUTLOG_V3350_SNACKS -- slots, grouped picker, dishes, late snacks, Quick Bite, w
 GUTLOG_V3360_FAMILY -- the Family page: members at a glance, open as caretaker.
 GUTLOG_V3370_JOINT -- joint pain, pain-medicine totals, steps against pain, lipid checks.
 GUTLOG_V3380_KITCHEN -- the Family Kitchen: shared recipes, personal cards, Recipe Inbox.
+GUTLOG_V3390_KITCHENBY -- "Recipe by <Name>" on every card, list and logged meal; By person; the owner can hide; kitchen members on the Family page.
 """
 import os, csv, io, json, time, sqlite3, secrets, uuid
 from datetime import date, datetime, timedelta
@@ -42,7 +43,7 @@ PLAN_STATUSES = ("Draft", "Active", "Closed")
 ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
 MAX_FILE_MB = 25   # v3.11.0: report pages are saved at ~220dpi now, not ~110
 # GUTLOG_V3272_HEALTHZ -- one place that states the running version.
-APP_VERSION = "3.38.0"   # GUTLOG_V3380_KITCHEN GUTLOG_V3370_JOINT GUTLOG_V3360_FAMILY GUTLOG_V3350_SNACKS GUTLOG_V3340_FTMEALS GUTLOG_V3330_PAINSITE GUTLOG_V3320_FOODTEST GUTLOG_V3310_FOODLIB GUTLOG_V3300_MIRRORSTALE GUTLOG_V3290_NUTRITION GUTLOG_V3280_PLANS GUTLOG_V3272_HEALTHZ GUTLOG_V3271_TARGETJS GUTLOG_V3270_TIMEPICK GUTLOG_V3260_TRIALS
+APP_VERSION = "3.39.0"   # GUTLOG_V3390_KITCHENBY GUTLOG_V3380_KITCHEN GUTLOG_V3370_JOINT GUTLOG_V3360_FAMILY GUTLOG_V3350_SNACKS GUTLOG_V3340_FTMEALS GUTLOG_V3330_PAINSITE GUTLOG_V3320_FOODTEST GUTLOG_V3310_FOODLIB GUTLOG_V3300_MIRRORSTALE GUTLOG_V3290_NUTRITION GUTLOG_V3280_PLANS GUTLOG_V3272_HEALTHZ GUTLOG_V3271_TARGETJS GUTLOG_V3270_TIMEPICK GUTLOG_V3260_TRIALS
 
 def _secret():
     env = os.environ.get("GUTLOG_SECRET")
@@ -7615,9 +7616,42 @@ def api_kitchen_ping():
 @login_required
 def api_kitchen_recipes():
     from urllib.parse import urlencode
-    q = dict((k, request.args.get(k)) for k in ("q", "grp", "sort") if request.args.get(k))
+    q = dict((k, request.args.get(k)) for k in ("q", "grp", "sort", "by", "show") if request.args.get(k))
     st, j = kitchen_call("GET", "/api/recipes" + ("?" + urlencode(q) if q else ""))
     return jsonify(j), (st if st else 502)
+
+
+@app.route("/api/kitchen/people")
+@login_required
+def api_kitchen_people():
+    """GUTLOG_V3390_KITCHENBY -- everyone with a recipe in the pool, for "By person"."""
+    st, j = kitchen_call("GET", "/api/people")
+    return jsonify(j), (st or 502)
+
+
+@app.route("/api/kitchen/recipe/<int:rid>/attach")
+@login_required
+def api_kitchen_recipe_attach(rid):
+    """The original photo a recipe was captured from, viewable on its card."""
+    st, (b, ct) = kitchen_call("GET", "/api/recipes/%d/attach" % rid, raw=True) \
+        if _secret_file(KITCHEN_TOKEN_FILE) else (0, (b"", ""))
+    if st != 200:
+        abort(404)
+    r = Response(b, mimetype=(ct or "application/octet-stream").split(";")[0])
+    r.headers["Cache-Control"] = "no-store"
+    r.headers["X-Content-Type-Options"] = "nosniff"
+    return r
+
+
+@app.route("/api/kitchen/recipe/<int:rid>/hide", methods=["POST"])
+@login_required
+def api_kitchen_hide(rid):
+    """The owner's safety valve: hide from the pool, never delete. The Kitchen
+    refuses any token but the owner's, so a family copy gets 403 here."""
+    d = J()
+    st, j = kitchen_call("POST", "/api/recipes/%d/hide" % rid, {"hide": bool(d.get("hide", True)),
+                                                                  "note": str(d.get("note") or "")[:200]})
+    return jsonify(j), (st or 502)
 
 
 @app.route("/api/kitchen/recipe/<int:rid>")
@@ -7651,7 +7685,8 @@ def api_kitchen_log(rid):
     except (TypeError, ValueError):
         n = 1.0
     per = card["nutrition"]["per_serving"]
-    item = {"n": ("Family Kitchen: " + j["recipe"]["name"])[:80], "q": n,
+    item = {"n": ("Family Kitchen: " + j["recipe"]["name"] + " \u00b7 recipe by "
+                  + (j["recipe"].get("added_by") or "someone"))[:120], "q": n,
             "p": per.get("protein") or 0, "k": per.get("kcal") or 0, "f": per.get("fibre") or 0,
             "fm": "L-M" if any(b["family"] == "low-FODMAP" for b in card["badges"]) else "M"}
     day, mtime = today(), now_hm()
@@ -7727,6 +7762,7 @@ main{max-width:36rem;margin:0 auto;padding:12px 14px 40px}h1{font-size:21px;marg
 .row{display:flex;justify-content:space-between;gap:8px}.mut{color:var(--mut);font-size:15px}
 .badge{display:inline-block;color:var(--mod);border:1px solid var(--mod);border-radius:6px;padding:0 6px;font-size:13px;font-weight:600}
 .flag{color:var(--bad)}.was{text-decoration:line-through;color:var(--mut)}
+.by{color:var(--acc);font-weight:600;margin:2px 0 4px;font-size:15px}.ver a{margin-right:8px}
 input,textarea,select{width:100%;font:inherit;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg)}
 button.btn{font:inherit;font-weight:600;padding:10px 14px;border-radius:10px;border:0;background:var(--acc);color:#fff;margin:8px 6px 0 0}
 button.ghost{background:transparent;color:var(--acc);border:1px solid var(--acc)}
@@ -7746,7 +7782,7 @@ async function jget(u){const r=await fetch(u,{credentials:'same-origin'});return
 async function post(u,b){const r=await fetch(u,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
   const j=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(j.err||'Save failed');e.j=j;e.status=r.status;throw e;}return j;}
 const TABS=[['browse','Recipes'],['inbox','Inbox'],['add','Add a recipe'],['share','Share shortcut']];
-let ST={tab:'browse',grp:'',sort:'az',q:''};
+let ST={tab:'browse',grp:'',sort:'az',q:'',by:'',canHide:false};
 function tabs(){const b=$('#tabs');b.innerHTML='';TABS.forEach(([k,l])=>{const x=el('button','tab'+(ST.tab===k?' sel':''),l);x.onclick=()=>{ST.tab=k;show();};b.appendChild(x);});}
 function show(){tabs();({browse,inbox,add,share})[ST.tab]();}
 async function browse(){
@@ -7754,11 +7790,18 @@ async function browse(){
   const s=el('input');s.placeholder='Search a dish or an ingredient';s.value=ST.q;
   s.onchange=()=>{ST.q=s.value;browse();};v.appendChild(s);
   const so=el('div','chips');so.style.marginTop='8px';
-  [['az','All'],['top','Top rated'],['new','New this week'],['fav','Family favourites']].forEach(([k,l])=>{
-    const c=el('button','chip'+(ST.sort===k?' sel':''),l);c.onclick=()=>{ST.sort=k;browse();};so.appendChild(c);});
+  /* GUTLOG_V3390_KITCHENBY -- By person; Hidden (owner only) */
+  [['az','All'],['top','Top rated'],['new','New this week'],['fav','Family favourites'],['by','By person']].concat(ST.canHide?[['hidden','Hidden']]:[]).forEach(([k,l])=>{
+    const c=el('button','chip'+(ST.sort===k?' sel':''),l);c.onclick=()=>{ST.sort=k;if(k!=='by')ST.by='';browse();};so.appendChild(c);});
   v.appendChild(so);
-  let j;try{j=await jget('/api/kitchen/recipes?sort='+ST.sort+'&q='+encodeURIComponent(ST.q)+'&grp='+encodeURIComponent(ST.grp));}catch(e){v.appendChild(el('p','mut','Could not load.'));return;}
+  if(ST.sort==='by'){let p;try{p=await jget('/api/kitchen/people');}catch(e){v.appendChild(el('p','mut','Could not load.'));return;}
+    const pc=el('div','chips');pc.style.marginTop='8px';
+    (p.people||[]).forEach(x=>{const c=el('button','chip'+(ST.by===x.slug?' sel':''),x.name+' ('+x.n+')');c.onclick=()=>{ST.by=x.slug;browse();};pc.appendChild(c);});
+    v.appendChild(pc);if(!ST.by){v.appendChild(el('p','mut','Tap a name to see their recipes.'));return;}}
+  const sort=(ST.sort==='by')?'az':(ST.sort==='hidden'?'az':ST.sort),show=ST.sort==='hidden'?'hidden':'';
+  let j;try{j=await jget('/api/kitchen/recipes?sort='+sort+'&q='+encodeURIComponent(ST.q)+'&grp='+encodeURIComponent(ST.grp)+'&by='+encodeURIComponent(ST.by)+'&show='+show);}catch(e){v.appendChild(el('p','mut','Could not load.'));return;}
   if(!j.ok){v.appendChild(el('p','mut',j.err||'The Family Kitchen is not reachable.'));return;}
+  if(!!j.can_hide!==ST.canHide){ST.canHide=!!j.can_hide;tabs();}
   const g=el('div','chips');g.style.marginTop='8px';
   ['',...(j.groups||[])].forEach(x=>{const c=el('button','chip'+(ST.grp===x?' sel':''),x||'Every group');c.onclick=()=>{ST.grp=x;browse();};g.appendChild(c);});
   v.appendChild(g);
@@ -7767,8 +7810,11 @@ async function browse(){
     const c=el('div','card');c.style.cursor='pointer';
     const h=el('div','row');h.appendChild(el('b','',r.name));
     h.appendChild(el('span','mut',r.rating.avg?('★ '+r.rating.avg+' ('+r.rating.n+')'):''));c.appendChild(h);
-    c.appendChild(el('p','mut',r.grp+' · added by '+(r.added_by||'someone')+(r.new?' · new':'')+
+    c.appendChild(el('p','by','Recipe by '+(r.added_by||'someone')));
+    c.appendChild(el('p','mut',r.grp+' · added '+(r.added_date||'')+(r.new?' · new':'')+
       (r.rating.made?(' · made '+r.rating.made+'×'):'')));
+    if(r.versions&&r.versions.length>1)c.appendChild(el('p','mut',r.versions.length+' versions — by '+r.versions.map(x=>x.by).join(', ')));
+    if(r.status&&r.status!=='published')c.appendChild(el('p','flag',r.status==='hidden'?'Hidden from the Kitchen':'Unpublished'));
     c.onclick=()=>recipe(r.id);v.appendChild(c);});
 }
 async function recipe(id){
@@ -7777,7 +7823,15 @@ async function recipe(id){
   if(!j.ok){v.appendChild(el('p','mut',j.err||'Not found.'));return;}
   const r=j.recipe,c=el('div','card');
   c.appendChild(el('h2','',r.name));
-  c.appendChild(el('p','mut',r.grp+' · serves '+r.servings+(r.serving_text?(' · '+r.serving_text):'')+' · added by '+r.added_by));
+  c.appendChild(el('p','by','Recipe by '+(r.added_by||'someone')));
+  c.appendChild(el('p','mut','Added '+(r.added_date||'')+' · '+r.grp+' · serves '+r.servings+(r.serving_text?(' · '+r.serving_text):'')));
+  if(r.source_url){const p=el('p','mut','Shared by '+r.added_by+' · source: ');const a=el('a','',r.source_site||r.source_url);a.href=r.source_url;a.target='_blank';a.rel='noopener';p.appendChild(a);c.appendChild(p);}
+  else if(r.has_photo){c.appendChild(el('p','mut','Shared by '+r.added_by+' · from a photo'));}
+  if(r.has_photo){const im=el('img','att');im.src='/api/kitchen/recipe/'+id+'/attach';im.alt='The original photo';c.appendChild(im);}
+  if(r.versions&&r.versions.length>1){const p=el('p','ver');p.appendChild(el('span','mut',r.versions.length+' versions — by '+r.versions.map(x=>x.by).join(', ')+'. '));
+    r.versions.filter(x=>x.id!==r.id).forEach(x=>{const a=el('a','',x.by+"'s");a.href='#';a.onclick=(e)=>{e.preventDefault();recipe(x.id);};p.appendChild(a);});c.appendChild(p);}
+  if(r.status==='hidden')c.appendChild(el('p','flag','Hidden from the Kitchen'+(r.hidden_note?(': '+r.hidden_note):'')));
+  else if(r.status==='unpublished')c.appendChild(el('p','flag','Unpublished by the person who added it'));
   if(j.modified){const b=el('p','');b.appendChild(el('span','badge','modified for you'));c.appendChild(b);
     j.badges.forEach(x=>c.appendChild(el('p','mut','• '+x.reason)));}
   if(j.portion!==1)c.appendChild(el('p','','Your portion: '+j.portion+' of a serving.'));
@@ -7810,7 +7864,9 @@ async function recipe(id){
   const note=el('input');note.placeholder='A short note for the family';note.value=(r.mine&&r.mine.note)||'';
   note.onchange=async()=>{await post('/api/kitchen/recipe/'+id+'/rate',{note:note.value});toast('Saved');};
   note.style.marginTop='8px';c.appendChild(note);
-  (r.ratings||[]).filter(x=>x.note).forEach(x=>c.appendChild(el('p','mut',x.who+': '+x.note)));
+  (r.ratings||[]).forEach(x=>c.appendChild(el('p','mut',x.who+': '+(x.stars?'★'.repeat(x.stars)+' ':'')+(x.made?'made it ':'')+(x.again?'· would make again ':'')+(x.note?('— '+x.note):''))));
+  if(r.can_hide){const hb=el('button','btn ghost',r.status==='hidden'?'Show in the Kitchen again':'Hide from the Kitchen');
+    hb.onclick=async()=>{try{await post('/api/kitchen/recipe/'+id+'/hide',{hide:r.status!=='hidden',note:r.status!=='hidden'?(prompt('Why hide it? (shown to the person who added it)')||''):''});recipe(id);}catch(e){toast(e.message);}};c.appendChild(hb);}
   const bk=el('button','btn ghost','Back to recipes');bk.onclick=browse;c.appendChild(bk);
   v.appendChild(c);
 }
@@ -8231,6 +8287,21 @@ def family_page():
         rows.append("<div class='fm'><p class='q'>%s</p><p>%s</p>"
                     "<a class='btn' href='/family/open/%s'>Open as caretaker</a></div>"
                     % (name, "<br>".join(bits), _h.escape(m["slug"])))
+    # GUTLOG_V3390_KITCHENBY -- kitchen members: recipes only, read from the
+    # Kitchen with the owner's token. Name, last visit, recipes added; no
+    # caretaker access, because there is nothing of theirs to care for.
+    krows = []
+    st_k, jk = kitchen_call("GET", "/api/members")
+    for k in (jk.get("members") or []) if st_k == 200 else []:
+        kn = _h.escape(str(k.get("name") or k.get("slug") or ""))
+        if not k.get("enabled", True):
+            krows.append("<div class='fm'><p class='q'>%s</p><p class='hint'>Switched off.</p></div>" % kn)
+            continue
+        krows.append("<div class='fm'><p class='q'>%s</p><p>Last visit: %s<br>Recipes added: %d</p>"
+                     "<p class='hint'>Family Kitchen only &mdash; recipes, no health data.</p></div>"
+                     % (kn, _h.escape(str(k.get("last_seen") or "not yet")), int(k.get("recipes") or 0)))
+    if krows:
+        rows.append("<p class='q' style='margin-top:18px'>Kitchen members</p>" + "".join(krows))
     body = "".join(rows) or "<p class='hint'>No family members yet.</p>"
     return Response(FAMILY_PAGE.replace("__ROWS__", body), mimetype="text/html")
 
