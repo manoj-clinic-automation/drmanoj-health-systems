@@ -1,0 +1,231 @@
+{
+ "_": [
+  "Family Edition Phase F -- finding recipes (Kitchen 1.2.0, GutLog v3.41.0), the Kitchen key file, the fuller food table. Every assertion is broken on purpose in a COPY of the folder that carries it. The controls the brief names: personleak (the person filter leaking others' recipes), noname (search ignoring contributor names), noalias (the alias file being ignored); plus the counts, the filters, the key file and the table columns."
+ ],
+ "suite": "test_family_f.py",
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3410_kitchenfind.py",
+ "assertions": [
+  {
+   "name": "F06 the alias file is plain food words",
+   "control": "mutation",
+   "mutation": {
+    "id": "aliaspersonal",
+    "why": "a personal word enters the alias file",
+    "module": "food_aliases.json",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "  [\"chaas\", \"buttermilk\", \"mattha\", \"lassi\"]\n",
+    "replace": "  [\"chaas\", \"buttermilk\", \"mattha\", \"lassi\", \"10 mg tablet\"]\n"
+   }
+  },
+  {
+   "name": "F01 Person -> Category: choosing a person narrows the categories to theirs",
+   "control": "mutation",
+   "mutation": {
+    "id": "personleak",
+    "why": "the person filter leaks other people's recipes into the list",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    out = [d for d in base if (not by or d[\"added_slug\"] == by) and (not grp or d[\"grp\"] == grp)]\n",
+    "replace": "    out = [d for d in base if (not grp or d[\"grp\"] == grp)]\n"
+   }
+  },
+  {
+   "name": "F01 Person -> Category: choosing a person narrows the categories to theirs",
+   "control": "mutation",
+   "mutation": {
+    "id": "allcats",
+    "why": "a person's category chips show every category, not only theirs",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if not by or d[\"added_slug\"] == by:\n            groups_n[d[\"grp\"]] = groups_n.get(d[\"grp\"], 0) + 1\n",
+    "replace": "        groups_n[d[\"grp\"]] = groups_n.get(d[\"grp\"], 0) + 1\n"
+   }
+  },
+  {
+   "name": "F01 Category -> Person: choosing a category narrows the people",
+   "control": "mutation",
+   "mutation": {
+    "id": "allpeople",
+    "why": "a category's people chips count everyone regardless of the category",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if not grp or d[\"grp\"] == grp:\n            people_n[d[\"added_slug\"]] = people_n.get(d[\"added_slug\"], 0) + 1\n",
+    "replace": "        people_n[d[\"added_slug\"]] = people_n.get(d[\"added_slug\"], 0) + 1\n"
+   }
+  },
+  {
+   "name": "F02 one search box: a contributor's name finds their recipes",
+   "control": "mutation",
+   "mutation": {
+    "id": "noname",
+    "why": "the search ignores the contributor's name",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    parts = [r[\"name\"], r[\"grp\"] or \"\", name_of(r[\"added_slug\"], r[\"added_by\"], names)]\n",
+    "replace": "    parts = [r[\"name\"], r[\"grp\"] or \"\"]\n"
+   }
+  },
+  {
+   "name": "F02 one search box: a Hindi alias finds the English ingredient",
+   "control": "mutation",
+   "mutation": {
+    "id": "noalias",
+    "why": "the alias file is ignored",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            for grp in doc.get(\"groups\") or []:\n",
+    "replace": "            for grp in []:\n"
+   }
+  },
+  {
+   "name": "F02 one search box: an ingredient finds the recipe",
+   "control": "mutation",
+   "mutation": {
+    "id": "noingredient",
+    "why": "the search looks at the name only",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    parts += [str(i.get(\"item\") or \"\") for i in ings if isinstance(i, dict)]\n",
+    "replace": "    parts += []\n"
+   }
+  },
+  {
+   "name": "F03 filters: Vegetarian drops the egg dish",
+   "control": "mutation",
+   "mutation": {
+    "id": "noquick",
+    "why": "Quick keeps every recipe whatever its time",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            if m is None or m > QUICK_MIN:\n                continue\n",
+    "replace": "            if False:\n                continue\n"
+   }
+  },
+  {
+   "name": "F03 filters: High-protein keeps 10 g or more a serving",
+   "control": "mutation",
+   "mutation": {
+    "id": "noprotein",
+    "why": "High-protein keeps everything",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            if p is None or p < HIGH_PROTEIN_G:\n                continue\n",
+    "replace": "            if False:\n                continue\n"
+   }
+  },
+  {
+   "name": "F03 filters combine with any view",
+   "control": "mutation",
+   "mutation": {
+    "id": "nohint",
+    "why": "an empty result never says what to loosen",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        hint = (\"Nothing matches. Try loosening: \" + \", \".join(loosen) + \".\") if loosen else \"Nothing here yet.\"\n",
+    "replace": "        hint = \"Nothing here yet.\"\n"
+   }
+  },
+  {
+   "name": "F03 filters combine with any view",
+   "control": "mutation",
+   "mutation": {
+    "id": "noprefsaved",
+    "why": "a kitchen member's saved preference is not applied to the browse answer",
+    "module": "kitchen_members.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    saved = () if \"pref\" in args else prefs()\n",
+    "replace": "    saved = ()\n"
+   }
+  },
+  {
+   "name": "F03 Top-rated keeps rated 4+ only",
+   "control": "mutation",
+   "mutation": {
+    "id": "notop",
+    "why": "Top-rated keeps everything",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if want[\"top\"] and not (d[\"rating\"][\"n\"] and (d[\"rating\"][\"avg\"] or 0) >= 4):\n            continue\n",
+    "replace": "        if False:\n            continue\n"
+   }
+  },
+  {
+   "name": "F04 a recipe card shows fat, carbs and calcium per serving",
+   "control": "mutation",
+   "mutation": {
+    "id": "gutnocols",
+    "why": "GutLog's own lookup drops the new columns for a table match (the card reads '--' again)",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "        return {\"kcal\": h[\"kcal\"], \"protein\": h[\"protein\"], \"fibre\": h[\"fibre\"], \"fat\": h.get(\"fat\"),\n                \"carbs\": h.get(\"carbs\"), \"calcium\": h.get(\"calcium\")}, \"USDA: \" + h[\"desc\"]\n",
+    "replace": "        return {\"kcal\": h[\"kcal\"], \"protein\": h[\"protein\"], \"fibre\": h[\"fibre\"]}, \"USDA: \" + h[\"desc\"]\n"
+   }
+  },
+  {
+   "name": "F04 a recipe card shows fat, carbs and calcium per serving",
+   "control": "mutation",
+   "mutation": {
+    "id": "kitchennocols",
+    "why": "the Kitchen's own sum drops the new columns (so the two cards disagree)",
+    "module": "kitchen_nutrition.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        return {\"kcal\": h[\"kcal\"], \"protein\": h[\"protein\"], \"fibre\": h[\"fibre\"], \"fat\": h.get(\"fat\"),\n                \"carbs\": h.get(\"carbs\"), \"calcium\": h.get(\"calcium\")}, \"USDA: \" + str(h[\"desc\"])\n",
+    "replace": "        return {\"kcal\": h[\"kcal\"], \"protein\": h[\"protein\"], \"fibre\": h[\"fibre\"]}, \"USDA: \" + str(h[\"desc\"])\n"
+   }
+  },
+  {
+   "name": "F04 the bundled table carries the three new columns and GutLog's lookup returns them",
+   "control": "mutation",
+   "mutation": {
+    "id": "lookupnofat",
+    "why": "food_lookup never returns fat",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "             \"fat\": r[5] if len(r) > 5 else None, \"carbs\": r[6] if len(r) > 6 else None,\n",
+    "replace": "             \"fat\": None, \"carbs\": r[6] if len(r) > 6 else None,\n"
+   }
+  },
+  {
+   "name": "F05 the reader reads the two keys from its own key file",
+   "control": "mutation",
+   "mutation": {
+    "id": "oldkeyfile",
+    "why": "the reader defaults to the clinic's env file again",
+    "module": "kitchen_reader.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "KEYS_ENV = os.environ.get(\"KITCHEN_KEYS_ENV\", \"/root/family/kitchen_keys.env\")\n",
+    "replace": "KEYS_ENV = os.environ.get(\"KITCHEN_KEYS_ENV\", \"/root/wa/.env\")\n"
+   }
+  },
+  {
+   "name": "F05 the reader reads the two keys from its own key file",
+   "control": "mutation",
+   "mutation": {
+    "id": "quietmissing",
+    "why": "a missing key file is not said",
+    "module": "kitchen_reader.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if not _KEYFILE_SAID.get(KEYS_ENV):\n            _KEYFILE_SAID[KEYS_ENV] = True\n",
+    "replace": "        if False:\n            _KEYFILE_SAID[KEYS_ENV] = True\n"
+   }
+  }
+ ]
+}

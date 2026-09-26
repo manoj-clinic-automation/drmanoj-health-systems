@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "_note": "Claude Code permissions for drmanoj-health-systems, written 26-Sep-2026 by the Sanjeevni chat at the owner's request. Allow = the ordinary build/test/deploy path on the ONE server; deny = destructive, history-rewriting, secrets, other hosts, and EVERYTHING that belongs to the clinic/pharmacy side (its money records live on the same box). Anything not listed still ASKS. Deny wins over allow.",
+  "_note": "Claude Code permissions for drmanoj-health-systems, written 26-Sep-2026 by the Sanjeevni chat at the owner's request. Allow = the ordinary build/test/deploy path on the ONE server; deny = destructive, history-rewriting, secrets, other hosts, and EVERYTHING that belongs to the clinic/pharmacy side (its money records live on the same box). Anything not listed still ASKS. Deny wins over allow. Amended 26-Sep-2026 by the Personal (health) chat: in-repo *.local.json readable/editable (his own settings, never committed); PowerShell and curl-to-own-sites allowed (PowerShell deletes denied); printing server secrets/PIN file denied; Kitchen key file and build lock handled by the tools.",
   "permissions": {
     "allow": [
       "Read",
@@ -111,7 +111,23 @@
       "Bash(PUBLISH_HEALTH.bat)",
       "Bash(.\\PUBLISH_HEALTH.bat)",
       "Bash(cmd /c PUBLISH_HEALTH.bat)",
-      "Bash(* PUBLISH_HEALTH.bat)"
+      "Bash(* PUBLISH_HEALTH.bat)",
+      "Read(./**/*.local.json)",
+      "Edit(./**/*.local.json)",
+      "Write(./**/*.local.json)",
+      "Bash(powershell *)",
+      "Bash(pwsh *)",
+      "Bash(curl *dr-manoj.in*)",
+      "Bash(curl -s *dr-manoj.in*)",
+      "Bash(node *)",
+      "Bash(npx playwright *)",
+      "Bash(pip *)",
+      "Bash(pip3 *)",
+      "Bash(git stash*)",
+      "Bash(git checkout -b *)",
+      "Bash(git checkout main)",
+      "Bash(git switch *)",
+      "Bash(git tag *)"
     ],
     "deny": [
       "Bash(rm -rf *)",
@@ -153,7 +169,6 @@
       "Read(**/*.pem)",
       "Read(**/*.key)",
       "Read(**/id_rsa*)",
-      "Read(**/*.local.json)",
       "Read(**/feed.token)",
       "Read(**/clinic_state_backup.conf)",
       "Edit(**/.env)",
@@ -180,7 +195,23 @@
       "Bash(* systemctl mask *)",
       "Bash(* PUBLISH_ALL.bat*)",
       "Edit(../drmanoj-clinic-automation/**)",
-      "Write(../drmanoj-clinic-automation/**)"
+      "Write(../drmanoj-clinic-automation/**)",
+      "Bash(* Remove-Item *)",
+      "Bash(* rm -Recurse*)",
+      "Bash(* Clear-Content *)",
+      "Bash(* Format-Volume*)",
+      "Bash(* cat *feed.token*)",
+      "Bash(* cat *ingest.env*)",
+      "Bash(* cat *health-sso.key*)",
+      "Bash(* cat *first-login*)",
+      "Bash(* cat */root/.config/rclone*)",
+      "Bash(* cat */root/wa/.env*)",
+      "Bash(* cat */etc/family/*)",
+      "Bash(* cat */srv/family/*/secrets*)",
+      "Bash(* /root/finance/finance.db*)",
+      "Bash(* /root/.config/rclone*)",
+      "Bash(* rm /opt/family/code/current*)",
+      "Bash(* rm -rf /opt/family*)"
     ],
     "defaultMode": "acceptEdits"
   }

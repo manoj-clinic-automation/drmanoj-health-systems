@@ -42,6 +42,8 @@ RX = ["app.py", "dose_ceiling.py", "health_sso.py", "knowledge/drugs.json", "kno
 RX_OPTIONAL = ["knowledge/dose_rules.generic.json"]
 RX_OVERLAY = ["knowledge/drugs.local.json", "knowledge/rules.local.json"]
 FIT = ["app.py", "health_ingest.py", "health_sso.py", "migrate_health_ingest.py"]
+# family/ data files (the Kitchen's Hindi/English food aliases; the shell helpers)
+FAMILY_DATA = ["food_aliases.json", "build_lock.sh"]
 # A field in the approved overlay that could carry a person's circumstances.
 # 2026-09-25: the check was run on the live overlay before the first copy and
 # found one: `strength_logged`, the strength the OWNER logged for each drug he
@@ -136,6 +138,9 @@ def build(src_gut, src_rx, src_fit, src_family, out):
         if b.startswith(("test_", "_nc", "famtest")):
             continue
         copy(src_family, b, os.path.join(out, "family"))
+    # Data files the family layer reads at run time, named one by one (26-Sep-2026).
+    for rel in FAMILY_DATA:
+        copy(src_family, rel, os.path.join(out, "family"))
     for d in ("gutlog", "rxguard", "fitlog", "family"):
         for p in glob.glob(os.path.join(out, d, "**", "*"), recursive=True):
             if ".local." in os.path.basename(p) and not (d == "rxguard" and os.path.basename(p) in

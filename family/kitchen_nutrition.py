@@ -104,7 +104,10 @@ def food_lookup(q, limit=3):
         primary = 0 if (first and _fstem(first[0]) in toks) else 1
         found.append(((-m, noise, primary, len(low)), r))
     found.sort(key=lambda x: x[0])
-    return [{"fdc": r[0], "desc": r[1], "protein": r[2], "kcal": r[3], "fibre": r[4]} for _, r in found[:limit]]
+    # 26-Sep-2026: the refreshed table carries fat, carbs and calcium as columns 5-7.
+    return [{"fdc": r[0], "desc": r[1], "protein": r[2], "kcal": r[3], "fibre": r[4],
+             "fat": r[5] if len(r) > 5 else None, "carbs": r[6] if len(r) > 6 else None,
+             "calcium": r[7] if len(r) > 7 else None} for _, r in found[:limit]]
 
 
 def _kw(text, words):
@@ -150,7 +153,8 @@ def ing_food(item):
     hits = food_lookup(item, limit=3)
     if hits:
         h = hits[0]
-        return {"kcal": h["kcal"], "protein": h["protein"], "fibre": h["fibre"]}, "USDA: " + str(h["desc"])
+        return {"kcal": h["kcal"], "protein": h["protein"], "fibre": h["fibre"], "fat": h.get("fat"),
+                "carbs": h.get("carbs"), "calcium": h.get("calcium")}, "USDA: " + str(h["desc"])
     return None, None
 
 

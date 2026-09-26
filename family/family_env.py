@@ -15,7 +15,7 @@ about where that member's files are, and nothing can default to the owner's
     FAMILY_BASE      https://family.dr-manoj.in
     FAMILY_NAME      display name          (server-side only)
     FAMILY_CARETAKER who to call when sign-in is paused
-    FAMILY_PROFILE   gut | joint | general
+    FAMILY_PROFILE   gut | joint | general | weight
     FAMILY_PORT_GUT / _RX / _FIT           loopback ports
 
 Python 3.9.
@@ -24,7 +24,7 @@ import os
 import re
 
 MARKER = "FAMILY_EDITION_V1"
-PROFILES = ("gut", "joint", "general")
+PROFILES = ("gut", "joint", "general", "weight")   # weight: 26-Sep-2026
 SLUG_RX = re.compile(r"^m[0-9]{1,3}$")
 CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

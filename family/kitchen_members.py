@@ -500,6 +500,19 @@ def j_people():
     return jsonify(ok=True, people=K.people_list())
 
 
+@bp.route("/j/browse")
+def j_browse():
+    """1.2.0 -- finding recipes: the member's saved preferences apply unless
+    the page sends its own `pref` list (it does, after the first load)."""
+    need()
+    args = dict((k, request.args.get(k)) for k in request.args)
+    if args.get("by") == "me":
+        args["by"] = g.kslug
+    saved = () if "pref" in args else prefs()
+    return jsonify(ok=True, all_groups=K.GROUPS, meals=list(K.MEALS), prefs_all=[list(p) for p in K.PREFS],
+                   can_hide=False, saved_prefs=prefs(), **K.browse(g.kslug, args, saved))
+
+
 @bp.route("/j/recipe/<int:rid>")
 def j_recipe(rid):
     need()
@@ -634,7 +647,17 @@ async function post(u,b){const r=await fetch(B+u,{method:'POST',credentials:'sam
   const j=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(j.err||'Save failed');e.j=j;e.status=r.status;throw e;}return j;}
 async function upload(u,fd){const r=await fetch(B+u,{method:'POST',credentials:'same-origin',body:fd});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.err||'Upload failed');return j;}
 const TABS=[['browse','Recipes'],['inbox','Inbox'],['add','Add'],['me','Me']];
-let ST={tab:'browse',grp:'',sort:'az',q:'',by:''};
+/* Kitchen 1.2.0 -- finding recipes: a person view and a category view over the
+   category backbone, one search box (Hindi/English aliases on the server), and
+   filters that combine with either view. The last person / category opened is
+   remembered on this phone. */
+let ST={tab:'browse',q:'',view:'person',by:'',grp:'',f:{pref:null,meal:'',protein:false,quick:false,top:false,new:false,mine:false}};
+const LSK='kitchen_last_'+CFG.slug;
+function remember(){try{localStorage.setItem(LSK,JSON.stringify({view:ST.view,by:ST.by,grp:ST.grp}));}catch(e){}}
+function recall(){try{const j=JSON.parse(localStorage.getItem(LSK)||'{}');if(j.view)ST.view=j.view;if(j.by)ST.by=j.by;if(j.grp)ST.grp=j.grp;}catch(e){}}
+function browseParams(){const p=new URLSearchParams();p.set('q',ST.q);p.set('by',ST.by);p.set('grp',ST.grp);
+  if(ST.f.meal)p.set('meal',ST.f.meal);['protein','quick','top','new','mine'].forEach(k=>{if(ST.f[k])p.set(k,'1');});
+  if(ST.f.pref)p.set('pref',Object.keys(ST.f.pref).filter(k=>ST.f.pref[k]).join(','));return p.toString();}
 function tabs(){const b=$('#tabs');b.innerHTML='';TABS.forEach(([k,l])=>{const x=el('button','tab'+(ST.tab===k?' sel':''),l);x.onclick=()=>{ST.tab=k;show();};b.appendChild(x);});}
 function show(){tabs();({browse,inbox,add,me})[ST.tab]();}
 function byLine(r){return 'Recipe by '+(r.added_by||'someone');}
@@ -645,31 +668,42 @@ function listCard(r){const c=el('div','card');c.style.cursor='pointer';
   const h=el('div','row');h.appendChild(el('b','',r.name));
   h.appendChild(el('span','mut',r.rating.avg?('\u2605 '+r.rating.avg+' ('+r.rating.n+')'):''));c.appendChild(h);
   c.appendChild(el('p','by',byLine(r)));
-  c.appendChild(el('p','mut',r.grp+' \u00b7 added '+(r.added_date||'')+(r.new?' \u00b7 new':'')+(r.rating.made?(' \u00b7 made '+r.rating.made+'\u00d7'):'')));
+  c.appendChild(el('p','mut',r.grp+' \u00b7 added '+(r.added_date||'')+(r.new?' \u00b7 new':'')+(r.rating.made?(' \u00b7 made '+r.rating.made+'\u00d7'):'')+(r.minutes?(' \u00b7 '+r.minutes+' min'):'')));
   const v=versionsText(r);if(v)c.appendChild(el('p','mut',v));
   const s=statusNote(r);if(s)c.appendChild(el('p','warn',s));
   c.onclick=()=>recipe(r.id);return c;}
+function chip(box,label,on,fn){const c=el('button','chip'+(on?' sel':''),label);c.onclick=fn;box.appendChild(c);return c;}
+let RENDER=0;   /* two taps in quick succession: only the latest answer is drawn */
 async function browse(){
+  const my=++RENDER;
   const v=$('#view');v.innerHTML='';
-  const s=el('input');s.placeholder='Search a dish or an ingredient';s.value=ST.q;s.setAttribute('aria-label','Search');
-  s.onchange=()=>{ST.q=s.value;browse();};v.appendChild(s);
-  const so=el('div','chips');so.style.marginTop='8px';
-  [['az','All'],['top','Top rated'],['new','New this week'],['fav','Family favourites'],['by','By person'],['mine','Mine']].forEach(([k,l])=>{
-    const c=el('button','chip'+(ST.sort===k?' sel':''),l);c.onclick=()=>{ST.sort=k;ST.by=(k==='mine'?'me':'');browse();};so.appendChild(c);});
-  v.appendChild(so);
-  if(ST.sort==='by'){let p;try{p=await jget('/j/people');}catch(e){v.appendChild(el('p','mut','Could not load.'));return;}
-    const pc=el('div','chips');pc.style.marginTop='8px';
-    (p.people||[]).forEach(x=>{const c=el('button','chip'+(ST.by===x.slug?' sel':''),x.name+' ('+x.n+')');c.onclick=()=>{ST.by=x.slug;browse();};pc.appendChild(c);});
-    v.appendChild(pc);if(!ST.by){v.appendChild(el('p','mut','Tap a name to see their recipes.'));return;}}
-  const sort=(ST.sort==='by'||ST.sort==='mine')?'az':ST.sort;
-  let j;try{j=await jget('/j/recipes?sort='+sort+'&q='+encodeURIComponent(ST.q)+'&grp='+encodeURIComponent(ST.grp)+'&by='+encodeURIComponent(ST.by));}catch(e){v.appendChild(el('p','mut','Could not load.'));return;}
+  const s=el('input');s.placeholder='Search a dish, an ingredient, a category or a name';s.value=ST.q;s.setAttribute('aria-label','Search');s.id='q';s.enterKeyHint='search';
+  s.onchange=()=>{if(s.value!==ST.q){ST.q=s.value;browse();}};s.onkeydown=(e)=>{if(e.key==='Enter'){e.preventDefault();ST.q=s.value;browse();}};v.appendChild(s);
+  let j;try{j=await jget('/j/browse?'+browseParams());}catch(e){if(my===RENDER)v.appendChild(el('p','mut','Could not load.'));return;}
+  if(my!==RENDER)return;
   if(!j.ok){v.appendChild(el('p','mut',j.err||'The Family Kitchen is not reachable.'));return;}
-  const g=el('div','chips');g.style.marginTop='8px';
-  ['',...(j.groups||[])].forEach(x=>{const c=el('button','chip'+(ST.grp===x?' sel':''),x||'Every group');c.onclick=()=>{ST.grp=x;browse();};g.appendChild(c);});
-  v.appendChild(g);
-  if((j.prefs||[]).length){const names=Object.fromEntries(CFG.prefs_all);v.appendChild(el('p','mut','Showing what fits your preferences: '+j.prefs.map(p=>names[p]||p).join(', ')+'.'));}
-  if(!(j.recipes||[]).length)v.appendChild(el('p','mut',ST.sort==='mine'?'Nothing of yours yet. Share or paste a recipe, then publish it from your Inbox.':'Nothing here yet.'));
-  (j.recipes||[]).forEach(r=>v.appendChild(listCard(r)));
+  if(!ST.f.pref){ST.f.pref={};(j.prefs||[]).forEach(p=>{ST.f.pref[p]=true;});}
+  const vt=el('div','chips');vt.style.marginTop='8px';vt.id='views';
+  [['person','Person \u2192 Category'],['category','Category \u2192 Person']].forEach(([k,l])=>chip(vt,l,ST.view===k,()=>{ST.view=k;remember();browse();}));
+  v.appendChild(vt);
+  const ft=el('div','chips');ft.style.marginTop='6px';ft.id='filters';
+  (j.prefs_all||[]).forEach(([k,l])=>chip(ft,l,!!ST.f.pref[k],()=>{ST.f.pref[k]=!ST.f.pref[k];browse();}));
+  (j.meals||[]).forEach(m=>chip(ft,m.charAt(0).toUpperCase()+m.slice(1),ST.f.meal===m,()=>{ST.f.meal=ST.f.meal===m?'':m;browse();}));
+  [['protein','High-protein'],['quick','Quick'],['top','Top-rated'],['new','New this week'],['mine','Made it by me']].forEach(([k,l])=>chip(ft,l,!!ST.f[k],()=>{ST.f[k]=!ST.f[k];browse();}));
+  v.appendChild(ft);
+  const l1=el('div','chips');l1.style.marginTop='10px';l1.id='level1';const l2=el('div','chips');l2.style.marginTop='6px';l2.id='level2';
+  const people=(box)=>{chip(box,'Everyone ('+(j.everyone||0)+')',!ST.by,()=>{ST.by='';remember();browse();});
+    (j.people||[]).forEach(x=>chip(box,x.name+' ('+x.n+')',ST.by===x.slug,()=>{ST.by=ST.by===x.slug?'':x.slug;remember();browse();}));};
+  const groups=(box)=>{const n=(j.groups||[]).reduce((a,g)=>a+g.n,0);chip(box,'Every category ('+n+')',!ST.grp,()=>{ST.grp='';remember();browse();});
+    (j.groups||[]).forEach(x=>chip(box,x.grp+' ('+x.n+')',ST.grp===x.grp,()=>{ST.grp=ST.grp===x.grp?'':x.grp;remember();browse();}));};
+  if(ST.view==='person'){people(l1);groups(l2);}else{groups(l1);people(l2);}
+  v.appendChild(l1);v.appendChild(l2);
+  const on=Object.keys(ST.f.pref).filter(k=>ST.f.pref[k]);
+  if(on.length){const names=Object.fromEntries(CFG.prefs_all);v.appendChild(el('p','mut','Showing what fits: '+on.map(p=>names[p]||p).join(', ')+'.'));}
+  if(!(j.recipes||[]).length){v.appendChild(el('p','mut',j.hint||(ST.f.mine?'Nothing of yours yet. Share or paste a recipe, then publish it from your Inbox.':'Nothing here yet.')));return;}
+  const byg={};(j.recipes||[]).forEach(r=>{(byg[r.grp]=byg[r.grp]||[]).push(r);});
+  CFG.groups.concat(Object.keys(byg).filter(g=>CFG.groups.indexOf(g)<0)).filter(g=>byg[g]).forEach(g=>{
+    v.appendChild(el('h3','',g+' ('+byg[g].length+')'));byg[g].forEach(r=>v.appendChild(listCard(r)));});
 }
 function ingText(i){return i.text||(((i.qty!=null?i.qty+' ':'')+(i.unit||'')+' '+i.item).trim());}
 async function recipe(id){
@@ -679,7 +713,7 @@ async function recipe(id){
   const r=j.recipe,c=el('div','card');
   c.appendChild(el('h2','',r.name));
   c.appendChild(el('p','by',byLine(r)));
-  c.appendChild(el('p','mut','Added '+(r.added_date||'')+' \u00b7 '+r.grp+' \u00b7 serves '+r.servings+(r.serving_text?(' \u00b7 '+r.serving_text):'')));
+  c.appendChild(el('p','mut','Added '+(r.added_date||'')+' \u00b7 '+r.grp+' \u00b7 serves '+r.servings+(r.serving_text?(' \u00b7 '+r.serving_text):'')+(r.minutes?(' \u00b7 about '+r.minutes+' min'):'')));
   if(r.source_url){const p=el('p','mut','Shared by '+r.added_by+' \u00b7 source: ');const a=el('a','',r.source_site||r.source_url);a.href=r.source_url;a.target='_blank';a.rel='noopener';p.appendChild(a);c.appendChild(p);}
   else if(r.has_photo){c.appendChild(el('p','mut','Shared by '+r.added_by+' \u00b7 from a photo'));}
   if(r.has_photo){const im=el('img','att');im.src=B+'/j/recipe/'+id+'/attach';im.alt='The original photo';c.appendChild(im);}
@@ -732,12 +766,13 @@ function form(c,ex,unknown){
   const gp=el('select');CFG.groups.forEach(x=>{const o=el('option','',x);o.value=x;gp.appendChild(o);});
   gp.value=CFG.groups.includes(ex.grp)?ex.grp:'Other';c.appendChild(el('p','','Group'));c.appendChild(gp);
   const sv=el('input');sv.value=ex.servings||'';sv.inputMode='decimal';c.appendChild(el('p','','Serves'));c.appendChild(sv);
+  const mn=el('input');mn.value=ex.minutes||'';mn.inputMode='numeric';mn.placeholder='optional';c.appendChild(el('p','','Time to make (minutes)'));c.appendChild(mn);
   c.appendChild(el('p','','Ingredients'));const ib=el('div');c.appendChild(ib);
   const unk=new Set(unknown||[]);let rows=(ex.ingredients||[]).map(i=>irow(ib,Object.assign({},i,{unknown:unk.has(i.item)})));
   const ad=el('button','btn ghost','+ ingredient');ad.onclick=()=>rows.push(irow(ib,{}));c.appendChild(ad);
   const me_=el('textarea');me_.rows=6;me_.value=(ex.method||[]).join('\n');c.appendChild(el('p','','Method (one step a line)'));c.appendChild(me_);
   const nt=el('textarea');nt.rows=2;nt.value=(ex.notes||[]).join('\n');c.appendChild(el('p','','Notes (optional)'));c.appendChild(nt);
-  return ()=>({name:nm.value,grp:gp.value,servings:sv.value,ingredients:rows.map(r=>r._get()).filter(i=>i.item),
+  return ()=>({name:nm.value,grp:gp.value,servings:sv.value,minutes:mn.value,ingredients:rows.map(r=>r._get()).filter(i=>i.item),
     method:me_.value.split('\n').filter(s=>s.trim()),notes:nt.value.split('\n').filter(s=>s.trim())});}
 function edit(r){const v=$('#view');v.innerHTML='';const c=el('div','card');c.appendChild(el('h2','','Edit: '+r.name));
   const get=form(c,r,[]);
@@ -772,7 +807,7 @@ async function review(id){
   const dupBox=el('div');c.appendChild(dupBox);
   const go=async(extra)=>{try{
       const x=await post('/j/drafts/'+id+'/publish',Object.assign(get(),extra||{}));
-      toast('Published \u2014 in the Family Kitchen now');ST.tab='browse';ST.sort='mine';ST.by='me';show();return x;}
+      toast('Published \u2014 in the Family Kitchen now');ST.tab='browse';ST.f.mine=true;ST.by='';ST.grp='';show();return x;}
     catch(e){if(e.status===409&&e.j&&e.j.duplicate){dupBox.innerHTML='';
         dupBox.appendChild(el('p','flag','"'+e.j.duplicate.name+'" by '+(e.j.duplicate.by||'someone')+' is already in the Kitchen ('+e.j.duplicate.why+').'));
         const y=el('button','btn',"Publish as "+CFG.name+"'s version");y.onclick=()=>go({force:true,as_version:true});dupBox.appendChild(y);
@@ -829,6 +864,7 @@ async function me(){
   const f2=el('form');f2.method='post';f2.action=B+'/signout-all';f2.appendChild(el('button','btn danger','Sign out on all devices'));so.appendChild(f2);
   v.appendChild(so);
 }
+recall();
 show();
 </script></body></html>"""
 

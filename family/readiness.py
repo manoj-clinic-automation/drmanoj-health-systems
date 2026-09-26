@@ -32,7 +32,16 @@ sign-in page ("<Name> — Family Kitchen", manifest named "Family Kitchen"),
 the file PIN verified offline, one sign-in, Face ID offered, the recipe
 book, a draft captured, published as "Recipe by <Name>", rated, the test
 recipe and its draft removed, sign out, and the pool's counts as before.
-Python 3.9.
+
+A MEMBER ON THE weight PROFILE (26-Sep-2026) is also checked for: a weekly
+dose scheduled for today, shown and ticked, then removed; a check-in
+answered (PHQ-2, all zeros -- no flag) and removed; the plan PDF present.
+
+A PHYSIO (--slug p1) is checked against the member they are attached to:
+the sign-in page names them and the member, the file PIN verified offline,
+one sign-in, the programme, a pain entry saved and removed, the physio
+cookie sent to the member's own pages and APIs and REFUSED everywhere
+(scope), sign out. Python 3.9.
 """
 import argparse
 import glob
@@ -68,11 +77,12 @@ class Browser(object):
         self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
         self.op.addheaders = [("User-Agent", "family-readiness/1 (iPhone)")]
 
-    def req(self, path, data=None, js=None):
+    def req(self, path, data=None, js=None, headers=None):
         url = path if path.startswith("http") else self.base + path
         # A page load asks for HTML, as a browser does: that is what the sign-in ring answers.
-        body, hdr = None, ({"Accept": "application/json"} if "/api/" in url else
+        body, hdr = None, ({"Accept": "application/json"} if "/api/" in url or "/j/" in url else
                            {"Accept": "text/html,application/xhtml+xml"})
+        hdr.update(headers or {})
         if js is not None:
             body, hdr = json.dumps(js).encode(), {"Content-Type": "application/json", "Accept": "application/json"}
         elif data is not None:
@@ -90,6 +100,9 @@ class Browser(object):
         except ValueError:
             j = None
         return code, final, text, j
+
+    def cookie(self, name):
+        return next((c.value for c in self.jar if c.name == name), None)
 
 
 def read_env(path):
@@ -126,8 +139,10 @@ def kv(care_db):
 def counts(db):
     c = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
     try:
-        return dict((t, c.execute("SELECT COUNT(*) FROM %s" % t).fetchone()[0])
-                    for t in ("prnmeds", "med_salts", "meals", "episodes"))
+        tables = ["prnmeds", "med_salts", "meals", "episodes"]
+        if c.execute("SELECT 1 FROM sqlite_master WHERE name='checkins'").fetchone():
+            tables += ["med_schedule", "doses", "checkins"]
+        return dict((t, c.execute("SELECT COUNT(*) FROM %s" % t).fetchone()[0]) for t in tables)
     finally:
         c.close()
 
@@ -306,6 +321,155 @@ def kitchen_readiness(a):
     return 0 if not bad else 1
 
 
+def physio_readiness(a):
+    """A physio: the member's process, the /physio/ pages, and the scope."""
+    import time
+    try:
+        reg = json.load(open(a.registry, encoding="utf-8"))
+    except (OSError, ValueError):
+        reg = {}
+    ent = next((p for p in reg.get("physios") or [] if p.get("slug") == a.slug), None)
+    mslug = a.for_member or ((ent or {}).get("for") or [None])[0]
+    if not ent or not mslug:
+        print("  No such physio here (registry has no %s, or no member to check against; use --for m3)." % a.slug)
+        return 2
+    env = read_env(os.path.join(a.etc, mslug + ".env"))
+    mname = env.get("FAMILY_NAME") or mslug
+    base = (a.base or env.get("FAMILY_BASE") or reg.get("base") or "https://family.dr-manoj.in").rstrip("/")
+    mdir = os.path.join(a.srv, mslug)
+    auth_db = os.path.join(mdir, "physio", a.slug, "auth.db")
+    gut_db = os.path.join(mdir, "gutlog", "health.db")
+    pre = "/%s/physio" % mslug
+    print("Readiness of physio %s at %s%s/ (for %s)" % (a.slug, base, pre, mslug))
+    if not os.path.exists(auth_db) or not os.path.exists(gut_db):
+        print("  Not attached here (auth.db or the member's diary missing).")
+        return 2
+    b = Browser(base)
+    code, _, t, _ = b.req(pre + "/login")
+    tu = html.unescape(t)
+    step("sign-in page names the physio and the member", code == 200
+         and ("%s — physio for %s" % (ent["name"], mname)) in tu, "HTTP %s" % code)
+    step("PIN field: numeric keypad, 6 digits, show/hide eye",
+         "inputmode='numeric'" in t and "maxlength='6'" in t and "id='eye'" in t)
+    pin = file_pin(a.pin_file, a.slug)
+    state = kv(auth_db)
+    locked = int(state.get("lock_until") or 0) > time.time()
+    fails = int(state.get("fails") or 0)
+    if locked or fails >= LOCK_AFTER - 1:
+        step("not locked, and more than one try left", False,
+             "locked" if locked else "%d wrong PINs already; one more would lock -- not trying" % fails)
+        return 2
+    try:
+        from werkzeug.security import check_password_hash
+        good = bool(pin) and check_password_hash(state.get("pin_hash") or "", pin)
+    except ImportError:
+        good = None
+    if not step("the PIN in %s verifies (checked offline, no attempt used)" % a.pin_file, good,
+                "no PIN line for %s" % a.slug if not pin else "stale PIN -- reset with stamp_member.py"):
+        return 2
+    code, final, _, _ = b.req(pre + "/login", data={"pin": pin, "p": a.slug})
+    pin = None
+    mc, _, _, me = b.req(pre + "/j/me")
+    if not step("one real sign-in with the PIN", code == 200 and mc == 200 and (me or {}).get("slug") == a.slug
+                and "/login" not in urllib.parse.urlparse(final).path, "HTTP %s at %s, me %s" % (code, final, mc)):
+        print("NOT READY")
+        return 1
+    tag = "Readiness check " + secrets.token_hex(3)
+    try:
+        pc, _, _, pj = b.req(pre + "/j/programme")
+        step("the programme page answers (items, today's list, next session)",
+             pc == 200 and isinstance((pj or {}).get("programme"), dict), "HTTP %s" % pc)
+        hc, _, ht, _ = b.req(pre + "/")
+        step("the physio page opens", hc == 200 and "Programme" in ht and "Re-test" in ht, "HTTP %s" % hc)
+        rc, _, _, rj = b.req(pre + "/j/pain", js={"site": "Knee - L", "score": 0, "walk_min": 30, "notes": tag})
+        c = sqlite3.connect("file:%s?mode=ro" % gut_db, uri=True)
+        row = c.execute("SELECT id FROM joint_log WHERE notes LIKE ?", ("%" + tag + "%",)).fetchone()
+        c.close()
+        step("a pain and walking entry saved by the physio", rc == 200 and row, "HTTP %s" % rc)
+        # scope: the physio cookie, sent by hand to everything that is not /physio/
+        ck = b.cookie("fam_%s_physio" % mslug)
+        hdr = {"Cookie": "fam_%s_physio=%s" % (mslug, ck or "")}
+        probe = Browser(base)
+        bad = []
+        for path in ("/%s/api/now" % mslug, "/%s/api/checkins/due" % mslug, "/%s/api/plans" % mslug,
+                     "/%s/api/joint" % mslug, "/%s/api/physio/me" % mslug, "/%s/api/care/me" % mslug):
+            pc_, _, pt, pj_ = probe.req(path, headers=hdr)
+            if pc_ == 200 and pj_ is not None and not (isinstance(pj_, dict) and pj_.get("ok") is False) \
+                    and "login" not in pt[:300]:
+                bad.append(path)
+        hc2, hf, ht2, _ = probe.req("/%s/" % mslug, headers=hdr)
+        if hc2 == 200 and 'id="tab-now"' in ht2:
+            bad.append("/%s/" % mslug)
+        rx, rf, rt, _ = probe.req("/%s/rx/" % mslug, headers=hdr)
+        if rx == 200 and "/login" not in urllib.parse.urlparse(rf).path and "login" not in rt[:400].lower():
+            bad.append("/%s/rx/" % mslug)
+        step("the physio cookie opens nothing else of the record (Now, check-ins, plans, joint log, "
+             "caretaker, RxGuard)", ck and not bad, "reached: %s" % bad)
+    finally:
+        con = sqlite3.connect(gut_db, timeout=10)
+        try:
+            con.execute("DELETE FROM joint_log WHERE notes LIKE ?", ("%" + tag + "%",))
+            con.commit()
+        finally:
+            con.close()
+            keep_owner(gut_db)
+    lc, lf, _, _ = b.req(pre + "/signout", data={})
+    mc2, _, _, _ = b.req(pre + "/j/me")
+    step("sign out works (back at the sign-in page, and signed out)",
+         lc == 200 and urllib.parse.urlparse(lf).path == pre + "/login" and mc2 == 401,
+         "HTTP %s at %s, me %s" % (lc, lf, mc2))
+    c = sqlite3.connect("file:%s?mode=ro" % gut_db, uri=True)
+    left = c.execute("SELECT COUNT(*) FROM joint_log WHERE notes LIKE ?", ("%" + tag + "%",)).fetchone()[0]
+    c.close()
+    step("nothing left behind (the test pain entry removed)", left == 0, "left %s" % left)
+    bad = [n for n, ok in RESULTS if not ok]
+    print("READY" if not bad else "NOT READY (%d failed)" % len(bad))
+    return 0 if not bad else 1
+
+
+def weight_steps(b, pre, gut_db, tag):
+    """The weight-profile checks, inside the member's signed-in session.
+    Everything written carries `tag` and is removed by the caller."""
+    import time
+    wd = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"][time.localtime().tm_wday]
+    b.req(pre + "/api/prnmeds", js={"name": tag + " weekly"})
+    _, _, _, full = b.req(pre + "/api/prnmeds/full")
+    mid = next((m["id"] for m in (full or []) if m.get("name") == tag + " weekly"), None)
+    sc, _, _, sj = b.req(pre + "/api/schedule", js={"med_id": mid, "slot": "WEEKLY", "weekday": wd,
+                                                     "at_time": "12:00", "dose_text": "1 dose"})
+    _, _, _, now = b.req(pre + "/api/now")
+    wk = next((s for s in (now or {}).get("slots") or [] if s.get("slot") == "WEEKLY"), None)
+    row = next((r for r in (wk or {}).get("rows") or [] if r.get("name") == tag + " weekly"), None)
+    dc, _, _, dj = b.req(pre + "/api/now/dose", js={"med_id": mid, "sched_id": (row or {}).get("sched_id"),
+                                                     "status": "TAKEN", "dose_text": "1 dose"}) if row else (0, 0, 0, None)
+    _, _, _, now2 = b.req(pre + "/api/now")
+    row2 = next((r for s in (now2 or {}).get("slots") or [] if s.get("slot") == "WEEKLY"
+                 for r in s.get("rows") or [] if r.get("name") == tag + " weekly"), None)
+    step("a weekly dose scheduled for today shows on the Now page and can be ticked",
+         sc == 200 and (sj or {}).get("ok") and row and dc == 200 and (row2 or {}).get("status") == "TAKEN",
+         "schedule %s, shown %s, dose %s, status %s" % (sc, bool(row), dc, (row2 or {}).get("status")))
+    cc, _, _, cj = b.req(pre + "/api/checkins", js={"kind": "phq2", "answers": {"q1": 0, "q2": 0}, "note": tag})
+    cid = (cj or {}).get("id")
+    dd, _, _, _ = b.req(pre + "/api/checkins/%s/delete" % cid, js={}) if cid else (0, 0, 0, 0)
+    step("a check-in answered (PHQ-2, all zero: no flag), totalled, then removed",
+         cc == 200 and cid and (cj or {}).get("total") == 0 and not (cj or {}).get("tell_caretaker")
+         and dd == 200, "HTTP %s %s delete %s" % (cc, cj, dd))
+    pc, _, _, plans = b.req(pre + "/api/plans")
+    step("the plan document is present (a PDF filed under Plans)",
+         pc == 200 and any(p.get("has_file") for p in (plans or [])), "HTTP %s, %d plan(s)" % (pc, len(plans or [])))
+    return mid
+
+
+def weight_cleanup(con, tag):
+    for (i,) in con.execute("SELECT id FROM prnmeds WHERE name=?", (tag + " weekly",)).fetchall():
+        con.execute("DELETE FROM doses WHERE med_id=? OR sched_id IN (SELECT id FROM med_schedule WHERE med_id=?)",
+                    (i, i))
+        con.execute("DELETE FROM med_schedule WHERE med_id=?", (i,))
+        con.execute("DELETE FROM med_salts WHERE med_id=?", (i,))
+        con.execute("DELETE FROM prnmeds WHERE id=?", (i,))
+    con.execute("DELETE FROM checkins WHERE note=?", (tag,))
+
+
 def main():
     ap = argparse.ArgumentParser(description="Is a member's copy ready to hand over?")
     ap.add_argument("--slug", required=True)
@@ -314,11 +478,14 @@ def main():
     ap.add_argument("--etc", default="/etc/family")
     ap.add_argument("--srv", default="/srv/family")
     ap.add_argument("--registry", default="/root/family/members.local.json")
+    ap.add_argument("--for", dest="for_member", default=None, help="a physio: the member to check against")
     a = ap.parse_args()
     if re.match(r"^k[0-9]{1,3}$", a.slug):
         return kitchen_readiness(a)
+    if re.match(r"^p[0-9]{1,3}$", a.slug):
+        return physio_readiness(a)
     if not re.match(r"^m[0-9]{1,3}$", a.slug):
-        print("--slug must look like m1 (or k1 for a kitchen member).")
+        print("--slug must look like m1 (or k1 for a kitchen member, p1 for a physio).")
         return 2
     env = read_env(os.path.join(a.etc, a.slug + ".env"))
     name = env.get("FAMILY_NAME") or ""
@@ -436,6 +603,9 @@ def main():
             p = urllib.parse.urlparse(af).path
             step("%s opens through the sign-in ring" % label,
                  ac == 200 and p.startswith("%s/%s/" % (pre, app)) and "/login" not in p, "HTTP %s at %s" % (ac, p))
+        # ------------------------------------------------------------ 11 (weight profile)
+        if env.get("FAMILY_PROFILE") == "weight":
+            weight_steps(b, pre, gut_db, tag)
     finally:
         # ------------------------------------------------------------ cleanup (always)
         con = sqlite3.connect(gut_db, timeout=10)
@@ -446,6 +616,8 @@ def main():
                 con.execute("DELETE FROM prnmeds WHERE id=?", (i,))
             con.execute("DELETE FROM meals WHERE notes=?", (tag,))
             con.execute("DELETE FROM episodes WHERE notes=?", (tag,))
+            if env.get("FAMILY_PROFILE") == "weight":
+                weight_cleanup(con, tag)
             con.commit()
         finally:
             con.close()

@@ -199,7 +199,8 @@ def run(rig):
     rb = c.get("/m1/api/care/status", headers={"Authorization": "Bearer " + s2})
     ra = c.get("/m1/api/care/status", headers={"Authorization": "Bearer " + s1})
     j = ra.json() or {}
-    allowed = {"ok", "access", "last_entry", "doses", "rx", "bp", "days_since_report"}
+    # "flag" (GutLog v3.40.0): a same-day check-in flag, a boolean, never an answer.
+    allowed = {"ok", "access", "last_entry", "doses", "rx", "bp", "days_since_report", "flag"}
     check("A06 status endpoint: bearer only, this member's token only, summary fields only",
           r0.status == 401 and rb.status == 401 and ra.status == 200 and set(j) <= allowed
           and j.get("access") == "on" and "doses" in j and "Member" not in ra.text,

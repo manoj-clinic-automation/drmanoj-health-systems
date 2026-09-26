@@ -1,0 +1,244 @@
+{
+ "_": [
+  "Family Edition Phase E -- the weight profile, a seeded member, the physio role. Every assertion is broken on purpose in a COPY of the folder that carries it (GutLog, or the family layer). The controls the brief names: anyday (a weekly dose shown on the wrong day), nolate (yesterday's weekly dose never asked about), nostamp (a check-in stored without its time) + nototal (the total wrong), noflag (the item-9 flag suppressed), physioreach (the physio cookie reaching a non-physio endpoint), nowindows (the meal window ignored), noadvance (a milestone never advancing), seedleak (seed data written into a tracked file)."
+ ],
+ "suite": "test_family_e.py",
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3400_weight.py",
+ "assertions": [
+  {
+   "name": "E02 a weekly dose shows on its weekday only",
+   "control": "mutation",
+   "mutation": {
+    "id": "anyday",
+    "why": "a weekly line is shown every day",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "    rows = [r for r in rows if r[\"slot\"] != WEEKLY_SLOT or r[\"weekday\"] == wday]\n",
+    "replace": "    rows = list(rows)\n"
+   }
+  },
+  {
+   "name": "E03 a weekly dose not logged on its day is asked about the next day",
+   "control": "mutation",
+   "mutation": {
+    "id": "nolate",
+    "why": "yesterday's unlogged weekly dose is never asked about",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "        if db().execute(\"SELECT 1 FROM doses WHERE sched_id=? AND day IN (?,?)\",\n                        (s[\"sched_id\"], yd, day)).fetchone():\n            continue\n        out.append(dict(s, due_day=yd))\n",
+    "replace": "        continue\n"
+   }
+  },
+  {
+   "name": "E04 stock of a weekly medicine counts per dose (pens), never as a daily pillbox",
+   "control": "mutation",
+   "mutation": {
+    "id": "pillbox",
+    "why": "a weekly line is counted into the daily pillbox units",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "        elif l[\"slot\"] == WEEKLY_SLOT:\n            pass   # GUTLOG_V3400_WEIGHT -- a weekly dose is counted as it is logged, never as a daily pillbox\n",
+    "replace": "        elif False:\n            pass\n"
+   }
+  },
+  {
+   "name": "E05 meal slots come from the member's own windows",
+   "control": "mutation",
+   "mutation": {
+    "id": "nowindows",
+    "why": "the person's meal windows are ignored; the fixed clock decides",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "    win = meal_windows()   # GUTLOG_V3400_WEIGHT -- the person's own meal times, when set\n    if win:\n",
+    "replace": "    win = meal_windows()\n    if False:\n"
+   }
+  },
+  {
+   "name": "E06 a PHQ-9 answered: stored with the IST day and time, total 8 and band 'mild'",
+   "control": "mutation",
+   "mutation": {
+    "id": "nostamp",
+    "why": "a check-in is stored without its time",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "    ctime = _valid_hm(d.get(\"time\")) or now_hm()\n    nt = note(d, \"note\", 300)\n",
+    "replace": "    ctime = \"\"\n    nt = note(d, \"note\", 300)\n"
+   }
+  },
+  {
+   "name": "E06 a PHQ-9 answered: stored with the IST day and time, total 8 and band 'mild'",
+   "control": "mutation",
+   "mutation": {
+    "id": "nototal",
+    "why": "the total misses the last item",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "        if it[\"key\"] != \"difficulty\":\n            total += v\n",
+    "replace": "        if it[\"key\"] not in (\"difficulty\", \"q8\", \"e8\"):\n            total += v\n"
+   }
+  },
+  {
+   "name": "E07 PHQ-9 item 9 above 0: the member is asked to tell the caretaker today",
+   "control": "mutation",
+   "mutation": {
+    "id": "noflag",
+    "why": "item 9 never raises the flag",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "        flag = clean.get(\"q9\", 0) > 0\n",
+    "replace": "        flag = False\n"
+   }
+  },
+  {
+   "name": "E07 PHQ-9 item 9 above 0: the member is asked to tell the caretaker today",
+   "control": "mutation",
+   "mutation": {
+    "id": "noflagpage",
+    "why": "the owner's Family page never shows the flag",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "            \"<b class='bad'>Check-in flag today &mdash; please call</b>\" if st.get(\"flag\") else \"\",\n",
+    "replace": "            \"\",\n"
+   }
+  },
+  {
+   "name": "E08 the side-effect check appears the day after a weekly dose",
+   "control": "mutation",
+   "mutation": {
+    "id": "noafter",
+    "why": "the day-after rule never fires",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "        if 1 <= (d - dd).days <= 2:\n            return (dd + timedelta(days=1)).isoformat()\n",
+    "replace": "        if False:\n            return (dd + timedelta(days=1)).isoformat()\n"
+   }
+  },
+  {
+   "name": "E09 milestones from the start weight",
+   "control": "mutation",
+   "mutation": {
+    "id": "noadvance",
+    "why": "a crossed milestone stays current; the next one never becomes current",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "        reached = any(allw[i] <= kg and allw[i + 1] <= kg for i in range(len(allw) - 1))\n",
+    "replace": "        reached = False\n"
+   }
+  },
+  {
+   "name": "E09 one weigh-in below a line does not cross it",
+   "control": "mutation",
+   "mutation": {
+    "id": "onecross",
+    "why": "a single weigh-in below a line crosses it",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "        reached = any(allw[i] <= kg and allw[i + 1] <= kg for i in range(len(allw) - 1))\n",
+    "replace": "        reached = any(w <= kg for w in allw)\n"
+   }
+  },
+  {
+   "name": "E10 the This-week card: profile weight only",
+   "control": "mutation",
+   "mutation": {
+    "id": "zerosteps",
+    "why": "no steps data is shown as 0",
+    "module": "app.py",
+    "dir": "../gutlog",
+    "env": "GUT_SRC",
+    "find": "                try:\n                    return int(round(float(v)))\n                except (TypeError, ValueError):\n                    return None\n    return None\n",
+    "replace": "                try:\n                    return int(round(float(v)))\n                except (TypeError, ValueError):\n                    return None\n    return 0\n"
+   }
+  },
+  {
+   "name": "E11 the physio's session reaches NOTHING else",
+   "control": "mutation",
+   "mutation": {
+    "id": "physioreach",
+    "why": "a valid physio cookie is stamped as a member session on every request",
+    "module": "family_physio.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    def need():\n        slug, name = current()\n",
+    "replace": "    @app.before_request\n    def _physio_as_member():\n        from flask import session as _s\n        if not request.path.startswith(\"/physio\") and current()[0] and not _s.get(\"ok\"):\n            gut.stamp_session()\n        return None\n\n    def need():\n        slug, name = current()\n"
+   }
+  },
+  {
+   "name": "E01 nothing from the seed reaches the code tree, the family folder or the tools folder (scan)",
+   "control": "mutation",
+   "mutation": {
+    "id": "seedleak",
+    "why": "the stamp tool writes the seed's medicine names into a file in the code tree",
+    "module": "stamp_member.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    dst = os.path.join(mdir, \"seed.json\")\n    shutil.copy2(seed_path, dst)\n",
+    "replace": "    dst = os.path.join(mdir, \"seed.json\")\n    shutil.copy2(seed_path, dst)\n    with open(os.path.join(P.code, \"family\", \"last_seed.txt\"), \"w\") as _fh:\n        _fh.write(\"\\n\".join(str(x.get(\"name\")) for x in seed.get(\"medicines\") or []))\n"
+   }
+  },
+  {
+   "name": "E01 --seed applies the medicines",
+   "control": "mutation",
+   "mutation": {
+    "id": "noweekly",
+    "why": "the seed's WEEKLY line is dropped",
+    "module": "init_member.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "                if weekday not in gut.WEEKDAYS or not at_time:\n                    continue\n",
+    "replace": "                if True:\n                    continue\n"
+   }
+  },
+  {
+   "name": "E11 the physio signs in with the PIN, on a cookie of their own scoped to /m3/physio/",
+   "control": "mutation",
+   "mutation": {
+    "id": "widecookie",
+    "why": "the physio cookie is set for the whole member path",
+    "module": "family_physio.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        resp.set_cookie(cookie_name, tok, max_age=SESSION_DAYS * 86400, path=here(\"/\"), httponly=True,\n",
+    "replace": "        resp.set_cookie(cookie_name, tok, max_age=SESSION_DAYS * 86400, path=(request.script_root or \"\") + \"/\", httponly=True,\n"
+   }
+  },
+  {
+   "name": "E11 the physio edits the programme, ticks a session, adds a pain and walking entry",
+   "control": "mutation",
+   "mutation": {
+    "id": "nowalk",
+    "why": "walking tolerance is dropped from the physio's pain entry",
+    "module": "family_physio.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            try:\n                walk = int(walk) if walk not in (None, \"\") else None\n            except (TypeError, ValueError):\n                walk = None\n",
+    "replace": "            walk = None\n"
+   }
+  },
+  {
+   "name": "E12 readiness.py on the physio",
+   "control": "mutation",
+   "mutation": {
+    "id": "readinesspain",
+    "why": "the physio readiness check leaves its test pain entry behind",
+    "module": "readiness.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            con.execute(\"DELETE FROM joint_log WHERE notes LIKE ?\", (\"%\" + tag + \"%\",))\n            con.commit()\n        finally:\n            con.close()\n            keep_owner(gut_db)\n    lc, lf, _, _ = b.req(pre + \"/signout\", data={})\n",
+    "replace": "            con.commit()\n        finally:\n            con.close()\n            keep_owner(gut_db)\n    lc, lf, _, _ = b.req(pre + \"/signout\", data={})\n"
+   }
+  }
+ ]
+}

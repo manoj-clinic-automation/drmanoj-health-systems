@@ -60,7 +60,7 @@ from urllib.parse import urlparse
 from flask import Flask, Response, abort, g, jsonify, request, send_from_directory
 
 MARKER = "FAMILY_EDITION_V1"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"   # 1.2.0 (26-Sep-2026): finding recipes -- person/category views, one search box with aliases, filters
 KDIR = os.environ.get("KITCHEN_DIR", "/srv/family/kitchen")
 DB_PATH = os.path.join(KDIR, "kitchen.db")
 ATTACH = os.path.join(KDIR, "attach")
@@ -112,7 +112,201 @@ CREATE TABLE IF NOT EXISTS kmembers (
 """
 # Columns added after 1.0.0 -- guarded ALTERs, run on any connection (migrate()).
 ADDED_COLUMNS = (("recipes", "status", "TEXT DEFAULT 'published'"),
-                 ("recipes", "hidden_note", "TEXT DEFAULT ''"))
+                 ("recipes", "hidden_note", "TEXT DEFAULT ''"),
+                 ("recipes", "minutes", "INTEGER"))   # 1.2.0: time to make, when the contributor states it
+# 1.2.0 -- finding recipes. A category backbone (GROUPS) and, over it, a person
+# view, a category view, one search box with Hindi / English aliases
+# (food_aliases.json beside this file), and filters that combine with any
+# view. Meal chips map onto the groups; the numbers are counts, nothing else.
+MEAL_OF_GROUP = {"Breakfast": ("breakfast",), "Snack": ("snack",), "Sweet": ("sweet",),
+                 "Drink": ("breakfast", "snack"), "Salad": ("lunch", "dinner"), "Dal & curry": ("lunch", "dinner"),
+                 "Sabzi": ("lunch", "dinner"), "Rice & roti": ("lunch", "dinner"),
+                 "Egg, paneer & fish": ("breakfast", "lunch", "dinner"),
+                 "Other": ("breakfast", "lunch", "dinner", "snack", "sweet")}
+MEALS = ("breakfast", "lunch", "dinner", "snack", "sweet")
+HIGH_PROTEIN_G = 10.0        # per serving
+QUICK_MIN = 20               # minutes, where a time is known
+ALIASES_FILE = os.environ.get("KITCHEN_ALIASES", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                             "food_aliases.json"))
+_ALIASES = {}
+_NUTR_CACHE = {}
+MIN_RX = re.compile(r"\b(\d{1,3})\s*(?:min|mins|minute|minutes)\b", re.I)
+HOUR_RX = re.compile(r"\b(\d(?:\.\d)?)\s*(?:hour|hours|hr|hrs)\b", re.I)
+
+
+def aliases():
+    """word -> the set of words that mean the same food, from the data file.
+    Missing file = no aliases (search still works on the words as typed)."""
+    if "map" not in _ALIASES:
+        m = {}
+        try:
+            with open(ALIASES_FILE, encoding="utf-8") as fh:
+                doc = json.load(fh)
+            for grp in doc.get("groups") or []:
+                words = [norm_name(w) for w in grp if norm_name(w)]
+                for w in words:
+                    m.setdefault(w, set()).update(words)
+        except (OSError, ValueError):
+            pass
+        _ALIASES["map"] = m
+    return _ALIASES["map"]
+
+
+def query_terms(q):
+    """The search as typed, one term per word (a multi-word alias such as
+    'bottle gourd' is matched as a phrase first), each with its alternatives."""
+    qn = norm_name(q)
+    if not qn:
+        return []
+    al = aliases()
+    terms, words = [], qn.split()
+    i = 0
+    while i < len(words):
+        took = False
+        for n in (3, 2):
+            phrase = " ".join(words[i:i + n])
+            if n > 1 and phrase in al:
+                terms.append(sorted(al[phrase] | {phrase}))
+                i += n
+                took = True
+                break
+        if not took:
+            w = words[i]
+            terms.append(sorted((al.get(w) or set()) | {w}))
+            i += 1
+    return terms
+
+
+def recipe_minutes(r):
+    """The time to make: the stated minutes, else the largest 'N min' /
+    'N hours' figure in the method or notes; None when nothing is known."""
+    try:
+        if r["minutes"] not in (None, "", 0):
+            return int(r["minutes"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        pass
+    text = " ".join(json.loads(r["method"] or "[]") + json.loads(r["notes"] or "[]"))
+    found = [int(x) for x in MIN_RX.findall(text)] + [int(float(x) * 60) for x in HOUR_RX.findall(text)]
+    return max(found) if found else None
+
+
+def recipe_protein(r):
+    """Protein per serving from the Kitchen's own sum (the bundled table),
+    cached by id and last change; None when nothing matched."""
+    key = (r["id"], r["updated"])
+    if key not in _NUTR_CACHE:
+        try:
+            import kitchen_nutrition as N
+            n = N.recipe_nutrition(json.loads(r["ingredients"] or "[]"), r["servings"])
+            _NUTR_CACHE[key] = (n.get("per_serving") or {}).get("protein")
+        except Exception:
+            _NUTR_CACHE[key] = None
+    return _NUTR_CACHE[key]
+
+
+def recipe_text(r, names):
+    """What the one search box looks in: name, ingredients, category, contributor."""
+    ings = json.loads(r["ingredients"] or "[]")
+    parts = [r["name"], r["grp"] or "", name_of(r["added_slug"], r["added_by"], names)]
+    parts += [str(i.get("item") or "") for i in ings if isinstance(i, dict)]
+    return " " + norm_name(" ".join(parts)) + " "
+
+
+def matches_query(text, terms):
+    """Every term (or one of its aliases) is a whole word, or the start of a
+    word when it is three letters or more -- 'bhind' finds bhindi, 'b' finds
+    nothing but a word 'b'. Never a bare substring."""
+    def hit(w):
+        return (" " + w + " ") in text or (len(w) >= 3 and (" " + w) in text)
+    return all(any(hit(w) for w in alts) for alts in terms)
+
+
+def browse(who, args, prefs=()):
+    """One answer for every way of finding a recipe: the list under the
+    current view and filters, and the counts of the OTHER axis (people when a
+    category is chosen, categories when a person is), all with the same
+    filters applied -- so a person's chips show only the categories they have.
+    args: q, by (slug or 'me'), grp, meal, protein, quick, top, new, mine,
+    pref (comma list), show=hidden (owner only)."""
+    q = args.get("q") or ""
+    by = args.get("by") or ""
+    grp = args.get("grp") or ""
+    meal = (args.get("meal") or "").lower()
+    want = dict((k, (args.get(k) or "") in ("1", "true", "yes", "on")) for k in ("protein", "quick", "top", "new", "mine"))
+    if want["mine"]:
+        by = who
+    extra = [p for p in (args.get("pref") or "").split(",") if p in dict(PREFS)]
+    prefs = list(dict.fromkeys(list(prefs) + extra))
+    show_hidden = args.get("show") == "hidden" and who == "owner"
+    names = people()
+    terms = query_terms(q)
+    rows = db().execute("SELECT * FROM recipes ORDER BY name").fetchall()
+    base = []
+    for r in rows:
+        if r["status"] != "published":
+            if not ((by == who and r["added_slug"] == who) or (show_hidden and r["status"] == "hidden")):
+                continue
+        elif show_hidden:
+            continue
+        ings = json.loads(r["ingredients"] or "[]")
+        if terms and not matches_query(recipe_text(r, names), terms):
+            continue
+        if prefs and not fits_prefs(food_flags(ings), prefs):
+            continue
+        if meal in MEALS and meal not in MEAL_OF_GROUP.get(r["grp"] or "Other", MEAL_OF_GROUP["Other"]):
+            continue
+        if want["quick"]:
+            m = recipe_minutes(r)
+            if m is None or m > QUICK_MIN:
+                continue
+        if want["protein"]:
+            p = recipe_protein(r)
+            if p is None or p < HIGH_PROTEIN_G:
+                continue
+        d = recipe_json(r, who, names=names)
+        d["minutes"] = recipe_minutes(r)
+        if want["top"] and not (d["rating"]["n"] and (d["rating"]["avg"] or 0) >= 4):
+            continue
+        if want["new"] and not d["new"]:
+            continue
+        base.append(d)
+    # counts of the other axis, under the same filters
+    people_n, groups_n = {}, {}
+    for d in base:
+        if not grp or d["grp"] == grp:
+            people_n[d["added_slug"]] = people_n.get(d["added_slug"], 0) + 1
+        if not by or d["added_slug"] == by:
+            groups_n[d["grp"]] = groups_n.get(d["grp"], 0) + 1
+    out = [d for d in base if (not by or d["added_slug"] == by) and (not grp or d["grp"] == grp)]
+    if want["top"]:
+        out.sort(key=lambda x: (-(x["rating"]["avg"] or 0), -x["rating"]["n"], x["name"]))
+    elif want["new"]:
+        out.sort(key=lambda x: x.get("added_at") or "", reverse=True)
+    ppl = [{"slug": s, "name": name_of(s, "someone", names), "n": n} for s, n in people_n.items() if s]
+    ppl.sort(key=lambda x: (-x["n"], x["name"]))
+    grps = [{"grp": g, "n": groups_n.get(g, 0)} for g in GROUPS if groups_n.get(g)]
+    on = [k for k, v in want.items() if v] + (["meal:" + meal] if meal in MEALS else []) + \
+         (["q"] if terms else []) + ["pref:" + p for p in prefs]
+    hint = ""
+    if not out:
+        loosen = []
+        if terms:
+            loosen.append("the search words")
+        if meal in MEALS:
+            loosen.append("the meal (%s)" % meal)
+        for k, lab in (("protein", "high-protein"), ("quick", "quick"), ("top", "top-rated"), ("new", "new this week"),
+                       ("mine", "made by me")):
+            if want[k]:
+                loosen.append(lab)
+        if prefs:
+            loosen.append("the food preference" + ("s" if len(prefs) > 1 else ""))
+        if by and by != who:
+            loosen.append("the person")
+        if grp:
+            loosen.append("the category")
+        hint = ("Nothing matches. Try loosening: " + ", ".join(loosen) + ".") if loosen else "Nothing here yet."
+    return {"recipes": out, "people": ppl, "groups": grps, "total": len(base), "shown": len(out), "by": by,
+            "grp": grp, "filters_on": on, "hint": hint, "prefs": prefs, "everyone": sum(people_n.values())}
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_MB * 1024 * 1024
@@ -272,6 +466,14 @@ def clean_ings(ings):
     return out
 
 
+def clean_minutes(v):
+    try:
+        m = int(float(v))
+    except (TypeError, ValueError):
+        return None
+    return m if 1 <= m <= 1440 else None
+
+
 def clean_lines(v, n=40, width=400):
     if isinstance(v, str):
         v = [x for x in re.split(r"\n+", v) if x.strip()]
@@ -355,6 +557,7 @@ def recipe_json(r, who=None, full=False, names=None):
     d["rating"] = {"n": rt["n"] or 0, "avg": round(rt["avg"], 1) if rt["avg"] else None,
                    "made": rt["made"] or 0, "again": rt["again"] or 0}
     d["new"] = (d.get("added_at") or "") >= (datetime.now() - timedelta(days=7)).isoformat()
+    d["minutes"] = recipe_minutes(r)
     vs = versions_of(r["id"], names)
     d["versions"] = vs if len(vs) > 1 else []
     if who:
@@ -446,6 +649,15 @@ def api_people():
     return jsonify(ok=True, people=people_list())
 
 
+@app.route("/api/browse")
+def api_browse():
+    """1.2.0 -- the person / category views, the search box and the filters,
+    as one answer (see browse())."""
+    who, _n = need_api()
+    return jsonify(ok=True, all_groups=GROUPS, meals=list(MEALS), prefs_all=[list(p) for p in PREFS],
+                   can_hide=who == "owner", **browse(who, request.args))
+
+
 def add_recipe(d, who, name, force=False, draft_id=None):
     nm = str(d.get("name") or "").strip()[:120]
     ings = clean_ings(d.get("ingredients"))
@@ -474,12 +686,12 @@ def add_recipe(d, who, name, force=False, draft_id=None):
         base = db().execute("SELECT id, variant_of FROM recipes WHERE id=?", (variant_of,)).fetchone()
         variant_of = root_of(base) if base else None
     db().execute("INSERT INTO recipes(slug, name, grp, servings, serving_text, ingredients, method, notes, "
-                 "source, attach, added_by, added_slug, added_at, updated, variant_of, variant_label, status) "
-                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'published')",
+                 "source, attach, added_by, added_slug, added_at, updated, variant_of, variant_label, status, "
+                 "minutes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'published',?)",
                  (slug, nm, grp, serv, str(d.get("serving_text") or "")[:80], json.dumps(ings),
                   json.dumps(method), json.dumps(clean_lines(d.get("notes"), 20)),
                   str(d.get("source") or "")[:200], str(d.get("attach") or "")[:80], name, who,
-                  now_s(), now_s(), variant_of, label))
+                  now_s(), now_s(), variant_of, label, clean_minutes(d.get("minutes"))))
     rid = db().execute("SELECT last_insert_rowid() AS i").fetchone()["i"]
     if draft_id:
         db().execute("UPDATE drafts SET status='confirmed', recipe_id=?, updated=? WHERE id=?",
@@ -519,10 +731,11 @@ def edit_recipe(rid, who, d):
     except (TypeError, ValueError):
         serv = r["servings"] or 2.0
     notes = clean_lines(d["notes"], 20) if "notes" in d else json.loads(r["notes"] or "[]")
+    minutes = clean_minutes(d["minutes"]) if "minutes" in d else r["minutes"]
     db().execute("UPDATE recipes SET name=?, grp=?, servings=?, serving_text=?, ingredients=?, method=?, "
-                 "notes=?, updated=? WHERE id=?",
+                 "notes=?, updated=?, minutes=? WHERE id=?",
                  (nm, grp, serv, str(d.get("serving_text", r["serving_text"]) or "")[:80], json.dumps(ings),
-                  json.dumps(method), json.dumps(notes), now_s(), rid))
+                  json.dumps(method), json.dumps(notes), now_s(), minutes, rid))
     db().commit()
     return jsonify(ok=True, id=rid)
 

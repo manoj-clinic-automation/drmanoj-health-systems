@@ -13,6 +13,8 @@
 # cron lines: the nightly backup, and a DNS watch that issues the certificate
 # the moment family.dr-manoj.in resolves here and then removes itself.
 set -uo pipefail
+. "$(dirname "$0")/build_lock.sh"
+take_build_lock "install_family.sh"
 HOST=family.dr-manoj.in
 IP=93.127.195.49
 VH=/usr/local/lsws/conf/vhosts/$HOST/vhost.conf

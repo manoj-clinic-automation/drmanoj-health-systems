@@ -15,6 +15,8 @@
 #  * the reader, every 5 minutes, as root with the Sarvam-capable Python --
 #    the same way the owner's records worker runs.
 set -uo pipefail
+. "$(dirname "$0")/build_lock.sh"
+take_build_lock "install_kitchen.sh"
 K=/srv/family/kitchen
 id -u fam_kitchen >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent \
     --shell /sbin/nologin --user-group fam_kitchen

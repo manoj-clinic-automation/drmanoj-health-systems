@@ -19,6 +19,11 @@
 #  5. keeps the three newest trees, so going back is `ln -sfn <old> current`
 #     and a restart.
 set -uo pipefail
+# 26-Sep-2026: the server-wide build lock, shared with the clinic repository
+# (CLAUDE.md "How a health build runs"). Waits if held; released on exit,
+# also on failure (build_lock.sh sets the trap).
+. "$(dirname "$0")/build_lock.sh"
+take_build_lock "${1:-upgrade_all.sh (family tree)}"
 TS=$(date +%Y%m%d_%H%M%S)
 CODE=/opt/family/code
 NEW=$CODE/$TS

@@ -3,6 +3,50 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-26 (later) — finding recipes, the Kitchen key file, the build lock, the fuller food table
+
+Kitchen 1.2.0, GutLog v3.41.0. **Finding a recipe** in the Family Kitchen (his GutLog
+page, every member's, and the kitchen-only book): Person → Category → Recipe and
+Category → Person → Recipe with counts on every chip, one search box that matches the
+dish, any ingredient, the category and the contributor's name — with Hindi / English
+aliases from a data file (lauki = bottle gourd = ghiya, bhindi = okra = lady finger,
+ragi = finger millet …) — and filters that combine with either view: food preference,
+meal, high-protein, quick (where a time is known), top-rated, new this week, made it by
+me. Counts follow the filters; an empty result says what to loosen; the last person or
+category opened is remembered on that phone. **The Kitchen's model keys** now live in
+their own file (`/root/family/kitchen_keys.env`, root:fam_kitchen 640, the two variables
+only); the reader never reads the clinic's file, and says so once when the file is
+missing. **The build lock** (`/root/deploy/.claude_code_build.lock`) is taken by
+`upgrade_all.sh` and the install scripts themselves: a held lock makes them wait, a
+stale one (over 3 h, owner finished) is taken over with a log line, and a trap releases
+it on exit, also on failure. **The food table** was rebuilt from the same USDA download
+with fat, carbohydrate and calcium; every id and every earlier value is unchanged, and
+recipe cards read the three figures instead of "—". `test_family_f.py` 16/16 + 12/12
+in the browser; `test_family_lock.py` on the server; `test_food_table_refresh.py` 6/6.
+
+## 2026-09-26 — the weight profile, a seeded member, the physio
+
+GutLog v3.40.0. A third family profile, `weight`, for a member who starts on a Sunday
+with a once-a-week injection: a **WEEKLY** medicine line (weekday + time) shown on its
+day only, with a reminder from 30 minutes before, a countdown on the other days, and one
+question the day after if it was not logged; stock counts it per dose. Meal slots follow
+the person's **own meal windows**, so an 11:30 breakfast is breakfast. **Check-ins** on a
+schedule — PHQ-9, PHQ-2, Epworth, a side-effect check the day after the weekly dose, the
+weekly weigh-in, monthly measurements — appear only when due and go when answered;
+totals and bands are computed by name; **PHQ-9 item 9 above 0** asks the member to tell
+the caretaker today and puts a same-day flag on the owner's Family page, nothing more.
+A **weight and waist chart** with milestone lines (crossed after two consecutive
+weigh-ins below), a Check-ins page, and a **This-week card** first on the Now page:
+weight, waist, injection countdown, milestone, steps from the phone (blank when none),
+protein against the target. The joint cards show folded underneath. **A member is now
+seeded from a gitignored file** (`stamp_member.py --seed`): setup, windows, plan,
+medicines with salts and schedules, check-in rules and the plan PDF, applied as the
+member and the copy deleted. **A physio** (`p1`) signs in at `/m3/physio/` with the
+family rules on a cookie of their own and reaches only the programme, sessions, pain and
+walking entries and the monthly re-test — the member sees a Physio tile. Sheets for the
+member and the physio come from `family/getting_started_sheet.py`. `test_family_e.py`
+36/36 + 12/12 in the browser at 300 px; negative control 18 declared, all seen to fail.
+
 ## 2026-09-25 (night) — Family Kitchen: recipes-only members, self-publishing, "Recipe by"
 
 Kitchen 1.1.0, GutLog v3.39.0. The Family Kitchen opens to relatives who need only the

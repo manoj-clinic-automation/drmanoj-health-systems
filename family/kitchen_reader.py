@@ -25,8 +25,11 @@ For each draft still 'new':
 
 Uncertain items are listed, never smoothed: words the reader could not make
 out, ingredients with no quantity, a servings figure that was guessed. Keys
-are read in place (environment, else KITCHEN_KEYS_ENV, default /root/wa/.env,
-the file the records worker already reads) and never printed or stored.
+are read in place (environment, else KITCHEN_KEYS_ENV, default
+/root/family/kitchen_keys.env -- the Kitchen's OWN key file, root:fam_kitchen
+640, holding only ANTHROPIC_API_KEY and SARVAM_API_KEY; never the clinic's
+/root/wa/.env, from 26-Sep-2026) and never printed or stored. A missing key
+file is said once per run, and every draft then goes to the manual screen.
 Python 3.9.
 """
 import argparse
@@ -43,7 +46,9 @@ from datetime import datetime
 
 DB = os.environ.get("KITCHEN_DB", "/srv/family/kitchen/kitchen.db")
 ATTACH = os.environ.get("KITCHEN_ATTACH", "/srv/family/kitchen/attach")
-KEYS_ENV = os.environ.get("KITCHEN_KEYS_ENV", "/root/wa/.env")
+KEYS_ENV = os.environ.get("KITCHEN_KEYS_ENV", "/root/family/kitchen_keys.env")
+KEY_NAMES = ("ANTHROPIC_API_KEY", "SARVAM_API_KEY")   # the only two lines the file holds
+_KEYFILE_SAID = {}
 MODEL = os.environ.get("KITCHEN_MODEL", "claude-opus-5")
 MAX_TRIES = 3
 PAGE_MAX = 2 * 1024 * 1024
@@ -90,6 +95,8 @@ def read_key(name):
     v = os.environ.get(name, "").strip()
     if v:
         return v
+    if name not in KEY_NAMES:
+        return ""
     try:
         with open(KEYS_ENV, encoding="utf-8") as fh:
             for line in fh:
@@ -97,7 +104,11 @@ def read_key(name):
                 if line.startswith(name + "="):
                     return line.split("=", 1)[1].strip().strip('"').strip("'")
     except OSError:
-        pass
+        if not _KEYFILE_SAID.get(KEYS_ENV):
+            _KEYFILE_SAID[KEYS_ENV] = True
+            print("%s kitchen key file %s is missing or unreadable -- no model or document reader; drafts go to "
+                  "the manual screen. Create it with: install -o root -g fam_kitchen -m 640 <file> %s"
+                  % (now_s(), KEYS_ENV, KEYS_ENV))
     return ""
 
 

@@ -220,8 +220,10 @@ def run(rig):
     check("C02 nutrition per serving from the ingredients, household measures converted to grams",
           (nut.get("per_serving") or {}).get("kcal") == exp_k and (nut.get("per_serving") or {}).get("protein") == exp_p,
           "got %s want kcal %s protein %s" % (nut.get("per_serving"), exp_k, exp_p))
+    # 26-Sep-2026: the refreshed table carries fat, so a matched card now has a fat figure
+    # (it used to be None); what is asserted here is the unmatched list.
     check("C02 unmatched ingredients are shown, never guessed",
-          set(um) == {"zzq leaf", "pepper"} and (nut.get("per_serving") or {}).get("fat") is None,
+          set(um) == {"zzq leaf", "pepper"} and (nut.get("per_serving") or {}).get("fat") is not None,
           nut.get("unmatched"))
 
     # ---------------------------------------------------------------- C03 adjustments

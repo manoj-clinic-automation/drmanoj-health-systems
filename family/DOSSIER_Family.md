@@ -108,9 +108,71 @@ answers `{"access":"off"}` only. Missing/unreadable switch = off.
 
 `gut` (the owner's Now order), `joint` (joint pain log, pain-medicine totals, steps
 against next-day pain, cholesterol-medicine checks first; knee- and ankle-sparing
-FitLog programme), `general`. All features exist in every copy; the profile sets
-order and which joint cards show. The owner has no profile set → his Now page is
-unchanged.
+FitLog programme), `general`, and `weight` (26-Sep-2026, GutLog v3.40.0: the This-week
+card first, then medicines, meals with protein on the header, the Check-ins card, the
+Physio tile, the joint cards folded, then BP and the rest — see below). All features
+exist in every copy; the profile sets order and which cards show. The owner has no
+profile set → his Now page is unchanged.
+
+## The weight profile, seeded members, the physio (26-Sep-2026)
+
+Built for a member who starts on a Sunday with a once-a-week injection, a diet with
+its own meal times, a weekly weigh-in and a set of check-ins. Everything of hers is
+data: a gitignored seed file on the PC, copied to `/root/family/seeds/` (root, 600),
+applied **as the member** into her own database by `stamp_member.py --seed`, and the
+copy deleted. Nothing from it is in this repository or in any report; the suite's seed
+is "Member W", "Medicine A".
+
+* **GutLog v3.40.0** (`GUTLOG_V3400_WEIGHT`, every copy): a **WEEKLY** schedule
+  line (`med_schedule.weekday`, `at_time`) shown on the Now page only on its weekday,
+  with a reminder from 30 min before, Taken/Skipped like any dose, variants, Retime and
+  Day by day as before, the feed's shape unchanged; a dose not logged by the next day
+  is asked about once ("yesterday's weekly dose — taken late / skipped?"); stock counts
+  a weekly medicine per dose, never as a daily pillbox. **Meal windows**
+  (`settings.meal_windows`) replace the fixed clock in the slot guess. **Check-ins**
+  (table `checkins`; rules in `settings.checkins`: `monthly:N`, `weekly:DDD[ HH:MM]`,
+  `day_after_weekly_dose`): PHQ-9 (with the difficulty question), PHQ-2, Epworth, a
+  side-effect check the day after a weekly dose, a weekly weigh-in (writes the vitals
+  row), monthly measurements — shown only when due, gone when answered, never nagging;
+  totals and bands computed by name (PHQ-9 minimal/mild/moderate/moderately severe/
+  severe; PHQ-2 positive screen at 3; Epworth normal/mild/moderate/severe). **PHQ-9
+  item 9 above 0** sets a same-day flag: the member reads "Please tell <caretaker>
+  today", `/api/care/status` carries `flag`, and the owner's Family page shows
+  "Check-in flag today — please call" on that row. Nothing else is automated, and the
+  flag never carries an answer. **Weight plan** (`settings.weight_plan`: start weight,
+  start day, milestone percentages, targets): milestone lines on the chart; a milestone
+  is crossed after two consecutive weigh-ins at or below it, and the next becomes
+  current. `/checkins` page (chart 7–90 days with waist on a second scale, "Do one now",
+  trends), `/export/checkins.csv`. **This-week card** (`/api/week`): weight and waist,
+  injection countdown, milestone line ("−5 % = X kg, N kg to go"), steps today from
+  FitLog's feed (blank when none — never 0), protein against the target.
+* **The physio** (`family_physio.py`, slug `p1`…): a role inside ONE member's GutLog
+  process at `/m<n>/physio/`, with the family sign-in rules exactly (PIN, lockout,
+  IST log, Face ID, 12 months, sign-out-all) on their own `auth.db` under
+  `<member>/physio/p<n>/`, and their **own cookie** `fam_m<n>_physio` scoped to
+  `/m<n>/physio/`, read by the physio routes and by nothing else. They see and edit the
+  programme (exercises, sets, reps, hold, days), tick sessions, add knee/joint pain and
+  walking-tolerance entries (the member's `joint_log`, marked as theirs) and the monthly
+  re-test (30-s sit-to-stand, 6-min walk, knee ROM, single-leg stance). The member sees
+  the programme as a **Physio tile** on the Now page (tick today's session, see the
+  next); the caretaker sees it too. `test_family_e.py` sends the physio cookie to Now,
+  check-ins, plans, the joint log, the tile, the caretaker page, medicines, weight,
+  meals, the diary page, RxGuard, FitLog, a second member and the owner's app and
+  expects refusal everywhere; its negative control `physioreach` stamps a member session
+  from the cookie and is caught. One physio can be attached to more members (`--for`),
+  keeping the same PIN (`auth.db` copied); `--reset-pin` resets it everywhere.
+* **Tools:** `stamp_member.py --slug m3 --name … --profile weight --seed … --password-file …`
+  (the seed's physio is stamped in the same run; the PIN file gets `m3` and `p1` lines);
+  `--physio --slug p1 --name … --for m3`, `--slug p1 --for m2 | --reset-pin | --disable |
+  --enable`; `--list` shows physios. `readiness.py --slug m3` on a weight member also
+  ticks a weekly dose scheduled for today, answers and removes a PHQ-2, and checks the
+  plan PDF; `readiness.py --slug p1` checks the physio end to end and that their cookie
+  opens nothing else. `family/getting_started_sheet.py --seed …` (PC only, reportlab)
+  writes the member's and the physio's one-page sheets into `fitlog-ingest/` (PDFs are
+  gitignored).
+* **Steps without a watch:** FitLog's iOS ingest accepts iPhone Health data, so the
+  phone in her pocket is enough; the sheet says so, and the card shows steps only when
+  FitLog has them.
 
 ## Family Kitchen
 
@@ -186,10 +248,57 @@ the model step off (drafts then go to the manual screen).
 * **Upgrades:** `upgrade_all.sh` backs up the Kitchen DB before switching (the 1.1.0
   columns/table migrate on first use), restarts the Kitchen and checks `/kitchen/healthz`.
 
+## Finding recipes (Kitchen 1.2.0, 26-Sep-2026)
+
+Over the category backbone (`GROUPS`), `kitchen.browse()` answers one call for every
+way of finding a recipe: the list under the current view and filters, and the counts
+of the other axis under the same filters — so a person's category chips show only the
+categories they have, and a category's people chips only the people who have one
+there. **Person → Category → Recipe** ("Everyone" first, each name with its count) and
+**Category → Person → Recipe**; **one search box** that matches the dish name, any
+ingredient, the category and the contributor's name, with Hindi / English aliases from
+`family/food_aliases.json` (a multi-word alias such as "lady finger" is matched as a
+phrase; every word must match somewhere); **filters** that combine with either view:
+food preference (Vegetarian / Eggetarian / No onion-garlic / Jain — a kitchen member's
+saved ones apply until the page sends its own list), meal (from `MEAL_OF_GROUP`),
+high-protein (≥ 10 g a serving from the Kitchen's own sum, cached), quick (≤ 20 min —
+the stated `minutes`, else the largest "N min / N hours" in the method or notes),
+top-rated (4+), new this week, made it by me. Results grouped by category, "Recipe by
+<Name>" on each; the last person / category opened is remembered per phone
+(`localStorage`); an empty result says what to loosen. The same screen in GutLog's
+Family Kitchen page (v3.41.0, `/api/kitchen/browse`) and in the kitchen-only book
+(`/kitchen/k<n>/j/browse`). Recipes gained `minutes` (guarded column). `build_code.py`
+now names `food_aliases.json` and `build_lock.sh` (`FAMILY_DATA`) — a data file the
+family layer needs at run time must be added there.
+
+**The Kitchen's key file.** `kitchen_reader.py` reads `/root/family/kitchen_keys.env`
+(root:fam_kitchen, 640; `ANTHROPIC_API_KEY` and `SARVAM_API_KEY` only — `KEY_NAMES`),
+never the clinic's `/root/wa/.env`; `KITCHEN_KEYS_ENV` points elsewhere for a test. A
+missing file is said once per run with the `install` line that creates it, and every
+draft goes to the manual screen. To create it, the owner runs one line that copies only
+the two variables out of the clinic's file (in the report).
+
+**The build lock.** `family/build_lock.sh` (`take_build_lock "<brief>"`) is sourced by
+`upgrade_all.sh`, `install_family.sh` and `install_kitchen.sh`: `mkdir
+/root/deploy/.claude_code_build.lock`; if held, wait and re-check every 2 minutes;
+never remove another build's lock unless it is older than 3 hours AND its `owner` file
+reports `finished`, in which case it is taken over with a log line; the `owner` file
+names this repository and the brief; a trap releases it on exit, also on failure.
+`test_family_lock.py` (server; needs bash) proves the wait, the take-over and the trap
+with a scratch folder and short limits.
+
+**The fuller food table.** `gutlog/food_table_usda.json` rebuilt 26-Sep-2026 with fat,
+carbs and calcium appended (columns 5–7); every id and earlier value unchanged;
+`kitchen_nutrition.py` carries the three, so a kitchen member's card equals a full
+member's unadjusted card as before (`test_family_d.py` D08).
+
 ## Commands
 
 ```
-python3 /root/family/stamp_member.py --slug m3 --name "…" --profile gut|joint|general
+python3 /root/family/stamp_member.py --slug m3 --name "…" --profile gut|joint|general|weight
+python3 /root/family/stamp_member.py --slug m3 --name "…" --profile weight --seed /root/family/seeds/m3_seed.local.json --password-file /root/family/first-login.local.txt
+python3 /root/family/stamp_member.py --physio --slug p1 --name "…" --for m3 --password-file /root/family/first-login.local.txt
+python3 /root/family/stamp_member.py --slug p1 --for m2 | --reset-pin | --disable | --enable
 python3 /root/family/stamp_member.py --slug m3 --disable | --enable | --rotate-care | --reset-password
 python3 /root/family/stamp_member.py --slug m3 --rename "…"
 python3 /root/family/stamp_member.py --list
@@ -197,7 +306,7 @@ python3 /root/family/stamp_member.py --refresh-env   # rewrite every member env 
 python3 /root/family/stamp_member.py --kitchen-only --slug k1 --name "…" --password-file /root/family/first-login.local.txt
 python3 /root/family/stamp_member.py --slug k1 --rename "…" | --reset-pin | --disable | --enable
 python3 /root/family/stamp_member.py --kitchen-sync --owner-name "…"   # once: the name on the owner's cards
-python3 /root/family/readiness.py --slug m3           # before giving anyone their link (k1 for a kitchen member)
+python3 /root/family/readiness.py --slug m3           # before giving anyone their link (k1 for a kitchen member, p1 for a physio)
 /root/family/upgrade_all.sh           # after any owner release: build, scratch self-test, migrate, switch, verify
 bash /root/family/install_family.sh   # one-time (done 25-Sep-2026)
 bash /root/family/install_kitchen.sh  # one-time, Phase C
@@ -207,12 +316,24 @@ bash /root/family/install_kitchen.sh  # one-time, Phase C
 
 `test_family_a.py` (isolation, caretaker, stamping, backup), `test_family_b.py` (joint
 focus), `test_family_c.py` (Kitchen), `test_family_d.py` (kitchen members,
-self-publishing, attribution, preferences, readiness) — server-runnable against scratch
-members; the `test_family_ui*.py` browser suites run offline (`ui_d`: a kitchen member at
-300 px). Manifests `new_assertions_family_*.json` use `NEGATIVE_CONTROL.py` "dir"
-mutations: each assertion is broken in a COPY of the folder that carries it. The D
-manifest's named controls: `draftinpool`, `anyedit`, `noattrib` + `noattriblog`,
-`kreach` + `kapi`, `healthcol` + `healthcolauth`.
+self-publishing, attribution, preferences, readiness), `test_family_e.py` (the weight
+profile: a seeded member, the WEEKLY slot, meal windows, check-ins and the item-9 flag,
+milestones, the This-week card, the physio and its scope, readiness; 36 checks) —
+server-runnable against scratch members; the `test_family_ui*.py` browser suites run
+offline (`ui_d`: a kitchen member at 300 px; `ui_e`: the weight member's Now page,
+Check-ins page and the physio page at 300 px). Manifests `new_assertions_family_*.json`
+use `NEGATIVE_CONTROL.py` "dir" mutations: each assertion is broken in a COPY of the
+folder that carries it. The D manifest's named controls: `draftinpool`, `anyedit`,
+`noattrib` + `noattriblog`, `kreach` + `kapi`, `healthcol` + `healthcolauth`. The E
+manifest's: `anyday`, `nolate`, `pillbox`, `nowindows`, `nostamp` + `nototal`, `noflag`
++ `noflagpage`, `noafter`, `noadvance` + `onecross`, `zerosteps`, `physioreach`,
+`seedleak`, `noweekly`, `widecookie`, `nowalk`, `readinesspain`. `test_family_f.py`
+(finding recipes, the key file, the table; 16 checks; `ui_f` at 300 px in GutLog and the
+book) with `personleak`, `allcats`, `allpeople`, `noname`, `noalias`, `noingredient`,
+`noquick`, `noprotein`, `nohint`, `noprefsaved`, `notop`, `gutnocols`, `kitchennocols`,
+`lookupnofat`, `oldkeyfile`, `quietmissing`, `aliaspersonal`. `test_family_lock.py` (server
+only: bash). The 300 px suite also proves that two taps in quick succession never stack
+two answers in the view (a render token; the first build did stack them).
 
 ## Open items (25-Sep-2026)
 

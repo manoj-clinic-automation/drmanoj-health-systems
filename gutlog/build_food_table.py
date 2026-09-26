@@ -28,6 +28,13 @@ SOURCE
     Nutrient ids: 1003 protein (g), 1008 energy (kcal), 1079 total dietary
     fibre (g), all per 100 g edible portion, which is SR Legacy's basis.
 
+    2026-09-26 (refresh approved 24-Sep): three more columns, appended so
+    every reader that indexes the first five stays right -- 1004 total fat
+    (g), 1005 carbohydrate by difference (g), 1087 calcium (mg). The fdc ids
+    and the kcal / protein / fibre values of every food already in the table
+    are unchanged by construction (same source rows, same rounding);
+    gutlog/test_food_table_refresh.py asserts it on the foods in use.
+
 ROWS LEFT OUT ON PURPOSE
     This file is tracked and the repository is public, so it passes through
     tools/NO_SECRETS.py check C, which blocks any tracked file naming a term
@@ -50,7 +57,8 @@ import os
 import re
 import sys
 
-NUTRIENTS = {"1003": 2, "1008": 3, "1079": 4}   # id -> column in the output row
+NUTRIENTS = {"1003": 2, "1008": 3, "1079": 4, "1004": 5, "1005": 6, "1087": 7}   # id -> column in the output row
+NCOLS = 8
 
 
 def main():
@@ -64,7 +72,7 @@ def main():
     foods = {}
     with open(os.path.join(src, "food.csv"), encoding="utf-8", newline="") as fh:
         for r in csv.DictReader(fh):
-            foods[r["fdc_id"]] = [int(r["fdc_id"]), r["description"].strip(), None, None, None]
+            foods[r["fdc_id"]] = [int(r["fdc_id"]), r["description"].strip()] + [None] * (NCOLS - 2)
     with open(os.path.join(src, "food_nutrient.csv"), encoding="utf-8", newline="") as fh:
         for r in csv.DictReader(fh):
             col = NUTRIENTS.get(r["nutrient_id"])
@@ -105,7 +113,7 @@ def main():
         "short": "USDA",
         "licence": "Public domain, CC0 1.0 (USDA FoodData Central)",
         "basis": "per 100 g edible portion",
-        "columns": ["fdc_id", "description", "protein_g", "kcal", "fibre_g"],
+        "columns": ["fdc_id", "description", "protein_g", "kcal", "fibre_g", "fat_g", "carbs_g", "calcium_mg"],
         "source_csv_sha256": digest.hexdigest(),
         "foods": rows,
     }

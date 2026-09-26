@@ -1,4 +1,4 @@
-# GutLog — DOSSIER (v3.38.0)
+# GutLog — DOSSIER (v3.41.0)
 
 Single source of truth. Update after every change.
 
@@ -384,6 +384,68 @@ where it is already logged (409). Extras move to any past day.
 **Every retime is recorded** in `edits` (old/new day and time, when). The
 day view marks such entries *time edited*. A diary time that changed
 silently cannot be trusted later; one that changed visibly can.
+
+## Finding recipes; the fuller food table — v3.41.0 (`GUTLOG_V3410_KITCHENFIND`, 2026-09-26)
+
+- `/api/kitchen/browse` proxies the Kitchen's one `browse` answer (Kitchen 1.2.0,
+  `family/kitchen.py`): the recipes under the current view and filters, and the counts
+  of the other axis — people when a category is chosen, categories when a person is —
+  under the same filters. The Kitchen page's Recipes tab is that screen: Person →
+  Category → Recipe and Category → Person → Recipe (chips with counts, "Everyone"
+  first), one search box (dish, ingredient, category, contributor; Hindi / English
+  aliases from `family/food_aliases.json` on the Kitchen side), filter chips that
+  combine with either view (Vegetarian / Eggetarian / No onion-garlic / Jain;
+  Breakfast / Lunch / Dinner / Snack / Sweet; High-protein ≥ 10 g a serving; Quick ≤ 20
+  min where a time is known — stated, or read from the method; Top-rated; New this
+  week; Made it by me; Hidden for the owner), results grouped by category with "Recipe
+  by <Name>", the last person / category remembered on this phone (`localStorage`), and
+  an empty result that says what to loosen. The Inbox form takes "Time to make".
+- **The food table** (`build_food_table.py`, refreshed 26-Sep-2026 from the same SR
+  Legacy download): columns 5–7 are fat (g), carbohydrate (g), calcium (mg) per 100 g;
+  the first five columns and every id are unchanged (`test_food_table_refresh.py`).
+  `food_lookup()` returns the three; `ing_food()` carries them for a table match and for
+  a food in the person's own list that came from the table (`source_ref` "USDA SR Legacy
+  #id"); `recipe_nutrition()` also returns `partial` — per nutrient, the matched items
+  that had no value — and the card says "fat leaves out: …" rather than reading short.
+
+## The weight profile — v3.40.0 (`GUTLOG_V3400_WEIGHT`, 2026-09-26)
+
+For the Family Edition's third profile; every feature is in every copy, and the
+owner's Now page is unchanged unless `settings.now_profile` is `weight`.
+
+- **WEEKLY schedule line** (`med_schedule.weekday`, `at_time`; schema 3.3.9, two
+  guarded columns): `api_now` keeps a weekly row only on its weekday, under a
+  "Weekly · Sunday" slot with its time; `weekly_late` lists yesterday's weekly doses
+  with nothing logged yesterday or today (asked about once, "taken late" logs today
+  with a note, "skipped" logs SKIPPED on the due day); `weekly_next` gives the
+  countdown. `api_schedule_post` needs weekday and time for the slot; the Schedule
+  editor has a Weekly chip with a weekday and a time. Stock: a weekly line never adds
+  to the daily pillbox units (counted per dose). Retime, Day by day and the feed
+  (`regimen` rows carry `slot: WEEKLY` in the same shape) are unchanged.
+- **Meal windows** (`settings.meal_windows`, `/api/meal_windows`): `meal_slot_guess`
+  uses the person's own windows when set (a gap goes to the nearer window); the fixed
+  clock stays the fallback.
+- **Check-ins** (table `checkins`; `settings.checkins` rules `monthly:N`,
+  `weekly:DDD[ HH:MM]`, `day_after_weekly_dose`): `CHECKIN_KINDS` phq9 (9 items +
+  difficulty), phq2, epworth (8), side_effects (5 items 0–3, energy 0–10, note),
+  weigh_in (writes the vitals row), measurements (waist, hips, neck).
+  `checkins_due()` — due and not answered in the period, nothing else;
+  `checkin_score()` — totals and bands by name; PHQ-9 item 9 > 0 sets
+  `settings.checkin_flag` for the day (`checkin_flag()` reads it back for that day
+  only). `/api/checkins/due`, `/api/checkins` (GET/POST), `/api/checkins/form`,
+  `/api/checkins/<id>/delete`, `/checkins` page, `/export/checkins.csv`. The Family
+  page shows "Check-in flag today — please call" when a member's status carries
+  `flag`. `GUTLOG_CARETAKER_NAME` names whom to tell.
+- **Weight plan and chart** (`settings.weight_plan`, `/api/weight_plan`,
+  `/api/weight?days=`): milestones from the start weight; crossed after two
+  consecutive weigh-ins at or below the line, from the plan's start day; the first not
+  crossed is current.
+- **This-week card** (`/api/week`, `#nowWeek`, weight profile only): weight and
+  waist, injection countdown, milestone text, steps today from FitLog's feed (None,
+  never 0, when absent), protein against `_protein_target()`. `api_mealcards` carries
+  `profile`, and the meals header adds protein against the target under `weight`.
+- The joint cards show under `weight` too (`api_joint_cfg`, `msk_sites`), folded by
+  `foldify()` on the page.
 
 ## Family Kitchen — v3.38.0 (`GUTLOG_V3380_KITCHEN`, 2026-09-25)
 

@@ -16,6 +16,19 @@ FAMILY_EDITION_V1. Run as root on the server:
   python3 /root/family/stamp_member.py --slug k1 --rename "…" | --reset-pin | --disable | --enable
   python3 /root/family/stamp_member.py --kitchen-sync --owner-name "…"   (the name on the owner's cards)
 
+  A SEEDED MEMBER (26-Sep-2026): the setup, meal windows, weight plan, medicines,
+  schedules (incl. WEEKLY), check-in rules and the plan PDF from a gitignored file,
+  applied AS THE MEMBER into their own database, the copy deleted afterwards:
+  python3 /root/family/stamp_member.py --slug m3 --name "…" --profile weight \
+      --seed /root/family/seeds/m3_seed.local.json --password-file /root/family/first-login.local.txt
+
+  A PHYSIO (a role inside a member's copy: /m3/physio/, its own PIN and cookie,
+  the programme, sessions, pain and walking entries and the monthly re-test
+  and nothing else of the record):
+  python3 /root/family/stamp_member.py --physio --slug p1 --name "…" --for m3 --password-file …
+  python3 /root/family/stamp_member.py --slug p1 --for m2          (attach the same physio, same PIN)
+  python3 /root/family/stamp_member.py --slug p1 --reset-pin | --disable | --enable
+
 A kitchen member is an account inside the Kitchen service: a row in
 kitchen.db (slug, display name, enabled, plain food preferences), a PIN in
 /srv/family/kitchen/members/<slug>/auth.db (family_auth, the same rules as
@@ -64,6 +77,7 @@ from datetime import datetime
 HERE = os.path.dirname(os.path.abspath(__file__))
 SLUG_RX = re.compile(r"^m([0-9]{1,3})$")
 KSLUG_RX = re.compile(r"^k[0-9]{1,3}$")
+PSLUG_RX = re.compile(r"^p[0-9]{1,3}$")
 WORDS = ("amber", "basil", "cedar", "delta", "ember", "fable", "grove", "harbor", "indigo",
          "juniper", "kestrel", "lotus", "maple", "nectar", "orchid", "pebble", "quartz",
          "river", "saffron", "tulip", "umber", "velvet", "willow", "yarrow", "zephyr",
@@ -380,6 +394,212 @@ def kitchen_reset_pin(P, slug, system, pin_file=None):
     return 0
 
 
+# ------------------------------------------------------------------ physio
+def member_user(reg, slug):
+    m = next((x for x in reg["members"] if x["slug"] == slug), None)
+    return (m or {}).get("user") or ("fam_" + slug)
+
+
+def physio_paths(P, mslug, pslug):
+    d = os.path.join(P.member(mslug), "physio", pslug)
+    return d, os.path.join(d, "auth.db"), os.path.join(d, "info.json")
+
+
+def physio_entry(reg, pslug):
+    reg.setdefault("physios", [])
+    return next((p for p in reg["physios"] if p.get("slug") == pslug), None)
+
+
+def stamp_physio(P, pslug, name, mslug, system, pin_file=None, quiet=False):
+    """Create the physio's sign-in inside ONE member's folder. A physio already
+    attached to another member keeps the same PIN (their auth.db is copied);
+    a new one gets a fresh PIN, written to the root-only file."""
+    reg = load_registry(P)
+    if not any(m["slug"] == mslug for m in reg["members"]):
+        print("REFUSED: no member %s. Nothing changed." % mslug)
+        return 2
+    if not os.path.isdir(P.member(mslug)):
+        print("REFUSED: %s has no folder here. Nothing changed." % mslug)
+        return 2
+    d, auth_db, info = physio_paths(P, mslug, pslug)
+    if os.path.exists(auth_db):
+        print("REFUSED: %s is already attached to %s. Nothing changed." % (pslug, mslug))
+        return 2
+    ent = physio_entry(reg, pslug)
+    name = (name or (ent or {}).get("name") or "").strip()
+    if not name or len(name) > 40 or "\n" in name:
+        print("REFUSED: --name is required (1-40 characters) for a new physio.")
+        return 2
+    # the same physio elsewhere -> the same credentials (auth.db copied)
+    src = None
+    for other in (ent or {}).get("for") or []:
+        _od, oa, _oi = physio_paths(P, other, pslug)
+        if os.path.exists(oa):
+            src = oa
+            break
+    os.makedirs(d)
+    os.chmod(os.path.dirname(d), 0o700)
+    os.chmod(d, 0o700)
+    pin = None
+    if src:
+        shutil.copy2(src, auth_db)
+        os.chmod(auth_db, 0o600)
+    else:
+        sys.path.insert(0, HERE)
+        import family_physio
+        pin = new_pin()
+        au = family_physio.auth_for(P.member(mslug), pslug)
+        au.set_pin(pin)
+        au.log("tool", "server", "physio sign-in created by the owner's server tool")
+    with open(info, "w", encoding="utf-8") as fh:
+        json.dump({"slug": pslug, "name": name, "enabled": True,
+                   "created": datetime.now().strftime("%Y-%m-%d %H:%M")}, fh)
+    os.chmod(info, 0o600)
+    if system:
+        u = member_user(reg, mslug)
+        run(["chown", "-R", "%s:%s" % (u, u), os.path.join(P.member(mslug), "physio")])
+    if ent is None:
+        ent = {"slug": pslug, "name": name, "for": [], "created": datetime.now().strftime("%Y-%m-%d %H:%M")}
+        reg["physios"].append(ent)
+    ent["name"] = name
+    if mslug not in ent["for"]:
+        ent["for"].append(mslug)
+    save_registry(P, reg)
+    url = "%s/%s/physio/" % (reg["base"], mslug)
+    if not quiet:
+        print("physio %s (%s) attached to %s" % (pslug, name, mslug))
+        print("  address : " + url)
+    if pin is None:
+        print("  PIN: the same as on %s (credentials copied)" % ent["for"][0])
+    elif pin_file:
+        write_pin_file(pin_file, pslug, name, url, pin)
+        print("  first-login PIN: written to %s (root only)" % pin_file)
+    else:
+        print("  first-login PIN (shown once, written nowhere): " + pin)
+    return 0
+
+
+def physio_reset_pin(P, pslug, system, pin_file=None):
+    reg = load_registry(P)
+    ent = physio_entry(reg, pslug)
+    if not ent or not ent.get("for"):
+        print("No physio %s." % pslug)
+        return 2
+    sys.path.insert(0, HERE)
+    import family_physio
+    pin = new_pin()
+    for mslug in ent["for"]:
+        d, auth_db, _i = physio_paths(P, mslug, pslug)
+        if not os.path.exists(auth_db):
+            continue
+        au = family_physio.auth_for(P.member(mslug), pslug)
+        au.set_pin(pin)
+        au.rotate_epoch()
+        au.log("tool", "server", "PIN reset by the owner's server tool; every device signed out")
+        if system:
+            u = member_user(reg, mslug)
+            run(["chown", "-R", "%s:%s" % (u, u), os.path.join(P.member(mslug), "physio")])
+    url = "%s/%s/physio/" % (reg["base"], ent["for"][0])
+    if pin_file:
+        write_pin_file(pin_file, pslug, ent["name"], url, pin)
+        print("%s: new PIN written to %s (root only); every device signed out." % (pslug, pin_file))
+    else:
+        print("%s: new PIN (shown once, written nowhere): %s" % (pslug, pin))
+    return 0
+
+
+def physio_set_enabled(P, pslug, on, system):
+    reg = load_registry(P)
+    ent = physio_entry(reg, pslug)
+    if not ent:
+        print("No physio %s." % pslug)
+        return 2
+    for mslug in ent.get("for") or []:
+        _d, _a, info = physio_paths(P, mslug, pslug)
+        try:
+            with open(info, encoding="utf-8") as fh:
+                j = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        j["enabled"] = bool(on)
+        with open(info, "w", encoding="utf-8") as fh:
+            json.dump(j, fh)
+        if system:
+            u = member_user(reg, mslug)
+            run(["chown", "%s:%s" % (u, u), info])
+    ent["enabled"] = bool(on)
+    save_registry(P, reg)
+    print("%s %s on %s." % (pslug, "enabled" if on else "disabled (cannot sign in)", ", ".join(ent.get("for") or [])))
+    return 0
+
+
+def apply_seed(P, reg, slug, seed_path, system, mdir, envp, made_user, user, pin_file):
+    """Copy the seed (and the PDF it names) into the member folder, apply it
+    AS THE MEMBER (init_member.py --app seed), delete the copies, then stamp
+    the physio the seed names. Nothing from the file is printed."""
+    try:
+        with open(seed_path, encoding="utf-8") as fh:
+            seed = json.load(fh)
+    except (OSError, ValueError) as exc:
+        print("REFUSED: the seed file could not be read (%s)." % type(exc).__name__)
+        return False, seed_path
+    if seed.get("slug") and seed["slug"] != slug:
+        print("REFUSED: the seed is for %s, not %s." % (seed["slug"], slug))
+        return False, None
+    dst = os.path.join(mdir, "seed.json")
+    shutil.copy2(seed_path, dst)
+    os.chmod(dst, 0o600)
+    pdf = (seed.get("plan_pdf") or {}).get("file")
+    copies = [dst]
+    if pdf:
+        src = os.path.join(os.path.dirname(os.path.abspath(seed_path)), pdf)
+        if os.path.isfile(src):
+            pdst = os.path.join(mdir, os.path.basename(pdf))
+            shutil.copy2(src, pdst)
+            os.chmod(pdst, 0o600)
+            copies.append(pdst)
+        else:
+            print("  seed: the plan PDF it names is not beside it -- plan not filed")
+    if system:
+        for c in copies:
+            run(["chown", "%s:%s" % (user, user), c])
+    init = os.path.join(P.code, "family", "init_member.py")
+    env = dict(os.environ)
+    for k in list(env):
+        if k.startswith(("GUTLOG_", "RXGUARD_", "FITLOG_", "HEALTH_SSO_", "FAMILY_")):
+            del env[k]
+    with open(envp) as fh:
+        for line in fh:
+            if "=" in line and not line.startswith("#"):
+                k, v = line.rstrip("\n").split("=", 1)
+                env[k] = v
+    if P.root != "/":
+        env["FAMILY_DIR"] = mdir
+    if not system:
+        env["FAMILY_INSECURE"] = "1"
+    env["FAMILY_SEED_FILE"] = dst
+    cmd = [sys.executable, "-B", init, "--app", "seed"]
+    if system:
+        cmd = ["runuser", "-u", user, "--"] + cmd
+    r = subprocess.run(cmd, input=b"\n", env=env, cwd="/" if system else None,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    out = r.stdout.decode("utf-8", "replace").strip().splitlines()
+    print("  " + (out[-1] if out else "(no output)"))
+    for c in copies:
+        try:
+            os.remove(c)
+        except OSError:
+            pass
+    if r.returncode != 0:
+        print("FAILED while applying the seed.")
+        print("\n".join("    " + x for x in out[-15:]))
+        return False, None
+    ph = seed.get("physio") or {}
+    if ph.get("slug") and PSLUG_RX.match(str(ph["slug"])):
+        return True, (str(ph["slug"]), str(ph.get("name") or ""))
+    return True, None
+
+
 def vhost_block(reg, P=None):
     out = [BEGIN]
     if P is not None and os.path.isdir(os.path.join(P.srv, "kitchen")):
@@ -577,13 +797,23 @@ def stamp(P, a, system):
             print("\n".join("    " + x for x in out[-15:]))
             rollback(P, slug, mdir, envp, user, made_user, system)
             return 1
+    # -- the seed, as the member (26-Sep-2026) --------------------------------
+    physio = None
+    if a.seed:
+        ok, physio = apply_seed(P, reg, slug, a.seed, system, mdir, envp, made_user, user, a.password_file)
+        if not ok:
+            print("The seed was not applied; the member is NOT in the registry.")
+            rollback(P, slug, mdir, envp, user, made_user, system)
+            return 1
     # -- the Family Kitchen, if it is installed -----------------------------
     if kitchen_register(P, slug, name, system, member_dir=mdir):
         print("  kitchen: tokens issued (API + Share shortcut)")
     # -- register, route, start --------------------------------------------
     reg["members"].append(m)
     save_registry(P, reg)
-    write_vhost(P, reg, system)
+    if physio:
+        stamp_physio(P, physio[0], physio[1], slug, system, a.password_file)
+    write_vhost(P, load_registry(P), system)
     if system and not a.no_services:
         run(["systemctl", "enable", "--now"] + units(slug), stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL)
@@ -703,7 +933,11 @@ def main():
     ap.add_argument("--reset-pin", action="store_true")
     ap.add_argument("--slug")
     ap.add_argument("--name")
-    ap.add_argument("--profile", choices=("gut", "joint", "general"), default="general")
+    ap.add_argument("--profile", choices=("gut", "joint", "general", "weight"), default="general")
+    ap.add_argument("--seed", default=None,
+                    help="a gitignored seed file (setup, medicines, check-ins, plan PDF), applied as the member")
+    ap.add_argument("--physio", action="store_true", help="stamp a physio sign-in (--slug p1 --name ... --for m3)")
+    ap.add_argument("--for", dest="for_member", default=None, help="the member a physio is attached to")
     ap.add_argument("--disable", action="store_true")
     ap.add_argument("--enable", action="store_true")
     ap.add_argument("--rotate-care", action="store_true")
@@ -780,7 +1014,22 @@ def main():
         for k in kitchen_members_list(P):
             print("%-5s %-8s %-8s %s %s" % (k["slug"], "kitchen", "on" if k["enabled"] else "disabled",
                                             "last visit " + (k["last_seen"] or "never"), k["name"]))
+        for p in load_registry(P).get("physios") or []:
+            print("%-5s %-8s %-8s %s %s" % (p["slug"], "physio", "on" if p.get("enabled", True) else "disabled",
+                                            "for " + ", ".join(p.get("for") or []), p["name"]))
         return 0
+    if a.physio or (a.slug and PSLUG_RX.match(a.slug)):
+        if not a.slug or not PSLUG_RX.match(a.slug):
+            print("--slug must look like p1, p2 ... for a physio (a neutral slug, never a name).")
+            return 2
+        if a.disable or a.enable:
+            return physio_set_enabled(P, a.slug, a.enable, system)
+        if a.reset_password or a.reset_pin:
+            return physio_reset_pin(P, a.slug, system, a.password_file)
+        if not a.for_member or not SLUG_RX.match(a.for_member):
+            print("--for m3: the member this physio is attached to.")
+            return 2
+        return stamp_physio(P, a.slug, a.name, a.for_member, system, a.password_file)
     if a.kitchen_only or (a.slug and KSLUG_RX.match(a.slug)):
         if not a.slug or not KSLUG_RX.match(a.slug):
             print("--slug must look like k1, k2 ... for a kitchen member (a neutral slug, never a name).")

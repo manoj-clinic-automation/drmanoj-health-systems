@@ -16,7 +16,10 @@ owner's GutLog code UNCHANGED and adds, for a member only:
   * /care -- the member's switch and the list of caretaker changes;
   * /api/care/status -- the ONE endpoint the owner's Family page reads:
     bearer-gated, summary fields only, and {"access": "off"} when off;
-  * the profile (gut / joint / general) choosing what the Now page shows first;
+  * the profile (gut / joint / general / weight) choosing what the Now page
+    shows first;
+  * the physio role (family_physio): /physio/ with its own PIN and cookie,
+    and the member's Physio tile;
   * the path prefix (family_prefix).
 
 Python 3.9.
@@ -51,6 +54,8 @@ M.apply_env(dict({
     "GUTLOG_KITCHEN_CAPTURE_FILE": M.path("kitchen.capture"),
     "GUTLOG_KITCHEN_CAPTURE_URL": M.base + "/kitchen/capture/" + M.slug,
     "GUTLOG_KITCHEN_HELP_URL": M.base + "/kitchen/help",
+    # GutLog v3.40.0 -- the check-ins card says whom to tell ("Please tell <caretaker> today").
+    "GUTLOG_CARETAKER_NAME": M.caretaker,
     "GUTLOG_INSECURE": "1" if M.insecure else "0",
 }, **M.sso_env()))
 if not M.insecure:
@@ -133,6 +138,10 @@ LABELS = {
     "api_plans_edit": "Edited a plan", "api_quickbite": "Logged a quick bite",
     "api_snack_late": "Logged a late snack", "welcome": "Filled the setup form",
     "api_joint": "Recorded joint pain",
+    # GutLog v3.40.0 (weight profile)
+    "api_checkins": "Answered a check-in", "api_checkins_delete": "Removed a check-in",
+    "api_meal_windows": "Set the meal times", "api_weight_plan": "Set the weight plan",
+    "api_physio_tick": "Ticked a physio session",
 }
 
 
@@ -149,6 +158,10 @@ family_care.install(flask_app, CARE, "gut", lambda s: gut.stamp_session(),
 # PIN sign-in with lockout, Face ID / Touch ID, 12 months on the member's own device.
 AUTH = family_auth.install(flask_app, "gut", M, CARE, lambda s: gut.stamp_session(),
                            lambda s: bool(s.get("ok")), passkeys=True)
+# The physio role (26-Sep-2026): its own PIN, its own cookie, its own four pages
+# under /physio/ -- and nothing else of the record. family_physio.py.
+import family_physio  # noqa: E402
+PHYSIO = family_physio.install(flask_app, M, gut, M.name)
 
 
 def signed_in():
@@ -353,9 +366,12 @@ def status_summary():
         if v and (last is None or v > last):
             last = v
     rows = con.execute(
-        "SELECT s.slot, d.status FROM med_schedule s LEFT JOIN doses d "
+        "SELECT s.slot, s.weekday, s.at_time, d.status FROM med_schedule s LEFT JOIN doses d "
         "ON d.sched_id = s.id AND d.day = ? WHERE s.valid_from <= ? "
         "AND (s.valid_to = '' OR s.valid_to >= ?)", (tday, tday, tday)).fetchall()
+    # GutLog v3.40.0 -- a weekly line counts on its own weekday only.
+    wday = gut.weekday_of(tday)
+    rows = [r for r in rows if r["slot"] != gut.WEEKLY_SLOT or r["weekday"] == wday]
     slot_t = dict((s, t) for s, _lb, t in gut.SLOTS)
     try:
         window = int(gut.setting("slot_window_min") or 120)
@@ -367,7 +383,8 @@ def status_summary():
         if r["status"] in ("TAKEN", "SKIPPED"):
             taken += 1
         else:
-            t = _minutes(slot_t.get(r["slot"], "23:59"))
+            t = _minutes(r["at_time"] if r["slot"] == gut.WEEKLY_SLOT and r["at_time"]
+                         else slot_t.get(r["slot"], "23:59"))
             if t is not None and nowm is not None and nowm > t + window:
                 missed += 1
             else:
@@ -389,11 +406,14 @@ def status_summary():
         except ValueError:
             days_rep = None
     rx = gut._link_get(gut.RXGUARD_URL + "/api/feed/status", ttl=120) or {}
+    # GutLog v3.40.0 -- a PHQ-9 answered today with item 9 above 0: a same-day
+    # flag for the caretaker's Family page. The flag only; never the answers.
+    flag = bool(gut.checkin_flag())
     return {"last_entry": last,
             "doses": {"total": len(rows), "taken": taken, "due": due, "missed": missed},
             "rx": {"red": rx.get("red"), "amber": rx.get("amber")} if rx.get("ok") else None,
             "bp": {"day": bp["day"], "time": bp["vtime"], "sys": bp["sys"], "dia": bp["dia"]} if bp else None,
-            "days_since_report": days_rep}
+            "days_since_report": days_rep, "flag": flag}
 
 
 @flask_app.route("/api/care/status")
@@ -413,14 +433,39 @@ NOW_ORDER = {
     "general": ["nowDoses", "nowBP", "nowMeal", "nowPain", "nowAct", "nowSym"],
     "joint": ["nowJoint", "nowPainMeds", "nowJointWatch", "nowDoses", "nowPain", "nowBP", "nowLipid",
               "nowAct", "nowMeal"],
+    # weight (26-Sep-2026): This week, medicines, meals, check-ins, the physio
+    # tile, the joint cards (folded), BP, activity, then the rest.
+    "weight": ["nowWeek", "nowDoses", "nowExtraCard", "nowMeal", "nowCheckins", "nowPhysio", "nowJoint",
+               "nowJointWatch", "nowPainMeds", "nowLipid", "nowBP", "nowAct"],
 }
 
 NOW_SNIPPET = """
 <div id="famBar" style="margin:0 0 10px"></div>
+<div class="card" id="nowPhysio" style="display:none"><p class="q">Physio</p><div id="phBody"></div></div>
 <script>
-/* FAMILY_EDITION_V1 -- caretaker bar and the profile's card order. */
+/* FAMILY_EDITION_V1 -- caretaker bar, the profile's card order, the physio tile. */
 (function(){
+  function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e;}
+  function physio(){
+    var card=document.getElementById('nowPhysio');if(!card)return;
+    fetch('/api/physio/me',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(j){
+      if(!j.on){card.style.display='none';return;}
+      card.style.display='';var b=document.getElementById('phBody');b.innerHTML='';
+      var items=(j.programme&&j.programme.items)||[];
+      if(!items.length){b.appendChild(el('p','hint','Your physio ('+(j.physio||[]).join(', ')+') has not written the programme yet.'));return;}
+      b.appendChild(el('p','hint','Programme by '+(j.physio||[]).join(', ')+' \\u00b7 '+items.length+' exercise'+(items.length===1?'':'s')));
+      if(j.done_today){b.appendChild(el('p','','Today\\u2019s session: done ('+j.done_today.length+' of '+items.length+').'));
+        var u=el('button','btn ghost','Undo');u.type='button';u.onclick=function(){fetch('/api/physio/tick',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({undo:true})}).then(physio);};b.appendChild(u);}
+      else{var ul=el('div');(j.today||[]).forEach(function(n){var it=items.filter(function(x){return x.name===n;})[0]||{};
+          ul.appendChild(el('p','hint',n+(it.sets?(' \\u00b7 '+it.sets+' x '+(it.reps||'')):'')+(it.hold_s?(' \\u00b7 hold '+it.hold_s+' s'):'')));});b.appendChild(ul);
+        var t=el('button','btn primary','Tick today\\u2019s session');t.type='button';t.id='phTick';
+        t.onclick=function(){fetch('/api/physio/tick',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({done:j.today})}).then(physio);};b.appendChild(t);}
+      if(j.next)b.appendChild(el('p','hint','Next session: '+j.next.weekday+' '+j.next.day.slice(5)));
+      if(j.programme.notes)b.appendChild(el('p','hint',j.programme.notes));
+    }).catch(function(){});
+  }
   function go(){
+    physio();
     fetch('/api/care/me',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(j){
       var tab=document.getElementById('tab-now'), bar=document.getElementById('famBar');
       if(!tab||!bar)return;
