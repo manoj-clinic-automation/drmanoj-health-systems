@@ -67,3 +67,9 @@ From this repository NEVER touch `/root/finance`, `/root/portal`, `/root/marg_in
 `/root/deploy/repo`, root's crontab lines not tagged for these apps, or the services `clinic-finance` / `clinic-portal`.
 Before any install step take the server-wide lock `mkdir /root/deploy/.claude_code_build.lock` (fails = another build is
 installing; wait and re-check every 2 minutes), write this repo's name and the brief into `…/owner`, remove it when done.
+
+## Permissions (added 26-Sep-2026)
+`.claude\settings.json` in this folder is the permission list Claude Code runs under here: the ordinary build / test /
+install / publish path on the ONE server is allowed without asking; destructive commands, history rewriting, other hosts,
+secrets, and the other repository's folders and services are denied outright; anything else asks. If a needed command asks,
+say so in the report rather than working around it -- the list is widened by the chat, never bypassed.
