@@ -11,10 +11,18 @@ anyone.
 
     python family/getting_started_sheet.py --seed fitlog-ingest/m3_seed.local.json --out fitlog-ingest
     python family/getting_started_sheet.py --name "…" --slug m1 --profile gut --out fitlog-ingest
+    python family/getting_started_sheet.py --kitchen fitlog-ingest/kitchen_invites.local.json --out fitlog-ingest
 
 Profile wording: gut / joint / general (as for the first sheets), weight
 (weigh-in, injection day, check-ins, the This-week card). With --physio the
-second sheet, for the physio, describes their tile only. Python 3.9.
+second sheet, for the physio, describes their tile only.
+
+--kitchen reads a gitignored list [{"slug": "k1", "name": "…"}, …] of
+recipes-only Family Kitchen members and writes, for each, a one-page
+Kitchen_Getting_Started_<Name>.pdf in large type (iPhone and Android), plus
+ONE Kitchen_invite_messages.txt with a two-line WhatsApp message each
+(greeting + link; never the PIN, which the owner sends separately). Both
+outputs are gitignored (*.pdf, the .txt by name). Python 3.9.
 """
 import argparse
 import json
@@ -197,6 +205,108 @@ def physio_sheet(pname, member_name, slug, caretaker, out):
     doc.build(f)
 
 
+def pdf_pages(path):
+    with open(path, "rb") as fh:
+        return len(re.findall(rb"/Type\s*/Page(?![a-zA-Z])", fh.read()))
+
+
+def kitchen_sheet(name, slug, caretaker, out, size=13.0):
+    """One page, large type: the recipes-only Family Kitchen, iPhone and Android."""
+    first = caretaker.split()[0] if caretaker else "your host"
+    lead = size * 1.3
+    st = {
+        "h1": ParagraphStyle("kh1", fontName="Helvetica-Bold", fontSize=size + 9, leading=size + 13, alignment=1,
+                             spaceAfter=2),
+        "sub": ParagraphStyle("ksub", fontName="Helvetica", fontSize=size - 1, leading=lead - 1, alignment=1,
+                              textColor=colors.HexColor("#555555"), spaceAfter=6),
+        "h2": ParagraphStyle("kh2", fontName="Helvetica-Bold", fontSize=size + 1.5, leading=size + 5,
+                             textColor=colors.HexColor("#1F6F5C"), spaceBefore=6, spaceAfter=2),
+        "p": ParagraphStyle("kp", fontName="Helvetica", fontSize=size, leading=lead, leftIndent=8, spaceAfter=2),
+        "p0": ParagraphStyle("kp0", fontName="Helvetica", fontSize=size, leading=lead, spaceAfter=2),
+    }
+    doc = SimpleDocTemplate(out, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm, topMargin=11 * mm,
+                            bottomMargin=9 * mm, title="Family Kitchen - Getting Started", author=OWNER)
+    link = "%s/kitchen/%s/" % (BASE, slug)
+    f = [Paragraph("Family Kitchen &mdash; Getting Started", st["h1"]),
+         Paragraph("For %s &mdash; the family recipe book, from %s" % (name, first), st["sub"])]
+    rows = [["Your link", "<b>%s</b>" % link],
+            ["Your PIN", "6 digits &mdash; <b>sent to you separately</b> by %s on WhatsApp." % first]]
+    t = Table([[Paragraph("<b>%s</b>" % a, st["p0"]), Paragraph(b, st["p0"])] for a, b in rows],
+              colWidths=[30 * mm, None])
+    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.8, colors.HexColor("#1F6F5C")),
+                           ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E6F2EE")),
+                           ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 4),
+                           ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+    f.append(t)
+    sections = [
+        ("1. Open it and put it on your home screen", [
+            "Tap your link. The page says <b>%s &mdash; Family Kitchen</b>. Type your PIN (tap <b>Show</b> to check "
+            "it) and tap <b>Sign in</b>." % name,
+            "<b>iPhone:</b> it must open in <b>Safari</b> (in WhatsApp, tap the Safari/compass button). Tap "
+            "<b>Share</b> (square with an arrow) &rarr; <b>Add to Home Screen</b> &rarr; <b>Add</b>.",
+            "<b>Android:</b> open it in <b>Chrome</b>. Tap the <b>three-dot menu</b> (top right) &rarr; <b>Add to "
+            "Home screen</b> (or <b>Install app</b>) &rarr; <b>Add</b>.",
+            "Open it from the new <b>Family Kitchen</b> icon. It stays signed in on your phone for a year.",
+        ]),
+        ("2. Face ID or fingerprint", [
+            "After your first sign-in it offers <b>Face ID / Touch ID</b> (a fingerprint on Android). Tap "
+            "<b>Use Face ID / Touch ID</b> &mdash; next time, no PIN needed.",
+        ]),
+        ("3. Find a recipe (Recipes tab)", [
+            "<b>By person:</b> tap a name (Everyone first), then a category &mdash; or tap a category first.",
+            "<b>Search:</b> one box for a dish, an ingredient or a name, in Hindi or English (lauki, bhindi, ragi&hellip;).",
+            "<b>Filters:</b> Vegetarian, No onion-garlic, Jain, High-protein, Quick, Top-rated, New this week.",
+        ]),
+        ("4. Add your own recipe", [
+            "<b>Any phone:</b> the <b>Add</b> tab &mdash; type or paste a recipe, paste a link (web page, YouTube), "
+            "or choose a photo or PDF.",
+            "<b>iPhone Share button:</b> from WhatsApp, Photos, a PDF or a web page, tap <b>Share</b> &rarr; <b>Add to "
+            "Family Kitchen</b> (set it up once: <b>Me</b> tab &rarr; Share shortcut, with its guide).",
+            "It lands in your <b>Inbox</b>. Check what was read (anything unsure is marked), correct it, tap "
+            "<b>Publish</b>. Everyone sees it at once as <b>&ldquo;Recipe by %s&rdquo;</b>. Only you can edit or "
+            "unpublish it." % name,
+        ]),
+        ("5. Rate and cheer", [
+            "On any recipe: tap the <b>stars</b>, <b>I made it</b>, <b>Would make again</b>, and add a short note "
+            "&mdash; your name shows beside it.",
+        ]),
+    ]
+    for h, items in sections:
+        f.append(Paragraph(h, st["h2"]))
+        for s in items:
+            f.append(Paragraph("&bull; " + s, st["p"]))
+    f.append(Spacer(1, 3))
+    f.append(Paragraph("Only recipes live here &mdash; nothing about anyone's health. Forgotten PIN or stuck? "
+                       "WhatsApp %s." % first, st["sub"]))
+    doc.build(f)
+
+
+def kitchen_all(listfile, caretaker, out_dir):
+    with open(listfile, encoding="utf-8") as fh:
+        people = json.load(fh)
+    msgs = []
+    for p in people:
+        name, slug = str(p["name"]).strip(), str(p["slug"]).strip()
+        if not re.match(r"^k[0-9]{1,3}$", slug) or not name:
+            raise SystemExit("bad entry: slug must look like k1, and a name is needed")
+        out = os.path.join(out_dir, "Kitchen_Getting_Started_%s.pdf" % safe(name))
+        size = 14.5
+        while True:
+            kitchen_sheet(name, slug, caretaker, out, size)
+            if pdf_pages(out) <= 1 or size <= 10.5:
+                break
+            size -= 0.5
+        print("wrote %s (%d page, %.1f pt)" % (out, pdf_pages(out), size))
+        msgs.append("%s\nHi %s! You're invited to our Family Kitchen, the family recipe book. Your own link "
+                    "(your PIN comes in the next message):\n%s/kitchen/%s/\n" % ("--- " + name, name, BASE, slug))
+    mpath = os.path.join(out_dir, "Kitchen_invite_messages.txt")
+    with open(mpath, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("WhatsApp messages -- copy the two lines under each name. Send the PIN as a second message.\n\n")
+        fh.write("\n".join(msgs))
+    print("wrote " + mpath)
+    return 0
+
+
 def safe(name):
     return re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_") or "Member"
 
@@ -210,7 +320,11 @@ def main():
     ap.add_argument("--physio", default=None, help="the physio's name (their own sheet is made too)")
     ap.add_argument("--caretaker", default="Manoj")
     ap.add_argument("--out", default=".")
+    ap.add_argument("--kitchen", default=None, help="a gitignored list of kitchen members: [{slug, name}]")
     a = ap.parse_args()
+    if a.kitchen:
+        os.makedirs(a.out, exist_ok=True)
+        return kitchen_all(a.kitchen, a.caretaker, a.out)
     name, slug, profile, physio = a.name, a.slug, a.profile, a.physio
     if a.seed:
         with open(a.seed, encoding="utf-8") as fh:

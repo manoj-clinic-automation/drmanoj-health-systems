@@ -33,3 +33,5 @@ grep -E '^(ANTHROPIC_API_KEY|SARVAM_API_KEY)=' /root/wa/.env | install -o root -
 Taken by hand for the first brief (as asked), by `build_lock.sh` in the tools for the second; the owner file named this repository and the brief; released at the end of each step, also on the one failed `upgrade_all.sh` run (trap). No other build held it at any point today.
 
 ## Publish
+
+`PUBLISH_HEALTH.bat` ran once at the end: every gate PASS (git, lock sweep, secret-gate self-test, staged paths, NO_SECRETS, working-folder parity; the .gitignore drop list held only `__pycache__` and `.bak` snapshots), commit `51f2963` on `main`, push verified — origin HEAD equals local HEAD. **PUBLISHED AND VERIFIED.** (The report files themselves were part of that commit; this closing paragraph is the only text written after it.)

@@ -443,6 +443,10 @@ def run(rig):
           "%s login %s post %s capture %s sess %s still %s back %s" % (rc, dl.status, dp.status, dc[0], dsess.status, still, back.status))
 
     # ---------------------------------------------------------------- D10 readiness on a kitchen member
+    c = TC.kdb(rig)
+    c.execute("UPDATE kmembers SET last_seen='2026-01-01 08:00' WHERE slug='k1'")   # a visit long ago
+    c.commit()
+    c.close()
     before = dict((t, TC.kdb(rig).execute("SELECT COUNT(*) FROM %s" % t).fetchone()[0]) for t in ("recipes", "ratings", "drafts"))
     r = subprocess.run([sys.executable, "-B", os.path.join(famtest.fam_src(), "readiness.py"), "--slug", "k1",
                         "--base", rig.front_url, "--srv", os.path.join(rig.root, "srv", "family"), "--pin-file", pwf,
@@ -454,6 +458,10 @@ def run(rig):
           r.returncode == 0 and out.rstrip().endswith("READY") and "FAIL" not in out and before == after
           and "Readiness check" not in TC.pool_text(rig) and rig.pw["k1"] not in out,
           "\n".join(ln for ln in out.splitlines() if "FAIL" in ln or "READY" in ln)[-900:])
+    seen = TC.kdb(rig).execute("SELECT last_seen FROM kmembers WHERE slug='k1'").fetchone()[0]
+    fam = owner.get("/family").text
+    check("D14 the readiness check's own sign-in is not a visit: 'last visit' on the Family page stays as it was",
+          seen == "2026-01-01 08:00" and "Last visit: 2026-01-01 08:00" in fam, "%r" % seen)
 
     # ---------------------------------------------------------------- D12 the reader takes a kitchen member's draft
     st, cj = TC.capture(rig, "k1", ctok, {"text": "https://example.invalid/r/x"})

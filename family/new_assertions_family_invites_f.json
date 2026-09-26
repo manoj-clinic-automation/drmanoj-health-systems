@@ -1,0 +1,36 @@
+{
+ "_": [
+  "Kitchen invites (26-Sep-2026): recipes added from a full member's GutLog (and the owner's) must be credited and listed under 'By person' exactly like a kitchen member's, in the kitchen member's own book. Broken on purpose in COPIES of family/: the Kitchen forgets the GutLog copies' display names; --owner-name no longer reaches an existing token entry."
+ ],
+ "suite": "test_family_f.py",
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3410_kitchenfind.py",
+ "assertions": [
+  {
+   "name": "F07 recipes added from a full member's GutLog are credited and listed in 'By person' exactly like a kitchen member's",
+   "control": "mutation",
+   "mutation": {
+    "id": "apinames",
+    "why": "the Kitchen resolves only kitchen members' names; a full member shows as a slug",
+    "module": "kitchen.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "            out[s] = str(v.get(\"name\") or s)\n",
+    "replace": "            out[s] = s\n"
+   }
+  },
+  {
+   "name": "F07 recipes added from a full member's GutLog are credited and listed in 'By person' exactly like a kitchen member's",
+   "control": "mutation",
+   "mutation": {
+    "id": "ownernamestuck",
+    "why": "--owner-name is saved to the registry but never reaches the Kitchen's existing token entry",
+    "module": "stamp_member.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if t[\"api\"][slug].get(\"name\") != name:\n",
+    "replace": "        if False:\n"
+   }
+  }
+ ]
+}

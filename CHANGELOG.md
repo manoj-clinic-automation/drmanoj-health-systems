@@ -3,6 +3,18 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-26 (evening) — nine family members invited to the Family Kitchen
+
+Nine recipes-only kitchen members (`k1`–`k9`) stamped and each checked READY. A
+one-page, large-type Getting Started sheet per person (iPhone and Android) and a
+two-line WhatsApp invite each, made by `family/getting_started_sheet.py --kitchen`
+from a gitignored list; the PINs are in the root-only file on the server and go out as
+a separate message. `readiness.py` now puts a kitchen member's "last visit" back after
+its own sign-in, so the owner's Family page shows "not yet" until the person really
+comes. Confirmed with a new check (and live) that recipes added from a full member's
+GutLog, or the owner's, say "Recipe by <their name>" and sit under "By person" exactly
+like a kitchen member's.
+
 ## 2026-09-26 (later) — finding recipes, the Kitchen key file, the build lock, the fuller food table
 
 Kitchen 1.2.0, GutLog v3.41.0. **Finding a recipe** in the Family Kitchen (his GutLog

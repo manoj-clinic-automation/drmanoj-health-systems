@@ -18,6 +18,7 @@ new_assertions_family_f.json. Python 3.9.
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timedelta
@@ -105,6 +106,24 @@ def run(rig):
     check("F01 Category -> Person: choosing a category narrows the people to those who have one there",
           set(ppl_g) == {"Member A", "Owner A"} or (set(ppl_g) >= {"Member A"} and len(ppl_g) == 2)
           and ids(jg) == sorted([A_dal, O_egg]) and jg.get("everyone") == 2, "%s %s" % (ppl_g, names(jg)))
+
+    # ---------------------------------------------------------------- F07 full members credited like kitchen members
+    rc_on = subprocess.run([sys.executable, "-B", os.path.join(famtest.fam_src(), "stamp_member.py"), "--no-system",
+                            "--root", rig.root, "--code", rig.code, "--kitchen-sync", "--owner-name", "Owner Z"],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT).returncode
+    kall = kb()
+    kppl = dict((p["name"], p["n"]) for p in kall.get("people") or [])
+    gppl = dict((p["name"], p["n"]) for p in gb(m1, "/m1").get("people") or [])
+    by_slug = dict((x["id"], x["added_by"]) for x in kall.get("recipes") or [])
+    ka = kb(by="m1")
+    check("F07 recipes added from a full member's GutLog are credited and listed in 'By person' exactly like a "
+          "kitchen member's, in the kitchen member's own book too; the owner's cards carry the owner's name",
+          rc_on == 0 and kppl.get("Member A") == 2 and kppl.get("Member B") == 2 and kppl.get("Member C") == 1
+          and kppl.get("Owner Z") == 1 and kppl == gppl
+          and by_slug.get(A_dal) == "Member A" and by_slug.get(B_kheer) == "Member B" and by_slug.get(O_egg) == "Owner Z"
+          and by_slug.get(C_dosa) == "Member C"
+          and ids(ka) == sorted([A_dal, A_sabzi]) and all(x["added_by"] == "Member A" for x in ka.get("recipes") or []),
+          "rc %s k1 %s / m1 %s / cards %s" % (rc_on, kppl, gppl, by_slug))
 
     # ---------------------------------------------------------------- F02 the search box
     s1 = gb(m1, "/m1", q="moong")   # an ingredient that is not in any name (okra would be found through bhindi)

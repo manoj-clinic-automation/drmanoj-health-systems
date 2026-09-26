@@ -1,0 +1,23 @@
+{
+ "_": [
+  "Kitchen invites (26-Sep-2026): the readiness check signs each new kitchen member in once; that sign-in must not show as the member's 'last visit' on the owner's Family page. Broken on purpose in a COPY of family/: the restore of last_seen is removed."
+ ],
+ "suite": "test_family_d.py",
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3410_kitchenfind.py",
+ "assertions": [
+  {
+   "name": "D14 the readiness check's own sign-in is not a visit",
+   "control": "mutation",
+   "mutation": {
+    "id": "readinessvisit",
+    "why": "readiness leaves its own sign-in behind as the member's last visit",
+    "module": "readiness.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        con.execute(\"UPDATE kmembers SET last_seen=? WHERE slug=?\", (seen_before, a.slug))\n",
+    "replace": "        pass\n"
+   }
+  }
+ ]
+}

@@ -175,6 +175,15 @@ def kitchen_counts(db):
         c.close()
 
 
+def last_seen(db, slug):
+    c = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
+    try:
+        r = c.execute("SELECT last_seen FROM kmembers WHERE slug=?", (slug,)).fetchone()
+        return (r[0] or "") if r else ""
+    finally:
+        c.close()
+
+
 def kitchen_readiness(a):
     """A kitchen member: the Kitchen service only, through the real address."""
     import time
@@ -239,6 +248,9 @@ def kitchen_readiness(a):
                 "no PIN line for %s" % a.slug if not pin else "stale PIN -- reset with stamp_member.py"):
         return 2
     before = kitchen_counts(kdb)
+    # The check's own sign-in is not the member's visit: the owner's Family
+    # page reads "last visit" from here, so it is put back as it was.
+    seen_before = last_seen(kdb, a.slug)
     code, final, t, _ = b.req(pre + "/login", data={"pin": pin})
     pin = None
     mc_, _, _, me = b.req(pre + "/j/me")
@@ -313,9 +325,17 @@ def kitchen_readiness(a):
          lc == 200 and urllib.parse.urlparse(lf).path == pre + "/login" and mc2 == 401,
          "HTTP %s at %s, me %s" % (lc, lf, mc2))
     # ---------------------------------------------------------------- 9
+    con = sqlite3.connect(kdb, timeout=10)
+    try:
+        con.execute("UPDATE kmembers SET last_seen=? WHERE slug=?", (seen_before, a.slug))
+        con.commit()
+    finally:
+        con.close()
+        keep_owner(kdb)
     after = kitchen_counts(kdb)
-    step("nothing left behind (recipes, ratings, drafts as before)", after == before,
-         "before %s, after %s" % (before, after))
+    step("nothing left behind (recipes, ratings, drafts as before; last visit as it was)",
+         after == before and last_seen(kdb, a.slug) == seen_before,
+         "before %s, after %s, last visit %r -> %r" % (before, after, seen_before, last_seen(kdb, a.slug)))
     bad = [n for n, ok in RESULTS if not ok]
     print("READY" if not bad else "NOT READY (%d failed)" % len(bad))
     return 0 if not bad else 1

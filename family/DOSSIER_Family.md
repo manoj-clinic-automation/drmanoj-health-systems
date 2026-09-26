@@ -242,7 +242,9 @@ the model step off (drafts then go to the manual screen).
   capture and live sessions, keeps their recipes; no delete); `--list` shows kitchen
   members with their last visit; `readiness.py --slug k1` (sign-in page, PIN offline,
   one sign-in, Face ID, the book, a draft captured → published → rated → unpublished, the
-  test items removed, sign out, counts as before). The owner's `/family` page lists
+  test items removed, sign out, counts as before — and the member's "last visit" put back
+  as it was, so the check's own sign-in never shows on the Family page as a visit; D14,
+  control `readinessvisit`). The owner's `/family` page lists
   kitchen members (name, last visit, recipes added) from the Kitchen's `/api/members`
   (owner token only) — no caretaker access, there is nothing of theirs to care for.
 * **Upgrades:** `upgrade_all.sh` backs up the Kitchen DB before switching (the 1.1.0
@@ -334,6 +336,25 @@ book) with `personleak`, `allcats`, `allpeople`, `noname`, `noalias`, `noingredi
 `lookupnofat`, `oldkeyfile`, `quietmissing`, `aliaspersonal`. `test_family_lock.py` (server
 only: bash). The 300 px suite also proves that two taps in quick succession never stack
 two answers in the view (a render token; the first build did stack them).
+
+### Inviting kitchen members (26-Sep-2026)
+
+Nine recipes-only kitchen members were stamped, `k1`–`k9`, each checked READY by
+`readiness.py` (14/14). Their names exist only in the Kitchen database, the root-only
+PIN file `/root/family/first-login.local.txt`, and the gitignored sheets on the PC.
+The invite kit comes from `family/getting_started_sheet.py --kitchen
+fitlog-ingest/kitchen_invites.local.json --out fitlog-ingest` (PC, reportlab): a one-page
+`Kitchen_Getting_Started_<Name>.pdf` each (large type; link; PIN sent separately; iPhone
+Safari → Share → Add to Home Screen and Android Chrome → menu → Add to Home screen; Face
+ID / fingerprint; Person → Category, search, filters; Add tab and the iPhone Share
+button → Inbox → Publish; stars, "I made it"; "Recipe by <Name>"), shrinking the type
+only if the page would overflow, and one `Kitchen_invite_messages.txt` with a two-line
+WhatsApp message each (greeting + link; the PIN goes separately). The list, the sheets
+and the messages are all gitignored. Android has no Share-button route into the Kitchen
+yet (the Add tab covers it); the iPhone route is the Share shortcut. Full members' and
+the owner's recipes are credited and listed under "By person" exactly as a kitchen
+member's (`test_family_f.py` F07, controls `apinames`, `ownernamestuck`; checked live for
+m1, m2, m3 and the owner with temporary recipes, removed).
 
 ## Open items (25-Sep-2026)
 
