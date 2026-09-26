@@ -14,6 +14,8 @@ FAMILY_EDITION_V1. Run as root on the server:
   A KITCHEN MEMBER (recipes only -- no GutLog, RxGuard or FitLog, no health data):
   python3 /root/family/stamp_member.py --kitchen-only --slug k1 --name "…" --password-file /root/family/first-login.local.txt
   python3 /root/family/stamp_member.py --slug k1 --rename "…" | --reset-pin | --disable | --enable
+  echo NNNNNN | python3 /root/family/stamp_member.py --slug k1 --set-pin - [--password-file …]
+      (the owner's chosen PIN; kitchen members only -- m*/p* slugs are refused)
   python3 /root/family/stamp_member.py --kitchen-sync --owner-name "…"   (the name on the owner's cards)
 
   A SEEDED MEMBER (26-Sep-2026): the setup, meal windows, weight plan, medicines,
@@ -391,6 +393,42 @@ def kitchen_reset_pin(P, slug, system, pin_file=None):
         print("%s: new PIN written to %s (root only); every device signed out." % (slug, pin_file))
     else:
         print("%s: new PIN (shown once, written nowhere): %s" % (slug, pin))
+    return 0
+
+
+def kitchen_set_pin(P, slug, pin, system, pin_file=None):
+    """The owner's chosen PIN for a kitchen member (26-Sep-2026: one PIN for the
+    whole family group, each member free to change it on the Me tab). Same
+    rules as any family PIN; the lockout is cleared and every device signed
+    out. The PIN is never printed; with --password-file it is appended there."""
+    if pin == "-":
+        pin = sys.stdin.readline()
+    pin = (pin or "").strip()
+    sys.path.insert(0, HERE)
+    import family_auth
+    if not (len(pin) == 6 and pin.isdigit()) or family_auth.weak_pin(pin):
+        print("REFUSED: a PIN is 6 digits, not all the same and not a straight run. Nothing changed.")
+        return 2
+    K, KM = kitchen_modules(P)
+    con = kitchen_con(P, K)
+    try:
+        r = kitchen_member_row(P, K, con, slug)
+        if not r:
+            return 2
+        name = r["name"]
+    finally:
+        con.close()
+    au = KM.auth_for(slug)
+    au.set_pin(pin)
+    au.rotate_epoch()
+    au.log("tool", "server", "PIN set by the owner's server tool; every device signed out")
+    kitchen_own(P, system)
+    if pin_file:
+        reg = load_registry(P)
+        write_pin_file(pin_file, slug, name, "%s/kitchen/%s/" % (reg["base"], slug), pin)
+        print("%s: PIN set (written to %s, root only); every device signed out." % (slug, pin_file))
+    else:
+        print("%s: PIN set; every device signed out." % slug)
     return 0
 
 
@@ -931,6 +969,9 @@ def main():
     ap.add_argument("--rename", metavar="NAME")
     ap.add_argument("--reset-password", action="store_true", help="same as --reset-pin")
     ap.add_argument("--reset-pin", action="store_true")
+    ap.add_argument("--set-pin", metavar="PIN", default=None,
+                    help="kitchen members (k*) only: set this 6-digit PIN ('-' reads it from stdin, "
+                         "which keeps it out of the shell history); m*/p* slugs are refused")
     ap.add_argument("--slug")
     ap.add_argument("--name")
     ap.add_argument("--profile", choices=("gut", "joint", "general", "weight"), default="general")
@@ -1018,6 +1059,14 @@ def main():
             print("%-5s %-8s %-8s %s %s" % (p["slug"], "physio", "on" if p.get("enabled", True) else "disabled",
                                             "for " + ", ".join(p.get("for") or []), p["name"]))
         return 0
+    if a.set_pin is not None:
+        # Kitchen members only: health (m*) and physio (p*) accounts keep their
+        # own PINs, and no shared PIN may ever reach them.
+        if not a.slug or not KSLUG_RX.match(a.slug):
+            print("REFUSED: --set-pin is for kitchen members (k1, k2 ...) only. Health and physio accounts "
+                  "keep their own PINs; use --reset-pin for them. Nothing changed.")
+            return 2
+        return kitchen_set_pin(P, a.slug, a.set_pin, system, a.password_file)
     if a.physio or (a.slug and PSLUG_RX.match(a.slug)):
         if not a.slug or not PSLUG_RX.match(a.slug):
             print("--slug must look like p1, p2 ... for a physio (a neutral slug, never a name).")

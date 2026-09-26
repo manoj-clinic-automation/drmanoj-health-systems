@@ -38,6 +38,10 @@ Brief: `CLAUDE_CODE_PROMPT_kitchen_invites_v1.md`.
 
 **Noted, not changed:** Android has no Share-button route into the Kitchen (a web-app share target would need cross-site cookie handling); the sheet sends Android users to the Add tab. The Notion register was not updated — the Notion connector needs authorising in claude.ai connector settings. No command asked for permission.
 
+## Follow-up — one PIN for the kitchen group (owner's decision)
+
+k1–k9 now share the PIN the owner chose (in the root-only PIN file and in the gitignored `fitlog-ingest\Kitchen_family_group_message.txt`; not written here). `stamp_member.py --set-pin -` (PIN on stdin, never printed) works for kitchen members only — m1 and p1 were tried on the server and refused (rc 2), nothing changed. Each account re-checked: `readiness.py` 9 × READY, 15/15, including the new Me-tab PIN-change step (current PIN accepted, weak new one refused, PIN unchanged). Suite D 36/36 on PC and server; negative control `new_assertions_family_setpin.json` 3/3 seen (`setpinany`, `setpinweak`, `nopinchange`). Build lock taken and released. The group message: greeting, the PIN, "change it later on the Me tab", the nine names each with their link.
+
 ## Publish
 
-Result recorded below after `PUBLISH_HEALTH.bat`.
+`PUBLISH_HEALTH.bat` ran once: every gate PASS (git, lock sweep, secret-gate self-test, staged paths, NO_SECRETS, working-folder parity; the .gitignore drop list held only `__pycache__`, `.bak` snapshots, the invite list, sheets and messages), commit `33d500a` on `main`, push verified — origin HEAD equals local HEAD. **PUBLISHED AND VERIFIED.** The commit was checked afterwards for any of the invited or full members' names: none. (This paragraph is the only text written after the commit.)

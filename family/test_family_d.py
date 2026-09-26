@@ -475,6 +475,46 @@ def run(rig):
     ex, flags, note = kr.read_draft(dict(rowd))
     check("D12 the reader reads a kitchen member's draft like anyone's (unreachable link: left for the person, kept private)",
           st == 200 and rowd["who"] == "k1" and ex is None and flags, (ex, flags, note))
+
+    # ---------------------------------------------------------------- D15 --set-pin, kitchen members only
+    def set_pin(slug, pin, *extra):
+        r = subprocess.run([sys.executable, "-B", os.path.join(famtest.fam_src(), "stamp_member.py"), "--no-system",
+                            "--root", rig.root, "--code", rig.code, "--slug", slug, "--set-pin", "-"] + list(extra),
+                           input=(pin + "\n").encode(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return r.returncode, r.stdout.decode("utf-8", "replace")
+    shared = "271828"
+    live = rig.kitchen_client("k2")
+    rc_k, out_k = set_pin("k2", shared, "--password-file", pwf)
+    old_dead = live.get(k2 + "/j/me").status
+    newc = famtest.Client(rig.front_url)
+    newc.post(k2 + "/login", {"pin": shared})
+    rc_m, out_m = set_pin("m1", shared)
+    m1_old = famtest.Client(rig.front_url)
+    m1_old.post("/m1/login", {"pin": rig.pw["m1"]})
+    m1_new = famtest.Client(rig.front_url)
+    m1_new.post("/m1/login", {"pin": shared})
+    rc_p, out_p = set_pin("p1", shared)
+    rc_w, _o = set_pin("k1", "123456")
+    k1_still = rig.kitchen_client("k1").get(k1 + "/j/me").status
+    check("D15 --set-pin sets a kitchen member's PIN (devices signed out, never printed) and refuses m*/p* slugs and weak PINs",
+          rc_k == 0 and old_dead == 401 and (newc.get(k2 + "/j/me").json() or {}).get("slug") == "k2"
+          and shared not in out_k and file_pin(pwf, "k2") == shared
+          and rc_m == 2 and "REFUSED" in out_m and m1_old.get("/m1/api/care/me").status == 200
+          and m1_new.get("/m1/api/care/me").status != 200
+          and rc_p == 2 and "REFUSED" in out_p and rc_w == 2 and k1_still == 200,
+          "k %s/%s m %s p %s weak %s k1 %s" % (rc_k, old_dead, rc_m, rc_p, rc_w, k1_still))
+    rig.pw["k2"] = shared
+    r = subprocess.run([sys.executable, "-B", os.path.join(famtest.fam_src(), "readiness.py"), "--slug", "k2",
+                        "--base", rig.front_url, "--srv", os.path.join(rig.root, "srv", "family"), "--pin-file", pwf,
+                        "--registry", os.path.join(rig.root, "root", "family", "members.local.json")],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    out = r.stdout.decode("utf-8", "replace")
+    still = famtest.Client(rig.front_url)
+    still.post(k2 + "/login", {"pin": shared})
+    check("D16 readiness on the set PIN is READY and checks the Me tab's PIN change without changing the PIN",
+          r.returncode == 0 and "PASS the Me tab offers PIN change" in out and shared not in out
+          and (still.get(k2 + "/j/me").json() or {}).get("slug") == "k2",
+          "\n".join(ln for ln in out.splitlines() if "FAIL" in ln or "READY" in ln or "PIN change" in ln)[-600:])
     _ = (m2, free_id, egg_id)
 
 

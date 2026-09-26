@@ -1,0 +1,49 @@
+{
+ "_": [
+  "Kitchen shared PIN (26-Sep-2026, the owner's decision for kitchen members only): --set-pin must refuse any m*/p* slug, and readiness must prove the Me tab's PIN change works. Broken on purpose in COPIES of family/."
+ ],
+ "suite": "test_family_d.py",
+ "app": "../gutlog/app.py",
+ "patcher": "../gutlog/patch_gutlog_v3410_kitchenfind.py",
+ "assertions": [
+  {
+   "name": "D15 --set-pin sets a kitchen member's PIN",
+   "control": "mutation",
+   "mutation": {
+    "id": "setpinany",
+    "why": "--set-pin accepts any slug, so a shared PIN could reach a health or physio account",
+    "module": "stamp_member.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "        if not a.slug or not KSLUG_RX.match(a.slug):\n            print(\"REFUSED: --set-pin is for kitchen members",
+    "replace": "        if not a.slug:\n            print(\"REFUSED: --set-pin is for kitchen members"
+   }
+  },
+  {
+   "name": "D15 --set-pin sets a kitchen member's PIN",
+   "control": "mutation",
+   "mutation": {
+    "id": "setpinweak",
+    "why": "--set-pin takes a weak PIN",
+    "module": "stamp_member.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if not (len(pin) == 6 and pin.isdigit()) or family_auth.weak_pin(pin):\n        print(\"REFUSED: a PIN is 6 digits",
+    "replace": "    if not (len(pin) == 6 and pin.isdigit()):\n        print(\"REFUSED: a PIN is 6 digits"
+   }
+  },
+  {
+   "name": "D16 readiness on the set PIN is READY and checks the Me tab's PIN change",
+   "control": "mutation",
+   "mutation": {
+    "id": "nopinchange",
+    "why": "the Me tab's PIN change accepts any new PIN, weak or not",
+    "module": "kitchen_members.py",
+    "dir": ".",
+    "env": "FAMILY_CODE",
+    "find": "    if not (len(new) == 6 and new.isdigit()) or A.weak_pin(new):\n        return jsonify(ok=False, err=\"Choose 6 digits that are not all the same or in a straight run.\"), 400\n    g.auth.set_pin(new)",
+    "replace": "    if not (len(new) == 6 and new.isdigit()):\n        return jsonify(ok=False, err=\"Choose 6 digits that are not all the same or in a straight run.\"), 400\n    g.auth.set_pin(new)"
+   }
+  }
+ ]
+}

@@ -356,6 +356,15 @@ the owner's recipes are credited and listed under "By person" exactly as a kitch
 member's (`test_family_f.py` F07, controls `apinames`, `ownernamestuck`; checked live for
 m1, m2, m3 and the owner with temporary recipes, removed).
 
+**One PIN for the kitchen group (owner's decision, 26-Sep-2026, k1–k9 only).**
+`stamp_member.py --slug kN --set-pin -` (PIN on stdin, never printed; `--password-file`
+appends it) sets an owner-chosen PIN for a kitchen member — same rules as any family PIN,
+lockout cleared, every device signed out — and **refuses every m*/p* slug**: health and
+physio accounts keep their own PINs (D15; controls `setpinany`, `setpinweak`). Each person
+can change it on the Me tab; `readiness.py` now proves that end to end without changing the
+PIN (current PIN accepted, a weak new one refused; D16, control `nopinchange`). The shared
+PIN itself is in the root-only PIN file and the gitignored group message, never here.
+
 ## Open items (25-Sep-2026)
 
 * Members m1 (`gut`) and m2 (`joint`) stamped 25-Sep-2026 13:37 IST. The first attempt

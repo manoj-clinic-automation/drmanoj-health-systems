@@ -3,6 +3,13 @@
 Personal (non-clinic) systems. Per-app detail lives in each app's `DOSSIER.md`;
 this file is the cross-app timeline.
 
+## 2026-09-26 (night) — one PIN for the kitchen group
+
+By the owner's decision, the nine kitchen-only members share one first PIN, each free to
+change it on the Me tab. New `stamp_member.py --set-pin` (kitchen members only; refuses
+health and physio slugs); `readiness.py` now also checks the Me tab's PIN change. All
+nine READY on the new PIN. The PIN is not in the repository.
+
 ## 2026-09-26 (evening) — nine family members invited to the Family Kitchen
 
 Nine recipes-only kitchen members (`k1`–`k9`) stamped and each checked READY. A

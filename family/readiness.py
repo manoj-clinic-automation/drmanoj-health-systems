@@ -252,7 +252,7 @@ def kitchen_readiness(a):
     # page reads "last visit" from here, so it is put back as it was.
     seen_before = last_seen(kdb, a.slug)
     code, final, t, _ = b.req(pre + "/login", data={"pin": pin})
-    pin = None
+    kpin, pin = pin, None
     mc_, _, _, me = b.req(pre + "/j/me")
     if not step("one real sign-in with the PIN", code == 200 and mc_ == 200 and (me or {}).get("slug") == a.slug
                 and "/login" not in urllib.parse.urlparse(final).path, "HTTP %s at %s, me %s" % (code, final, mc_)):
@@ -278,6 +278,14 @@ def kitchen_readiness(a):
         step("the Share-shortcut key is issued (address and key on the Me tab)",
              bool(((me or {}).get("capture") or {}).get("token")) and pre.split("/")[-1] in
              (((me or {}).get("capture") or {}).get("url") or ""), "")
+        # The Me tab's PIN change, end to end without changing anything: the
+        # current PIN is accepted (not a failed attempt) and a weak new one is
+        # refused, so the PIN stays what it was.
+        xc, _, _, xj = b.req(pre + "/pin/change", js={"old": kpin, "new": "111111"})
+        kpin = None
+        step("the Me tab offers PIN change (current PIN accepted, a weak new one refused)",
+             "Change PIN" in ht and xc == 400 and "straight run" in ((xj or {}).get("err") or ""),
+             "HTTP %s %s" % (xc, (xj or {}).get("err")))
         # ------------------------------------------------------------ 5 capture -> publish
         dc, _, _, dj = b.req(pre + "/j/drafts", js={"text": tag + "\n1 cup rice\nCook it."})
         did = (dj or {}).get("id")

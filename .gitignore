@@ -12,6 +12,7 @@ ingest.env
 *.local.json
 # WhatsApp invite texts name family members (getting_started_sheet.py --kitchen)
 fitlog-ingest/Kitchen_invite_messages*.txt
+fitlog-ingest/Kitchen_family_group_message*.txt
 *.log
 *.bak
 *.bak-*
